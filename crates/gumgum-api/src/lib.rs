@@ -180,6 +180,15 @@ pub struct BindingReport {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AffectedReport {
+    pub ok: bool,
+    pub target: String,
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    pub message: String,
+}
+
 pub fn not_configured_status() -> StatusReport {
     StatusReport {
         ok: true,

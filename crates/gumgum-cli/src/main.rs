@@ -6,8 +6,8 @@ use axum::{
 };
 use clap::{Args, Parser, Subcommand};
 use gumgum_api::{
-    BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge, GraphNode,
-    GraphReport, LogsReport, ObjectReport, ObjectRequest, PingReport, ServerListReport,
+    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge,
+    GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, PingReport, ServerListReport,
     ServerRecord, SetupPlan, SetupReport, not_configured_status, setup_actions,
 };
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
@@ -91,6 +91,14 @@ struct DeployArgs {
 struct GraphArgs {
     #[arg(long)]
     host: Option<String>,
+    #[command(subcommand)]
+    command: Option<GraphCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+enum GraphCommand {
+    Show,
+    Affected { target: String },
 }
 
 #[derive(Debug, Args)]
@@ -518,6 +526,13 @@ async fn graph(args: GraphArgs, json: bool) -> gumgum_core::Result<()> {
                 .host
         }
     };
+    match args.command.unwrap_or(GraphCommand::Show) {
+        GraphCommand::Show => graph_show(&server, json).await,
+        GraphCommand::Affected { target } => graph_affected(&server, &target, json).await,
+    }
+}
+
+async fn graph_show(server: &str, json: bool) -> gumgum_core::Result<()> {
     let url = format!("http://{server}:7777/v0/graph");
     let report: GraphReport = reqwest::Client::new()
         .get(&url)
@@ -557,6 +572,65 @@ async fn graph(args: GraphArgs, json: bool) -> gumgum_core::Result<()> {
         print_value(true, &report);
     } else {
         println!("{}", report.graph);
+    }
+    Ok(())
+}
+
+async fn graph_affected(server: &str, target: &str, json: bool) -> gumgum_core::Result<()> {
+    let url = reqwest::Url::parse_with_params(
+        &format!("http://{server}:7777/v0/graph/affected"),
+        &[("target", target)],
+    )
+    .map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::InvalidArgs,
+            "invalid graph affected URL",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    let report: AffectedReport = reqwest::Client::new()
+        .get(url)
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to call gumgumd graph affected API",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .error_for_status()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd graph affected API returned an error",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .json()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd graph affected API returned invalid JSON",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if json {
+        print_value(true, &report);
+    } else {
+        println!("Affected by {}:", report.target);
+        for node in report.nodes {
+            println!("  {} {}", node.kind, node.id);
+        }
     }
     Ok(())
 }
@@ -1452,6 +1526,7 @@ async fn run_daemon() -> gumgum_core::Result<()> {
         .route("/v0/objects", post(daemon_create_object))
         .route("/v0/bindings", post(daemon_create_binding))
         .route("/v0/graph", get(daemon_graph))
+        .route("/v0/graph/affected", get(daemon_graph_affected))
         .route("/v0/logs/{container}", get(daemon_logs))
         .with_state(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], 7777));
@@ -1506,6 +1581,110 @@ async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {
         nodes,
         edges,
     })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AffectedQuery {
+    target: String,
+}
+
+async fn daemon_graph_affected(
+    State(state): State<DaemonState>,
+    Query(query): Query<AffectedQuery>,
+) -> Json<AffectedReport> {
+    let path = (*state.graph_path).clone();
+    let target = query.target;
+    let target_for_task = target.clone();
+    let (nodes, edges) = tokio::task::spawn_blocking(move || {
+        let (nodes, edges) = load_graph(&path)?;
+        Ok::<_, GumgumError>(affected_subgraph(&nodes, &edges, &target_for_task))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_else(|| (Vec::new(), Vec::new()));
+    let message = format!("{} affected node(s)", nodes.len());
+    Json(AffectedReport {
+        ok: true,
+        target,
+        nodes,
+        edges,
+        message,
+    })
+}
+
+fn affected_subgraph(
+    nodes: &[GraphNode],
+    edges: &[GraphEdge],
+    target: &str,
+) -> (Vec<GraphNode>, Vec<GraphEdge>) {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut edge_seen = std::collections::BTreeSet::new();
+    seen.insert(target.to_owned());
+
+    let mut add_edge = |edge: &GraphEdge, seen: &mut std::collections::BTreeSet<String>| {
+        edge_seen.insert((edge.from.clone(), edge.to.clone(), edge.kind.clone()));
+        seen.insert(edge.from.clone());
+        seen.insert(edge.to.clone());
+    };
+
+    for edge in edges {
+        if edge.to == target || edge.from == target {
+            add_edge(edge, &mut seen);
+        }
+    }
+
+    let bindings = seen
+        .iter()
+        .filter(|id| id.starts_with("binding/"))
+        .cloned()
+        .collect::<Vec<_>>();
+    for binding in bindings {
+        for edge in edges {
+            if edge.to == binding || edge.from == binding {
+                add_edge(edge, &mut seen);
+            }
+        }
+    }
+
+    let workers = seen
+        .iter()
+        .filter(|id| id.starts_with("worker/"))
+        .cloned()
+        .collect::<Vec<_>>();
+    for worker in workers {
+        for edge in edges {
+            if edge.from == worker && matches!(edge.kind.as_str(), "runs" | "owns" | "created_from")
+            {
+                add_edge(edge, &mut seen);
+            }
+        }
+    }
+
+    let routes = seen
+        .iter()
+        .filter(|id| id.starts_with("route/"))
+        .cloned()
+        .collect::<Vec<_>>();
+    for route in routes {
+        for edge in edges {
+            if edge.from == route && edge.kind == "routes_to" {
+                add_edge(edge, &mut seen);
+            }
+        }
+    }
+
+    let affected_nodes = nodes
+        .iter()
+        .filter(|node| seen.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let affected_edges = edges
+        .iter()
+        .filter(|edge| edge_seen.contains(&(edge.from.clone(), edge.to.clone(), edge.kind.clone())))
+        .cloned()
+        .collect::<Vec<_>>();
+    (affected_nodes, affected_edges)
 }
 
 fn load_graph(path: &PathBuf) -> gumgum_core::Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
