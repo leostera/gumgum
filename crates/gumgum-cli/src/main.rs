@@ -1,13 +1,13 @@
 use anyhow::Result;
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Path as AxumPath, Query, State},
     routing::{get, post},
 };
 use clap::{Args, Parser, Subcommand};
 use gumgum_api::{
-    DeployApplyReport, DeployRequest, PingReport, ServerListReport, ServerRecord, SetupPlan,
-    SetupReport, not_configured_status, setup_actions,
+    DeployApplyReport, DeployRequest, LogsReport, PingReport, ServerListReport, ServerRecord,
+    SetupPlan, SetupReport, not_configured_status, setup_actions,
 };
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
 use gumgum_manifest::{WorkerManifest, load_worker_path, validate_path};
@@ -447,6 +447,15 @@ fn deploy_report(
 }
 
 async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
+    if args.follow {
+        return Err(GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::NotImplemented,
+            "gumgum logs -f will stream through gumgumd in a later release",
+        )
+        .next_command("gumgum logs")
+        .build());
+    }
     let manifest = load_worker_path(&args.path)?;
     let server = match args.host {
         Some(host) => host,
@@ -465,14 +474,50 @@ async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
         }
     };
     let container = format!("gumgum-{}", sanitize_name(&manifest.worker.name));
-    let mut cmd = TokioCommand::new("ssh");
-    cmd.arg(server).arg(format!(
-        "docker logs --tail {}{} {}",
-        args.tail,
-        if args.follow { " -f" } else { "" },
-        shell_quote(&container)
-    ));
-    run_command_streaming(&mut cmd, quiet).await
+    let url = format!(
+        "http://{server}:7777/v0/logs/{container}?tail={}",
+        args.tail
+    );
+    let report: LogsReport = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to call gumgumd logs API",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .error_for_status()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd logs API returned an error",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .json()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd logs API returned invalid JSON",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if quiet {
+        print_value(true, &report);
+    } else {
+        print!("{}", report.logs);
+    }
+    Ok(())
 }
 
 async fn run_remote_deploy(
@@ -1157,6 +1202,7 @@ async fn run_daemon() -> gumgum_core::Result<()> {
         .route("/healthz", get(daemon_healthz))
         .route("/v0/status", get(daemon_status))
         .route("/v0/deploy", post(daemon_deploy))
+        .route("/v0/logs/{container}", get(daemon_logs))
         .with_state(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], 7777));
     let listener = tokio::net::TcpListener::bind(addr)
@@ -1184,6 +1230,40 @@ async fn daemon_healthz() -> Json<serde_json::Value> {
 
 async fn daemon_status() -> Json<gumgum_core::StatusReport> {
     Json(not_configured_status())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LogsQuery {
+    tail: Option<u32>,
+}
+
+async fn daemon_logs(
+    AxumPath(container): AxumPath<String>,
+    Query(query): Query<LogsQuery>,
+) -> Json<LogsReport> {
+    let tail = query.tail.unwrap_or(100);
+    let output = TokioCommand::new("docker")
+        .arg("logs")
+        .arg("--tail")
+        .arg(tail.to_string())
+        .arg(&container)
+        .output()
+        .await;
+    let logs = match output {
+        Ok(output) => {
+            let mut logs = String::new();
+            logs.push_str(&String::from_utf8_lossy(&output.stdout));
+            logs.push_str(&String::from_utf8_lossy(&output.stderr));
+            logs
+        }
+        Err(source) => format!("failed to read logs: {source}\n"),
+    };
+    Json(LogsReport {
+        ok: true,
+        container,
+        tail,
+        logs,
+    })
 }
 
 async fn daemon_deploy(

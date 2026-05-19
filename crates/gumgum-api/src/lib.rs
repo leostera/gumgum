@@ -111,6 +111,14 @@ pub struct DeployApplyReport {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct LogsReport {
+    pub ok: bool,
+    pub container: String,
+    pub tail: u32,
+    pub logs: String,
+}
+
 pub fn not_configured_status() -> StatusReport {
     StatusReport {
         ok: true,
