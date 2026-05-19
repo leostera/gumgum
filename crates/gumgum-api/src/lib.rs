@@ -47,8 +47,8 @@ pub struct SetupReport {
 pub fn setup_actions() -> Vec<String> {
     vec![
         "ssh into host".to_owned(),
-        "create GumGum.dev state directory".to_owned(),
-        "install gumgumd binary".to_owned(),
+        "create ~/.gumgum/daemon".to_owned(),
+        "install gumgumd binary into ~/.gumgum/daemon".to_owned(),
         "write gumgumd systemd service".to_owned(),
         "enable and restart gumgumd".to_owned(),
         "check http://<host>:7777/healthz".to_owned(),
