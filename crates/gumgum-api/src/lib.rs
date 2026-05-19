@@ -24,15 +24,31 @@ impl SetupPlan {
             user,
             root_domain,
             test_domain,
-            actions: vec![
-                "ssh into host".to_owned(),
-                "detect os and architecture".to_owned(),
-                "install gumgumd".to_owned(),
-                "initialize graph store".to_owned(),
-                "configure provider defaults".to_owned(),
-            ],
+            actions: setup_actions(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SetupReport {
+    pub ok: bool,
+    pub host: String,
+    pub root_domain: String,
+    pub test_domain: String,
+    pub service: String,
+    pub health_url: String,
+    pub actions: Vec<String>,
+}
+
+pub fn setup_actions() -> Vec<String> {
+    vec![
+        "ssh into host".to_owned(),
+        "create GumGum.dev state directory".to_owned(),
+        "install gumgumd binary".to_owned(),
+        "write gumgumd systemd service".to_owned(),
+        "enable and restart gumgumd".to_owned(),
+        "check http://127.0.0.1:7777/healthz".to_owned(),
+    ]
 }
 
 pub fn not_configured_status() -> StatusReport {
