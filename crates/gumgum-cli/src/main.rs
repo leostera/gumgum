@@ -1,14 +1,19 @@
 use anyhow::Result;
-use axum::{Json, Router, routing::get};
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{get, post},
+};
 use clap::{Args, Parser, Subcommand};
 use gumgum_api::{
-    PingReport, ServerListReport, ServerRecord, SetupPlan, SetupReport, not_configured_status,
-    setup_actions,
+    DeployApplyReport, DeployRequest, PingReport, ServerListReport, ServerRecord, SetupPlan,
+    SetupReport, not_configured_status, setup_actions,
 };
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
 use gumgum_manifest::{WorkerManifest, load_worker_path, validate_path};
+use rusqlite::{Connection, params};
 use serde::Serialize;
-use std::{fs, net::SocketAddr, path::PathBuf, process::Stdio, time::Duration};
+use std::{fs, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 use tokio::process::Command as TokioCommand;
 
 #[derive(Debug, Parser)]
@@ -525,19 +530,23 @@ async fn run_remote_deploy(
     let _ = tunnel.kill().await;
     build_result?;
 
-    let script = format!(
-        "set -e; network=caddy-network; if docker inspect -f '{{{{.State.Running}}}}' gumgum-caddy 2>/dev/null | grep -q true; then network=gumgum-network; fi; docker pull {image}; docker rm -f {container} >/dev/null 2>&1 || true; docker run -d --name {container} --restart unless-stopped --network $network --label caddy={route} --label 'caddy.reverse_proxy={{{{upstreams {port}}}}}' --label caddy.tls=internal {image}; for i in $(seq 1 20); do ip=$(docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {container}); if [ -n \"$ip\" ] && curl -fsS http://$ip:{port}{health} >/dev/null 2>&1; then exit 0; fi; sleep 0.5; done; docker logs {container}; exit 1",
-        image = shell_quote(&report.image),
-        container = shell_quote(&report.container),
-        route = shell_quote(&route),
-        port = report.port,
-        health = shell_quote(manifest.worker.health.as_deref().unwrap_or("/healthz")),
-    );
     progress(
         quiet,
-        format!("pulling and running {} on {host}", report.worker),
+        format!("asking gumgumd on {host} to reconcile {}", report.worker),
     );
-    run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await?;
+    let request = DeployRequest {
+        worker: report.worker.clone(),
+        image: report.image.clone(),
+        container: report.container.clone(),
+        route: route.clone(),
+        port: report.port,
+        health: manifest
+            .worker
+            .health
+            .clone()
+            .unwrap_or_else(|| "/healthz".to_owned()),
+    };
+    apply_deploy_via_daemon(host, &request).await?;
     verify_route(
         server,
         &route,
@@ -545,6 +554,45 @@ async fn run_remote_deploy(
         quiet,
     )
     .await
+}
+
+async fn apply_deploy_via_daemon(
+    host: &str,
+    request: &DeployRequest,
+) -> gumgum_core::Result<DeployApplyReport> {
+    let url = format!("http://{host}:7777/v0/deploy");
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to call gumgumd deploy API",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if !response.status().is_success() {
+        return Err(GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::Io,
+            "gumgumd deploy API returned an error",
+        )
+        .likely_cause(response.status().to_string())
+        .build());
+    }
+    response.json().await.map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::Io,
+            "gumgumd deploy API returned invalid JSON",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })
 }
 
 async fn ensure_local_platform(quiet: bool) -> gumgum_core::Result<()> {
@@ -1093,11 +1141,23 @@ async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
     )
 }
 
+#[derive(Clone)]
+struct DaemonState {
+    graph_path: Arc<PathBuf>,
+}
+
 async fn run_daemon() -> gumgum_core::Result<()> {
     ensure_local_platform(false).await?;
+    let graph_path = gumgum_root()?.join("graph.sqlite");
+    init_graph_db(&graph_path)?;
+    let state = DaemonState {
+        graph_path: Arc::new(graph_path),
+    };
     let app = Router::new()
         .route("/healthz", get(daemon_healthz))
-        .route("/v0/status", get(daemon_status));
+        .route("/v0/status", get(daemon_status))
+        .route("/v0/deploy", post(daemon_deploy))
+        .with_state(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], 7777));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -1124,6 +1184,256 @@ async fn daemon_healthz() -> Json<serde_json::Value> {
 
 async fn daemon_status() -> Json<gumgum_core::StatusReport> {
     Json(not_configured_status())
+}
+
+async fn daemon_deploy(
+    State(state): State<DaemonState>,
+    Json(request): Json<DeployRequest>,
+) -> Json<DeployApplyReport> {
+    let path = (*state.graph_path).clone();
+    let request_for_db = request.clone();
+    let materialized =
+        tokio::task::spawn_blocking(move || materialize_deploy(&path, &request_for_db))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false);
+    let (changed, actions) = reconcile_deploy(&request).await.unwrap_or_else(|error| {
+        (
+            false,
+            vec![format!("reconcile failed: {}", error.to_report().message)],
+        )
+    });
+    Json(DeployApplyReport {
+        ok: materialized,
+        worker: request.worker,
+        materialized,
+        changed,
+        actions,
+        message: "desired deployment materialized and reconciled".to_owned(),
+    })
+}
+
+fn init_graph_db(path: &PathBuf) -> gumgum_core::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not create graph directory",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    }
+    let conn = Connection::open(path).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not open graph database",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS desired_deployments (
+            worker TEXT PRIMARY KEY,
+            image TEXT NOT NULL,
+            container TEXT NOT NULL,
+            route TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            health TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );",
+    )
+    .map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not initialize graph database",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })
+}
+
+fn materialize_deploy(path: &PathBuf, request: &DeployRequest) -> gumgum_core::Result<bool> {
+    init_graph_db(path)?;
+    let mut conn = Connection::open(path).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not open graph database",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    let tx = conn.transaction().map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not begin graph transaction",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    tx.execute(
+        "INSERT INTO desired_deployments (worker, image, container, route, port, health, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
+         ON CONFLICT(worker) DO UPDATE SET
+           image=excluded.image,
+           container=excluded.container,
+           route=excluded.route,
+           port=excluded.port,
+           health=excluded.health,
+           updated_at=CURRENT_TIMESTAMP",
+        params![request.worker, request.image, request.container, request.route, request.port, request.health],
+    )
+    .map_err(|source| {
+        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not materialize deployment")
+            .likely_cause(source.to_string())
+            .build()
+    })?;
+    tx.commit().map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not commit graph transaction",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    Ok(true)
+}
+
+async fn reconcile_deploy(request: &DeployRequest) -> gumgum_core::Result<(bool, Vec<String>)> {
+    let mut actions = Vec::new();
+    let inspect = TokioCommand::new("docker")
+        .arg("inspect")
+        .arg("-f")
+        .arg("{{.Config.Image}} {{index .Config.Labels \"caddy\"}} {{index .Config.Labels \"caddy.reverse_proxy\"}}")
+        .arg(&request.container)
+        .output()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "could not inspect deployment container",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    let current = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
+    let expected_proxy = format!("{{{{upstreams {}}}}}", request.port);
+    let expected = format!("{} {} {}", request.image, request.route, expected_proxy);
+    let route_label = format!("caddy={}", request.route);
+    if inspect.status.success() && current == expected {
+        actions.push("container already matches desired image".to_owned());
+        return Ok((false, actions));
+    }
+    actions.push(format!("pull {}", request.image));
+    run_command_streaming(
+        TokioCommand::new("docker").arg("pull").arg(&request.image),
+        false,
+    )
+    .await?;
+    let network = if docker_running("gumgum-caddy").await {
+        "gumgum-network"
+    } else {
+        "caddy-network"
+    };
+    actions.push(format!("recreate {}", request.container));
+    let _ = run_command_streaming(
+        TokioCommand::new("docker")
+            .arg("rm")
+            .arg("-f")
+            .arg(&request.container),
+        true,
+    )
+    .await;
+    run_command_streaming(
+        TokioCommand::new("docker")
+            .arg("run")
+            .arg("-d")
+            .arg("--name")
+            .arg(&request.container)
+            .arg("--restart")
+            .arg("unless-stopped")
+            .arg("--network")
+            .arg(network)
+            .arg("--label")
+            .arg(route_label)
+            .arg("--label")
+            .arg(format!(
+                "caddy.reverse_proxy={{{{upstreams {}}}}}",
+                request.port
+            ))
+            .arg("--label")
+            .arg("caddy.tls=internal")
+            .arg(&request.image),
+        false,
+    )
+    .await?;
+    wait_for_container_health(&request.container, request.port, &request.health).await?;
+    Ok((true, actions))
+}
+
+async fn docker_running(name: &str) -> bool {
+    TokioCommand::new("docker")
+        .arg("inspect")
+        .arg("-f")
+        .arg("{{.State.Running}}")
+        .arg(name)
+        .output()
+        .await
+        .map(|output| {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
+        .unwrap_or(false)
+}
+
+async fn wait_for_container_health(
+    container: &str,
+    port: u16,
+    health: &str,
+) -> gumgum_core::Result<()> {
+    for _ in 0..20 {
+        let output = TokioCommand::new("docker")
+            .arg("inspect")
+            .arg("-f")
+            .arg("{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
+            .arg(container)
+            .output()
+            .await
+            .map_err(|source| {
+                GumgumError::structured(
+                    Subsystem::Setup,
+                    ErrorCode::Io,
+                    "could not inspect deployment IP",
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })?;
+        let ip = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !ip.is_empty() {
+            let url = format!("http://{ip}:{port}{health}");
+            if reqwest::get(&url)
+                .await
+                .map(|response| response.status().is_success())
+                .unwrap_or(false)
+            {
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    Err(GumgumError::structured(
+        Subsystem::Api,
+        ErrorCode::Io,
+        "deployment container did not become healthy",
+    )
+    .build())
 }
 
 async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Result<SetupReport> {

@@ -91,6 +91,26 @@ pub struct PingReport {
     pub health: serde_json::Value,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeployRequest {
+    pub worker: String,
+    pub image: String,
+    pub container: String,
+    pub route: String,
+    pub port: u16,
+    pub health: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeployApplyReport {
+    pub ok: bool,
+    pub worker: String,
+    pub materialized: bool,
+    pub changed: bool,
+    pub actions: Vec<String>,
+    pub message: String,
+}
+
 pub fn not_configured_status() -> StatusReport {
     StatusReport {
         ok: true,
