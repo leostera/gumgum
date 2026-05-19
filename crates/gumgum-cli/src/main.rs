@@ -145,6 +145,7 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
                     resolved.user,
                     resolved.root_domain,
                     resolved.test_domain,
+                    resolved.local,
                 );
                 print_value(cli.json, &plan)
             } else {
@@ -414,7 +415,7 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
         test_domain: setup.test_domain,
         service: "gumgumd".to_owned(),
         health_url,
-        actions: setup_actions(),
+        actions: setup_actions(setup.local),
     })
 }
 
