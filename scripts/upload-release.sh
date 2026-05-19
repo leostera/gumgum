@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=${VERSION:-$(date -u +%F)}
+VERSION=${VERSION:-$(git rev-parse --short HEAD 2>/dev/null || date -u +%Y%m%d%H%M%S)}
 DIST_ROOT=${DIST_ROOT:-dist}
 
 if [ -f .env ]; then
@@ -27,9 +27,10 @@ upload() {
 }
 
 upload "$DIST_ROOT/install.sh" "install.sh" "text/x-shellscript; charset=utf-8"
+upload "$DIST_ROOT/gumgum/$VERSION/release.json" "gumgum/$VERSION/release.json" "application/json; charset=utf-8"
+upload "$DIST_ROOT/gumgum/$VERSION/release.json" "gumgum/latest/release.json" "application/json; charset=utf-8"
 for archive in "$DIST_ROOT/gumgum/$VERSION"/*.tar.gz; do
   upload "$archive" "gumgum/$VERSION/$(basename "$archive")" "application/gzip"
-  upload "$archive" "gumgum/latest/$(basename "$archive")" "application/gzip"
 done
 
 echo "METRIC upload_ok=1"

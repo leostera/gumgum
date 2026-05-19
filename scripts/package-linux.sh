@@ -2,7 +2,7 @@
 set -euo pipefail
 
 TARGET=${TARGET:-x86_64-unknown-linux-gnu}
-VERSION=${VERSION:-$(date -u +%F)}
+VERSION=${VERSION:-$(git rev-parse --short HEAD 2>/dev/null || date -u +%Y%m%d%H%M%S)}
 DIST_ROOT=${DIST_ROOT:-dist}
 CRATE=${CRATE:-gumgum-cli}
 BIN=${BIN:-gumgum}
@@ -28,7 +28,7 @@ docker run --rm --platform linux/amd64 \
 
 out_dir="$DIST_ROOT/gumgum/$VERSION"
 work_dir="$DIST_ROOT/work/$BIN-$TARGET"
-archive="$out_dir/$BIN-$TARGET.tar.gz"
+archive="$out_dir/$BIN-$VERSION-$TARGET.tar.gz"
 
 rm -rf "$work_dir"
 mkdir -p "$work_dir" "$out_dir"
@@ -44,6 +44,10 @@ Daemon: ~/.gumgum/bin/gumgum daemon
 EOF
 
 tar -C "$work_dir" -czf "$archive" .
+GIT_SHA=${GIT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || printf unknown)}
+cat > "$out_dir/release.json" <<EOF
+{"version":"$VERSION","git_sha":"$GIT_SHA","target":"$TARGET","archive":"$BIN-$VERSION-$TARGET.tar.gz"}
+EOF
 mkdir -p "$DIST_ROOT"
 cp sites/get.gumgum.dev/public/install.sh "$DIST_ROOT/install.sh"
 chmod 0755 "$DIST_ROOT/install.sh"

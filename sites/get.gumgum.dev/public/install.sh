@@ -78,13 +78,28 @@ install_gumgum() {
   GUMGUM_BIN_DIR="$GUMGUM_DIR/bin"
   GUMGUM_VERSION="${GUMGUM_VERSION:-latest}"
   GUMGUM_BASE_URL="${GUMGUM_BASE_URL:-https://get.gumgum.dev}"
-  ARCHIVE="gumgum-${PLATFORM}.tar.gz"
-  URL="${GUMGUM_BASE_URL}/gumgum/${GUMGUM_VERSION}/${ARCHIVE}"
-
   info "Installing gumgum ($GUMGUM_VERSION) into $GUMGUM_BIN_DIR"
   mkdir -p "$GUMGUM_BIN_DIR"
   TMPDIR=$(mktemp -d)
   trap 'rm -rf "$TMPDIR"' EXIT
+
+  if [ "$GUMGUM_VERSION" = latest ]; then
+    RELEASE_URL="${GUMGUM_BASE_URL}/gumgum/latest/release.json"
+    info "Resolving latest release from $RELEASE_URL"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL -o "$TMPDIR/release.json" "$RELEASE_URL"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q -O "$TMPDIR/release.json" "$RELEASE_URL"
+    else
+      err "Neither curl nor wget found. Please install one of them."
+      exit 1
+    fi
+    GUMGUM_VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$TMPDIR/release.json" | head -n 1)
+    [ -n "$GUMGUM_VERSION" ] || { err "Could not parse latest release version"; exit 1; }
+  fi
+
+  ARCHIVE="gumgum-${GUMGUM_VERSION}-${PLATFORM}.tar.gz"
+  URL="${GUMGUM_BASE_URL}/gumgum/${GUMGUM_VERSION}/${ARCHIVE}"
 
   info "Downloading $URL"
   if command -v curl >/dev/null 2>&1; then
