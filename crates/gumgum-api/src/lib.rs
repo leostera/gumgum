@@ -51,6 +51,15 @@ pub fn setup_actions() -> Vec<String> {
     ]
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PingReport {
+    pub ok: bool,
+    pub host: String,
+    pub health_url: String,
+    pub service_active: Option<bool>,
+    pub health: serde_json::Value,
+}
+
 pub fn not_configured_status() -> StatusReport {
     StatusReport {
         ok: true,
