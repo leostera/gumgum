@@ -47,8 +47,23 @@ pub fn setup_actions() -> Vec<String> {
         "install gumgumd binary".to_owned(),
         "write gumgumd systemd service".to_owned(),
         "enable and restart gumgumd".to_owned(),
-        "check http://127.0.0.1:7777/healthz".to_owned(),
+        "check http://<host>:7777/healthz".to_owned(),
     ]
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ServerRecord {
+    pub name: String,
+    pub host: String,
+    pub root_domain: String,
+    pub test_domain: String,
+    pub health_url: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ServerListReport {
+    pub ok: bool,
+    pub servers: Vec<ServerRecord>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

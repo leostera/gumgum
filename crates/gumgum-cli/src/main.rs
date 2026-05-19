@@ -1,10 +1,18 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
-use gumgum_api::{PingReport, SetupPlan, SetupReport, not_configured_status, setup_actions};
+use directories::ProjectDirs;
+use gumgum_api::{
+    PingReport, ServerListReport, ServerRecord, SetupPlan, SetupReport, not_configured_status,
+    setup_actions,
+};
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
 use gumgum_manifest::validate_path;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tokio::process::Command as TokioCommand;
 
 #[derive(Debug, Parser)]
@@ -25,6 +33,7 @@ enum Command {
     Ping(PingArgs),
     Doctor,
     Setup(SetupArgs),
+    Server(ServerCommand),
     Schema(SchemaCommand),
 }
 
@@ -52,6 +61,17 @@ struct SetupArgs {
     root_domain: String,
     #[arg(long)]
     test_domain: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ServerCommand {
+    #[command(subcommand)]
+    command: ServerSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ServerSubcommand {
+    List,
 }
 
 #[derive(Debug, Args)]
@@ -86,15 +106,17 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
     match cli.command {
         Command::Status(args) => {
             if let Some(host) = args.host {
-                let report = ping_host(&ssh_target(args.user.as_deref(), &host), host).await?;
+                let report = ping_host(&host).await?;
+                print_value(cli.json, &report)
+            } else if let Some(server) = load_default_server()? {
+                let report = ping_host(&server.host).await?;
                 print_value(cli.json, &report)
             } else {
                 print_value(cli.json, &not_configured_status())
             }
         }
         Command::Ping(args) => {
-            let report =
-                ping_host(&ssh_target(args.user.as_deref(), &args.host), args.host).await?;
+            let report = ping_host(&args.host).await?;
             print_value(cli.json, &report)
         }
         Command::Doctor => {
@@ -128,6 +150,15 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
                 print_value(cli.json, &report)
             }
         }
+        Command::Server(server) => match server.command {
+            ServerSubcommand::List => {
+                let report = ServerListReport {
+                    ok: true,
+                    servers: load_servers()?,
+                };
+                print_value(cli.json, &report)
+            }
+        },
         Command::Schema(schema) => match schema.command {
             SchemaSubcommand::Validate { path } => {
                 let path = path.unwrap_or_else(|| PathBuf::from("gumgum.toml"));
@@ -147,36 +178,51 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
     Ok(())
 }
 
-async fn ping_host(target: &str, host: String) -> gumgum_core::Result<PingReport> {
-    let health_raw = run_command_stdout(
-        TokioCommand::new("ssh")
-            .arg(target)
-            .arg("curl -fsS http://127.0.0.1:7777/healthz"),
-    )
-    .await?;
-    let health: serde_json::Value = serde_json::from_str(&health_raw).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Api,
-            ErrorCode::Io,
-            "gumgumd returned invalid JSON",
-        )
-        .likely_cause(source.to_string())
+async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
+    let health_url = format!("http://{host}:7777/healthz");
+    let health: serde_json::Value = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
         .build()
-    })?;
-    let service_raw = run_command_stdout(
-        TokioCommand::new("ssh")
-            .arg(target)
-            .arg("systemctl --user is-active gumgumd 2>/dev/null || systemctl is-active gumgumd 2>/dev/null || true"),
-    )
-    .await?;
+        .map_err(|source| {
+            GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to build HTTP client")
+                .likely_cause(source.to_string())
+                .build()
+        })?
+        .get(&health_url)
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to reach gumgumd")
+                .likely_cause(source.to_string())
+                .next_command(format!("gumgum setup {host} --root-domain <domain>"))
+                .build()
+        })?
+        .error_for_status()
+        .map_err(|source| {
+            GumgumError::structured(Subsystem::Api, ErrorCode::Io, "gumgumd returned an error")
+                .likely_cause(source.to_string())
+                .build()
+        })?
+        .json()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd returned invalid JSON",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    let ok = health
+        .get("ok")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     Ok(PingReport {
-        ok: health
-            .get("ok")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false),
-        host,
-        health_url: "http://127.0.0.1:7777/healthz".to_owned(),
-        service_active: Some(service_raw.trim() == "active"),
+        ok,
+        host: host.to_owned(),
+        health_url,
+        service_active: Some(ok),
         health,
     })
 }
@@ -189,19 +235,21 @@ async fn install_gumgumd(args: SetupArgs, test_domain: String) -> gumgum_core::R
         InstallMode::System => install_system_service(&target, &remote_gumgumd).await?,
         InstallMode::User => install_user_service(&target, &remote_gumgumd).await?,
     }
-    run_command(
-        TokioCommand::new("ssh")
-            .arg(&target)
-            .arg("curl -fsS http://127.0.0.1:7777/healthz >/dev/null"),
-    )
-    .await?;
+    ping_host(&args.host).await?;
+    save_server(ServerRecord {
+        name: args.host.clone(),
+        host: args.host.clone(),
+        root_domain: args.root_domain.clone(),
+        test_domain: test_domain.clone(),
+        health_url: format!("http://{}:7777/healthz", args.host),
+    })?;
     Ok(SetupReport {
         ok: true,
-        host: args.host,
+        host: args.host.clone(),
         root_domain: args.root_domain,
         test_domain,
         service: "gumgumd".to_owned(),
-        health_url: "http://127.0.0.1:7777/healthz".to_owned(),
+        health_url: format!("http://{}:7777/healthz", args.host),
         actions: setup_actions(),
     })
 }
@@ -303,29 +351,73 @@ async fn install_user_service(target: &str, remote_gumgumd: &str) -> gumgum_core
     .await
 }
 
-async fn run_command_stdout(cmd: &mut TokioCommand) -> gumgum_core::Result<String> {
-    let output = cmd.output().await.map_err(|source| {
+fn config_path() -> gumgum_core::Result<PathBuf> {
+    let dirs = ProjectDirs::from("dev", "gumgum", "gumgum").ok_or_else(|| {
         GumgumError::structured(
-            Subsystem::Setup,
+            Subsystem::Config,
             ErrorCode::Io,
-            "failed to run remote command",
+            "could not locate config directory",
+        )
+        .build()
+    })?;
+    Ok(dirs.config_dir().join("servers.json"))
+}
+
+fn load_servers() -> gumgum_core::Result<Vec<ServerRecord>> {
+    let path = config_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not read server list",
         )
         .likely_cause(source.to_string())
         .build()
     })?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    serde_json::from_str(&raw).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not parse server list",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })
+}
+
+fn load_default_server() -> gumgum_core::Result<Option<ServerRecord>> {
+    Ok(load_servers()?.into_iter().next())
+}
+
+fn save_server(server: ServerRecord) -> gumgum_core::Result<()> {
+    let path = config_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not create config directory",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
     }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(
-        GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "remote command failed")
-            .likely_cause(if stderr.is_empty() {
-                format!("exit status {}", output.status)
-            } else {
-                stderr
-            })
-            .build(),
-    )
+    let mut servers = load_servers()?;
+    servers.retain(|existing| existing.host != server.host);
+    servers.insert(0, server);
+    let raw = serde_json::to_string_pretty(&servers).expect("serialize servers");
+    fs::write(&path, raw).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not write server list",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })
 }
 
 async fn run_command(cmd: &mut TokioCommand) -> gumgum_core::Result<()> {

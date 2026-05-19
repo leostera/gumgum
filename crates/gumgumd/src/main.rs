@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/v0/status", get(status));
-    let addr = SocketAddr::from(([127, 0, 0, 1], 7777));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 7777));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "gumgumd listening");
     axum::serve(listener, app).await?;
@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
 }
 
 async fn healthz() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "ok": true }))
+    Json(serde_json::json!({ "ok": true, "service": "gumgumd" }))
 }
 
 async fn status() -> Json<gumgum_core::StatusReport> {
