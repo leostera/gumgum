@@ -43,7 +43,7 @@ Install: install -m 0755 $BIN ~/.gumgum/bin/gumgum
 Daemon: ~/.gumgum/bin/gumgum daemon
 EOF
 
-tar -C "$work_dir" -czf "$archive" .
+COPYFILE_DISABLE=1 tar --no-xattrs -C "$work_dir" -czf "$archive" .
 GIT_SHA=${GIT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || printf unknown)}
 cat > "$out_dir/release.json" <<EOF
 {"version":"$VERSION","git_sha":"$GIT_SHA","target":"$TARGET","archive":"$BIN-$VERSION-$TARGET.tar.gz"}

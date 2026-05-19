@@ -378,14 +378,14 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
         install_local_user_service(quiet).await?;
     } else {
         let target = ssh_target(setup.user.as_deref(), &setup.host);
-        progress(quiet, format!("building gumgum on {target}"));
-        let remote_gumgum = build_remote_gumgum(&target, quiet).await?;
+        progress(quiet, format!("installing gumgum release on {target}"));
+        install_remote_gumgum(&target, quiet).await?;
         progress(quiet, "detecting install mode");
         let install_mode = detect_install_mode(&target).await?;
         progress(quiet, "installing gumgumd service");
         match install_mode {
-            InstallMode::System => install_system_service(&target, &remote_gumgum, quiet).await?,
-            InstallMode::User => install_user_service(&target, &remote_gumgum, quiet).await?,
+            InstallMode::System => install_system_service(&target, quiet).await?,
+            InstallMode::User => install_user_service(&target, quiet).await?,
         }
     }
     progress(quiet, "checking gumgumd health");
@@ -534,39 +534,9 @@ async fn install_local_user_service(quiet: bool) -> gumgum_core::Result<()> {
     .await
 }
 
-async fn build_remote_gumgum(target: &str, quiet: bool) -> gumgum_core::Result<String> {
-    let root = workspace_root().ok_or_else(|| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "could not locate workspace root",
-        )
-        .likely_cause("gumgum setup currently expects to run from a Cargo workspace checkout")
-        .build()
-    })?;
-    progress(quiet, "syncing source to remote host");
-    run_command_streaming(
-        TokioCommand::new("rsync")
-            .arg("-az")
-            .arg("--delete")
-            .arg("--exclude")
-            .arg("target")
-            .arg("--exclude")
-            .arg(".git")
-            .arg(format!("{}/", root.display()))
-            .arg(format!("{target}:/tmp/gumgum-src/")),
-        quiet,
-    )
-    .await?;
-    progress(quiet, "compiling gumgum on remote host");
-    run_command_streaming(
-        TokioCommand::new("ssh")
-            .arg(target)
-            .arg("cd /tmp/gumgum-src && cargo build -p gumgum-cli"),
-        quiet,
-    )
-    .await?;
-    Ok("/tmp/gumgum-src/target/debug/gumgum".to_owned())
+async fn install_remote_gumgum(target: &str, quiet: bool) -> gumgum_core::Result<()> {
+    let script = "set -e; primary=https://get.gumgum.dev; fallback=https://get-gumgum-dev.abstractmachines.workers.dev; tmp=$(mktemp); trap 'rm -f $tmp' EXIT; if command -v curl >/dev/null 2>&1; then if curl -fsSL -o $tmp $primary; then GUMGUM_NO_PATH=1 sh $tmp; exit 0; fi; echo 'primary installer URL failed; retrying workers.dev fallback' >&2; curl -fsSL -o $tmp $fallback; GUMGUM_BASE_URL=$fallback GUMGUM_NO_PATH=1 sh $tmp; elif command -v wget >/dev/null 2>&1; then if wget -q -O $tmp $primary; then GUMGUM_NO_PATH=1 sh $tmp; exit 0; fi; echo 'primary installer URL failed; retrying workers.dev fallback' >&2; wget -q -O $tmp $fallback; GUMGUM_BASE_URL=$fallback GUMGUM_NO_PATH=1 sh $tmp; else echo 'curl or wget is required' >&2; exit 1; fi";
+    run_command_streaming(TokioCommand::new("ssh").arg(target).arg(script), quiet).await
 }
 
 fn workspace_root() -> Option<PathBuf> {
@@ -597,18 +567,7 @@ async fn detect_install_mode(target: &str) -> gumgum_core::Result<InstallMode> {
     }
 }
 
-async fn install_system_service(
-    target: &str,
-    remote_gumgum: &str,
-    quiet: bool,
-) -> gumgum_core::Result<()> {
-    run_command_streaming(
-        TokioCommand::new("ssh")
-            .arg(target)
-            .arg(format!("install -d -m 0755 /root/.gumgum/bin /root/.gumgum/daemon && install -m 0755 {remote_gumgum} /root/.gumgum/bin/gumgum")),
-        quiet,
-    )
-    .await?;
+async fn install_system_service(target: &str, quiet: bool) -> gumgum_core::Result<()> {
     let service = systemd_service();
     run_command_streaming(
         TokioCommand::new("ssh")
@@ -619,18 +578,7 @@ async fn install_system_service(
     .await
 }
 
-async fn install_user_service(
-    target: &str,
-    remote_gumgum: &str,
-    quiet: bool,
-) -> gumgum_core::Result<()> {
-    run_command_streaming(
-        TokioCommand::new("ssh")
-            .arg(target)
-            .arg(format!("mkdir -p ~/.gumgum/bin ~/.gumgum/daemon ~/.config/systemd/user && install -m 0755 {remote_gumgum} ~/.gumgum/bin/gumgum")),
-        quiet,
-    )
-    .await?;
+async fn install_user_service(target: &str, quiet: bool) -> gumgum_core::Result<()> {
     let service = user_systemd_service();
     run_command_streaming(
         TokioCommand::new("ssh")

@@ -2,7 +2,7 @@
 # GumGum.dev installer
 # Usage:
 #   curl -fsSL https://get.gumgum.dev | sh
-#   curl -fsSL https://get.gumgum.dev | sh -s -- --version 2026-05-19
+#   curl -fsSL https://get.gumgum.dev | sh -s -- --version e4967a4
 #   curl -fsSL https://get.gumgum.dev | sh -s -- --gumgum-dir "$HOME/.gumgum"
 
 set -e
@@ -22,7 +22,7 @@ GumGum.dev installer
 
 Usage:
   curl -fsSL https://get.gumgum.dev | sh
-  curl -fsSL https://get.gumgum.dev | sh -s -- -v 2026-05-19
+  curl -fsSL https://get.gumgum.dev | sh -s -- -v e4967a4
   curl -fsSL https://get.gumgum.dev | sh -s -- --gumgum-dir "$HOME/.gumgum"
 
 Options:
@@ -34,6 +34,7 @@ Environment:
   GUMGUM_VERSION          Install a specific release date/path.
   GUMGUM_DIR              Install into this directory instead of $HOME/.gumgum.
   GUMGUM_BASE_URL         Download base URL instead of https://get.gumgum.dev.
+  GUMGUM_NO_PATH=1        Do not edit shell config to add ~/.gumgum/bin to PATH.
 EOF
 }
 
@@ -153,7 +154,11 @@ main() {
   info "GumGum.dev installer"
   detect_platform
   install_gumgum
-  add_to_path
+  if [ "${GUMGUM_NO_PATH:-}" = 1 ]; then
+    warn "Skipping shell PATH configuration because GUMGUM_NO_PATH=1"
+  else
+    add_to_path
+  fi
   verify
 }
 
