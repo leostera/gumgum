@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SetupPlan {
     pub ok: bool,
+    pub name: String,
     pub host: String,
     pub user: Option<String>,
     pub root_domain: String,
@@ -13,6 +14,7 @@ pub struct SetupPlan {
 
 impl SetupPlan {
     pub fn dry_run(
+        name: String,
         host: String,
         user: Option<String>,
         root_domain: String,
@@ -20,6 +22,7 @@ impl SetupPlan {
     ) -> Self {
         Self {
             ok: true,
+            name,
             host,
             user,
             root_domain,
@@ -32,6 +35,7 @@ impl SetupPlan {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SetupReport {
     pub ok: bool,
+    pub name: String,
     pub host: String,
     pub root_domain: String,
     pub test_domain: String,

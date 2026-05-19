@@ -54,11 +54,13 @@ struct PingArgs {
 
 #[derive(Debug, Args)]
 struct SetupArgs {
-    host: String,
+    host: Option<String>,
+    #[arg(long)]
+    name: Option<String>,
     #[arg(long)]
     user: Option<String>,
     #[arg(long)]
-    root_domain: String,
+    root_domain: Option<String>,
     #[arg(long)]
     test_domain: Option<String>,
 }
@@ -138,15 +140,18 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             print_value(cli.json, &report)
         }
         Command::Setup(args) => {
-            let test_domain = args
-                .test_domain
-                .clone()
-                .unwrap_or_else(|| derive_test_domain(&args.root_domain));
+            let resolved = resolve_setup(args).await?;
             if cli.dry_run {
-                let plan = SetupPlan::dry_run(args.host, args.user, args.root_domain, test_domain);
+                let plan = SetupPlan::dry_run(
+                    resolved.name,
+                    resolved.host,
+                    resolved.user,
+                    resolved.root_domain,
+                    resolved.test_domain,
+                );
                 print_value(cli.json, &plan)
             } else {
-                let report = install_gumgumd(args, test_domain).await?;
+                let report = install_gumgumd(resolved).await?;
                 print_value(cli.json, &report)
             }
         }
@@ -176,6 +181,104 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         },
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct ResolvedSetup {
+    name: String,
+    host: String,
+    user: Option<String>,
+    root_domain: String,
+    test_domain: String,
+    local: bool,
+}
+
+async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<ResolvedSetup> {
+    let local = args.host.is_none();
+    let host = args.host.unwrap_or_else(|| "127.0.0.1".to_owned());
+    let target = ssh_target(args.user.as_deref(), &host);
+    let name = match args.name {
+        Some(name) => name,
+        None if local => local_hostname().await?,
+        None => remote_hostname(&target)
+            .await
+            .unwrap_or_else(|_| sanitize_name(&host)),
+    };
+    let root_domain = args.root_domain.unwrap_or_else(|| format!("{name}.dev"));
+    let test_domain = args
+        .test_domain
+        .unwrap_or_else(|| derive_test_domain(&root_domain));
+    Ok(ResolvedSetup {
+        name,
+        host,
+        user: args.user,
+        root_domain,
+        test_domain,
+        local,
+    })
+}
+
+async fn local_hostname() -> gumgum_core::Result<String> {
+    let output = TokioCommand::new("hostname")
+        .output()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "failed to read local hostname",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if !output.status.success() {
+        return Ok("localhost".to_owned());
+    }
+    Ok(sanitize_name(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
+}
+
+async fn remote_hostname(target: &str) -> gumgum_core::Result<String> {
+    let output = TokioCommand::new("ssh")
+        .arg(target)
+        .arg("hostname")
+        .output()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "failed to read remote hostname",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if !output.status.success() {
+        return Err(GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "remote hostname failed",
+        )
+        .build());
+    }
+    Ok(sanitize_name(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
+}
+
+fn sanitize_name(value: &str) -> String {
+    let name: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    name.trim_matches('-').to_owned()
 }
 
 async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
@@ -227,29 +330,36 @@ async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
     })
 }
 
-async fn install_gumgumd(args: SetupArgs, test_domain: String) -> gumgum_core::Result<SetupReport> {
-    let target = ssh_target(args.user.as_deref(), &args.host);
-    let remote_gumgumd = build_remote_gumgumd(&target).await?;
-    let install_mode = detect_install_mode(&target).await?;
-    match install_mode {
-        InstallMode::System => install_system_service(&target, &remote_gumgumd).await?,
-        InstallMode::User => install_user_service(&target, &remote_gumgumd).await?,
+async fn install_gumgumd(setup: ResolvedSetup) -> gumgum_core::Result<SetupReport> {
+    if setup.local {
+        build_local_gumgumd().await?;
+        install_local_user_service().await?;
+    } else {
+        let target = ssh_target(setup.user.as_deref(), &setup.host);
+        let remote_gumgumd = build_remote_gumgumd(&target).await?;
+        let install_mode = detect_install_mode(&target).await?;
+        match install_mode {
+            InstallMode::System => install_system_service(&target, &remote_gumgumd).await?,
+            InstallMode::User => install_user_service(&target, &remote_gumgumd).await?,
+        }
     }
-    ping_host(&args.host).await?;
+    ping_host(&setup.host).await?;
+    let health_url = format!("http://{}:7777/healthz", setup.host);
     save_server(ServerRecord {
-        name: args.host.clone(),
-        host: args.host.clone(),
-        root_domain: args.root_domain.clone(),
-        test_domain: test_domain.clone(),
-        health_url: format!("http://{}:7777/healthz", args.host),
+        name: setup.name.clone(),
+        host: setup.host.clone(),
+        root_domain: setup.root_domain.clone(),
+        test_domain: setup.test_domain.clone(),
+        health_url: health_url.clone(),
     })?;
     Ok(SetupReport {
         ok: true,
-        host: args.host.clone(),
-        root_domain: args.root_domain,
-        test_domain,
+        name: setup.name,
+        host: setup.host,
+        root_domain: setup.root_domain,
+        test_domain: setup.test_domain,
         service: "gumgumd".to_owned(),
-        health_url: format!("http://{}:7777/healthz", args.host),
+        health_url,
         actions: setup_actions(),
     })
 }
@@ -258,6 +368,110 @@ async fn install_gumgumd(args: SetupArgs, test_domain: String) -> gumgum_core::R
 enum InstallMode {
     System,
     User,
+}
+
+async fn build_local_gumgumd() -> gumgum_core::Result<()> {
+    let root = workspace_root().ok_or_else(|| {
+        GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "could not locate workspace root",
+        )
+        .likely_cause("gumgum setup currently expects to run from a Cargo workspace checkout")
+        .build()
+    })?;
+    run_command(
+        TokioCommand::new("cargo")
+            .arg("build")
+            .arg("-p")
+            .arg("gumgumd")
+            .current_dir(root),
+    )
+    .await
+}
+
+async fn install_local_user_service() -> gumgum_core::Result<()> {
+    let root = workspace_root().ok_or_else(|| {
+        GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "could not locate workspace root",
+        )
+        .build()
+    })?;
+    let gumgumd = root.join("target/debug/gumgumd");
+    let home = std::env::var("HOME").map_err(|source| {
+        GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "could not read HOME")
+            .likely_cause(source.to_string())
+            .build()
+    })?;
+    fs::create_dir_all(format!("{home}/.local/bin")).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "could not create ~/.local/bin",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    fs::copy(&gumgumd, format!("{home}/.local/bin/gumgumd")).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "could not install local gumgumd",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    run_command(
+        TokioCommand::new("chmod")
+            .arg("0755")
+            .arg(format!("{home}/.local/bin/gumgumd")),
+    )
+    .await?;
+    fs::create_dir_all(format!("{home}/.config/systemd/user")).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "could not create user systemd dir",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    fs::write(
+        format!("{home}/.config/systemd/user/gumgumd.service"),
+        user_systemd_service(),
+    )
+    .map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "could not write local user service",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    run_command(
+        TokioCommand::new("systemctl")
+            .arg("--user")
+            .arg("daemon-reload"),
+    )
+    .await?;
+    run_command(
+        TokioCommand::new("systemctl")
+            .arg("--user")
+            .arg("enable")
+            .arg("--now")
+            .arg("gumgumd"),
+    )
+    .await?;
+    run_command(
+        TokioCommand::new("systemctl")
+            .arg("--user")
+            .arg("restart")
+            .arg("gumgumd"),
+    )
+    .await
 }
 
 async fn build_remote_gumgumd(target: &str) -> gumgum_core::Result<String> {
@@ -537,5 +751,11 @@ mod tests {
             super::ssh_target(Some("root"), "192.168.0.3"),
             "root@192.168.0.3"
         );
+    }
+
+    #[test]
+    fn sanitizes_names() {
+        assert_eq!(super::sanitize_name("Starbase2.local"), "starbase2-local");
+        assert_eq!(super::sanitize_name("192.168.0.3"), "192-168-0-3");
     }
 }
