@@ -30,6 +30,7 @@ enum Command {
     Ping(PingArgs),
     Doctor,
     Version,
+    Init(InitArgs),
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),
@@ -49,6 +50,26 @@ struct PingArgs {
     host: String,
     #[arg(long)]
     user: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct InitArgs {
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long, default_value = "worker")]
+    kind: InitKind,
+    #[arg(long, default_value_t = 3000)]
+    port: u16,
+    #[arg(long)]
+    root_domain: Option<String>,
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Clone, Debug, clap::ValueEnum)]
+enum InitKind {
+    Workspace,
+    Worker,
 }
 
 #[derive(Debug, Args)]
@@ -141,6 +162,10 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Version => {
             print_value(cli.json, &version_report());
         }
+        Command::Init(args) => {
+            let report = init_manifest(args, cli.dry_run)?;
+            print_value(cli.json, &report);
+        }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
             if cli.dry_run {
@@ -185,6 +210,92 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         },
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct InitReport {
+    ok: bool,
+    path: String,
+    manifest_kind: &'static str,
+    created: bool,
+    message: String,
+}
+
+fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitReport> {
+    let path = PathBuf::from("gumgum.toml");
+    let name = args.name.unwrap_or_else(default_project_name);
+    let raw = match args.kind {
+        InitKind::Workspace => workspace_manifest(&name, args.root_domain.as_deref()),
+        InitKind::Worker => worker_manifest(&name, args.port),
+    };
+
+    if path.exists() && !args.force {
+        validate_path(&path)?;
+        return Ok(InitReport {
+            ok: true,
+            path: path.display().to_string(),
+            manifest_kind: match args.kind {
+                InitKind::Workspace => "workspace",
+                InitKind::Worker => "worker",
+            },
+            created: false,
+            message: "gumgum.toml already exists; use --force to overwrite".to_owned(),
+        });
+    }
+
+    if !dry_run {
+        fs::write(&path, raw).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not write gumgum.toml",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        validate_path(&path)?;
+    }
+
+    Ok(InitReport {
+        ok: true,
+        path: path.display().to_string(),
+        manifest_kind: match args.kind {
+            InitKind::Workspace => "workspace",
+            InitKind::Worker => "worker",
+        },
+        created: !dry_run,
+        message: if dry_run {
+            "would create gumgum.toml".to_owned()
+        } else {
+            "created gumgum.toml".to_owned()
+        },
+    })
+}
+
+fn default_project_name() -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .map(|name| sanitize_name(&name))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "hello".to_owned())
+}
+
+fn workspace_manifest(name: &str, root_domain: Option<&str>) -> String {
+    let mut raw = format!("[workspace]\nname = \"{name}\"\nmembers = [\"apps/*\"]\n");
+    if let Some(root_domain) = root_domain {
+        raw.push_str(&format!("root_domain = \"{root_domain}\"\n"));
+    }
+    raw
+}
+
+fn worker_manifest(name: &str, port: u16) -> String {
+    format!(
+        "[worker]\nname = \"{name}\"\nbuild_context = \".\"\nport = {port}\nhealth = \"/healthz\"\n\n[[ingress]]\nname = \"web\"\nprotocol = \"http\"\nlocal_domain = \"{name}.local\"\n"
+    )
 }
 
 #[derive(Debug, Serialize)]
