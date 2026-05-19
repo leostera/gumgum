@@ -32,6 +32,7 @@ enum Command {
     Version,
     Init(InitArgs),
     Deploy(DeployArgs),
+    Logs(LogsArgs),
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),
@@ -57,6 +58,20 @@ struct PingArgs {
 struct DeployArgs {
     #[arg(default_value = "gumgum.toml")]
     path: PathBuf,
+    #[arg(long)]
+    host: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct LogsArgs {
+    #[arg(default_value = "gumgum.toml")]
+    path: PathBuf,
+    #[arg(long, short)]
+    follow: bool,
+    #[arg(long)]
+    host: Option<String>,
+    #[arg(long, default_value_t = 100)]
+    tail: u32,
 }
 
 #[derive(Debug, Args)]
@@ -174,8 +189,11 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             print_value(cli.json, &report);
         }
         Command::Deploy(args) => {
-            let report = deploy_plan(args, cli.dry_run)?;
+            let report = deploy(args, cli.dry_run, cli.json).await?;
             print_value(cli.json, &report);
+        }
+        Command::Logs(args) => {
+            logs(args, cli.json).await?;
         }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
@@ -224,47 +242,243 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
 }
 
 #[derive(Debug, Serialize)]
-struct DeployPlanReport {
+struct DeployReport {
     ok: bool,
     dry_run: bool,
     path: String,
     worker: String,
+    host: Option<String>,
     build_context: Option<String>,
-    image: Option<String>,
-    port: Option<u16>,
+    image: String,
+    container: String,
+    port: u16,
     routes: Vec<String>,
+    health_url: Option<String>,
     message: String,
 }
 
-fn deploy_plan(args: DeployArgs, dry_run: bool) -> gumgum_core::Result<DeployPlanReport> {
-    if !dry_run {
-        return Err(GumgumError::structured(
-            Subsystem::Cli,
-            ErrorCode::NotImplemented,
-            "gumgum deploy currently supports --dry-run only",
-        )
-        .next_command("gumgum --dry-run deploy")
-        .build());
-    }
+async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Result<DeployReport> {
     let manifest = load_worker_path(&args.path)?;
-    Ok(deploy_plan_report(args.path, manifest))
+    let server = match args.host {
+        Some(host) => Some(ServerRecord {
+            name: sanitize_name(&host),
+            host: host.clone(),
+            root_domain: String::new(),
+            test_domain: String::new(),
+            health_url: format!("http://{host}:7777/healthz"),
+        }),
+        None => load_default_server()?,
+    };
+    let report = deploy_report(args.path.clone(), &manifest, server.as_ref(), dry_run);
+    if dry_run {
+        return Ok(report);
+    }
+    let server = server.ok_or_else(|| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::InvalidArgs,
+            "no GumGum.dev server configured",
+        )
+        .next_command("gumgum setup <host> --root-domain <domain>")
+        .build()
+    })?;
+    run_remote_deploy(&server, &manifest, &report, quiet).await?;
+    Ok(DeployReport {
+        ok: true,
+        dry_run: false,
+        message: format!("deployed {} to {}", report.worker, server.host),
+        ..report
+    })
 }
 
-fn deploy_plan_report(path: PathBuf, manifest: WorkerManifest) -> DeployPlanReport {
-    DeployPlanReport {
+fn deploy_report(
+    path: PathBuf,
+    manifest: &WorkerManifest,
+    server: Option<&ServerRecord>,
+    dry_run: bool,
+) -> DeployReport {
+    let worker = manifest.worker.name.clone();
+    let image = format!("gumgum/{worker}:latest");
+    let container = format!("gumgum-{}", sanitize_name(&worker));
+    let routes: Vec<String> = manifest
+        .ingress
+        .iter()
+        .map(|ingress| ingress.local_domain.clone())
+        .collect();
+    let health_url = routes.first().map(|route| {
+        let display_route = server
+            .map(|server| {
+                let root_suffix = format!(".{}", server.root_domain);
+                if route.ends_with(&root_suffix) {
+                    format!(
+                        "{}.{test_domain}",
+                        route.trim_end_matches(&root_suffix),
+                        test_domain = server.test_domain
+                    )
+                } else {
+                    route.clone()
+                }
+            })
+            .unwrap_or_else(|| route.clone());
+        format!(
+            "http://{display_route}{}",
+            manifest.worker.health.as_deref().unwrap_or("/healthz")
+        )
+    });
+    DeployReport {
         ok: true,
-        dry_run: true,
+        dry_run,
         path: path.display().to_string(),
-        worker: manifest.worker.name,
-        build_context: manifest.worker.build_context,
-        image: manifest.worker.image,
-        port: manifest.worker.port,
-        routes: manifest
-            .ingress
-            .into_iter()
-            .map(|ingress| ingress.local_domain)
-            .collect(),
-        message: "validated worker manifest; no containers changed".to_owned(),
+        worker,
+        host: server.map(|server| server.host.clone()),
+        build_context: manifest.worker.build_context.clone(),
+        image,
+        container,
+        port: manifest.worker.port.unwrap_or(3000),
+        routes,
+        health_url,
+        message: if dry_run {
+            "validated worker manifest; no containers changed".to_owned()
+        } else {
+            "deployment pending".to_owned()
+        },
+    }
+}
+
+async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
+    let manifest = load_worker_path(&args.path)?;
+    let server = match args.host {
+        Some(host) => host,
+        None => {
+            load_default_server()?
+                .ok_or_else(|| {
+                    GumgumError::structured(
+                        Subsystem::Config,
+                        ErrorCode::InvalidArgs,
+                        "no GumGum.dev server configured",
+                    )
+                    .next_command("gumgum setup <host> --root-domain <domain>")
+                    .build()
+                })?
+                .host
+        }
+    };
+    let container = format!("gumgum-{}", sanitize_name(&manifest.worker.name));
+    let mut cmd = TokioCommand::new("ssh");
+    cmd.arg(server).arg(format!(
+        "docker logs --tail {}{} {}",
+        args.tail,
+        if args.follow { " -f" } else { "" },
+        shell_quote(&container)
+    ));
+    run_command_streaming(&mut cmd, quiet).await
+}
+
+async fn run_remote_deploy(
+    server: &ServerRecord,
+    manifest: &WorkerManifest,
+    report: &DeployReport,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    let context = manifest.worker.build_context.as_deref().unwrap_or(".");
+    let remote_dir = format!("~/.gumgum/deploy/{}", shell_quote(&report.worker));
+    let host = &server.host;
+    progress(quiet, format!("syncing build context to {host}"));
+    run_command_streaming(
+        TokioCommand::new("ssh")
+            .arg(host)
+            .arg(format!("mkdir -p {remote_dir}")),
+        quiet,
+    )
+    .await?;
+    run_command_streaming(
+        TokioCommand::new("rsync")
+            .arg("-az")
+            .arg("--delete")
+            .arg(format!("{}/", context.trim_end_matches('/')))
+            .arg(format!("{host}:~/.gumgum/deploy/{}/", report.worker)),
+        quiet,
+    )
+    .await?;
+
+    let route = deploy_route(report, server);
+    let script = format!(
+        "set -e; cd ~/.gumgum/deploy/{worker}; test -f Dockerfile; docker build -t {image} .; docker rm -f {container} >/dev/null 2>&1 || true; docker run -d --name {container} --restart unless-stopped --network caddy-network --label caddy={route} --label 'caddy.reverse_proxy={{{{upstreams {port}}}}}' --label caddy.tls=internal {image}; for i in $(seq 1 20); do ip=$(docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {container}); if [ -n \"$ip\" ] && curl -fsS http://$ip:{port}{health} >/dev/null 2>&1; then exit 0; fi; sleep 0.5; done; docker logs {container}; exit 1",
+        worker = shell_quote(&report.worker),
+        image = shell_quote(&report.image),
+        container = shell_quote(&report.container),
+        route = shell_quote(&route),
+        port = report.port,
+        health = shell_quote(manifest.worker.health.as_deref().unwrap_or("/healthz")),
+    );
+    progress(
+        quiet,
+        format!("building and running {} on {host}", report.worker),
+    );
+    run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await?;
+    verify_route(
+        server,
+        &route,
+        manifest.worker.health.as_deref().unwrap_or("/healthz"),
+        quiet,
+    )
+    .await
+}
+
+fn deploy_route(report: &DeployReport, server: &ServerRecord) -> String {
+    let test_suffix = format!(".{}", server.test_domain);
+    let root_suffix = format!(".{}", server.root_domain);
+    report
+        .routes
+        .first()
+        .map(|route| {
+            if route.ends_with(&root_suffix) {
+                format!("{}{}", route.trim_end_matches(&root_suffix), test_suffix)
+            } else {
+                route.clone()
+            }
+        })
+        .unwrap_or_else(|| format!("{}.{}", report.worker, server.test_domain))
+}
+
+async fn verify_route(
+    server: &ServerRecord,
+    route: &str,
+    health: &str,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    progress(quiet, format!("verifying http://{route}{health}"));
+    let url = format!("http://{}{health}", server.host);
+    let status = TokioCommand::new("curl")
+        .arg("-fsS")
+        .arg("-H")
+        .arg(format!("Host: {route}"))
+        .arg(url)
+        .status()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to verify deployed route",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::Io,
+            "deployed route did not respond",
+        )
+        .likely_cause(format!("curl exited with {status}"))
+        .next_command(format!(
+            "curl -H 'Host: {route}' http://{}{health}",
+            server.host
+        ))
+        .build())
     }
 }
 
@@ -412,7 +626,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(body).encode())
 
     def log_message(self, format, *args):
-        return
+        print("%s - %s" % (self.address_string(), format % args), flush=True)
 
 HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 "#,

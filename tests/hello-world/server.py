@@ -20,6 +20,6 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(body).encode())
 
     def log_message(self, format, *args):
-        return
+        print("%s - %s" % (self.address_string(), format % args), flush=True)
 
 HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
