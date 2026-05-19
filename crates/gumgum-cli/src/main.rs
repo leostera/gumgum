@@ -283,6 +283,9 @@ async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Re
         .build()
     })?;
     run_remote_deploy(&server, &manifest, &report, quiet).await?;
+    if let Some(route) = report.health_url.as_deref().and_then(route_from_health_url) {
+        configure_client_host_route(route, &server.host, quiet).await?;
+    }
     Ok(DeployReport {
         ok: true,
         dry_run: false,
@@ -857,6 +860,41 @@ async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
     })
 }
 
+async fn configure_host_dns(test_domain: &str, quiet: bool) -> gumgum_core::Result<()> {
+    progress(quiet, format!("configuring host DNS for *.{test_domain}"));
+    let domain = shell_escape_plain(test_domain);
+    let script = format!(
+        "set -e; ip=$(hostname -I 2>/dev/null | awk '{{print $1}}'); [ -n \"$ip\" ] || ip=127.0.0.1; if docker inspect dnsmasq >/dev/null 2>&1 && [ -w /apps/fleet/gateway/dnsmasq/dnsmasq.conf ]; then if ! grep -q '^address=/{domain}/' /apps/fleet/gateway/dnsmasq/dnsmasq.conf; then printf '\n# GumGum.dev test domain\naddress=/{domain}/%s\n' \"$ip\" >> /apps/fleet/gateway/dnsmasq/dnsmasq.conf; fi; docker restart dnsmasq >/dev/null; fi"
+    );
+    run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
+}
+
+fn route_from_health_url(url: &str) -> Option<&str> {
+    url.strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .and_then(|rest| rest.split('/').next())
+}
+
+async fn configure_client_host_route(
+    route: &str,
+    host: &str,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    if std::env::consts::OS != "macos" {
+        return Ok(());
+    }
+    progress(
+        quiet,
+        format!("configuring local hosts entry for {route} -> {host}"),
+    );
+    let route = shell_escape_plain(route);
+    let host = shell_escape_plain(host);
+    let script = format!(
+        "set -e; if [ ! -t 0 ] && ! sudo -n true 2>/dev/null; then echo 'warning: run this to enable browser/curl route: printf \"{host} {route}\\n\" | sudo tee -a /etc/hosts' >&2; exit 0; fi; if ! grep -q '[[:space:]]{route}$' /etc/hosts; then printf '{host} {route}\n' | sudo tee -a /etc/hosts >/dev/null; fi; sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder 2>/dev/null || true"
+    );
+    run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
+}
+
 async fn configure_client_resolver(
     test_domain: &str,
     host: &str,
@@ -952,6 +990,7 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
             "installing local binary into ~/.gumgum/bin and daemon service into ~/.gumgum/daemon",
         );
         install_local_user_service(quiet).await?;
+        configure_host_dns(&setup.test_domain, quiet).await?;
     } else {
         let target = ssh_target(setup.user.as_deref(), &setup.host);
         progress(quiet, format!("running remote bootstrap on {target}"));
