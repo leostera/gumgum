@@ -433,7 +433,7 @@ async fn run_remote_deploy(
     build_result?;
 
     let script = format!(
-        "set -e; docker pull {image}; docker rm -f {container} >/dev/null 2>&1 || true; docker run -d --name {container} --restart unless-stopped --network caddy-network --label caddy={route} --label 'caddy.reverse_proxy={{{{upstreams {port}}}}}' --label caddy.tls=internal {image}; for i in $(seq 1 20); do ip=$(docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {container}); if [ -n \"$ip\" ] && curl -fsS http://$ip:{port}{health} >/dev/null 2>&1; then exit 0; fi; sleep 0.5; done; docker logs {container}; exit 1",
+        "set -e; network=caddy-network; if docker inspect -f '{{{{.State.Running}}}}' gumgum-caddy 2>/dev/null | grep -q true; then network=gumgum-network; fi; docker pull {image}; docker rm -f {container} >/dev/null 2>&1 || true; docker run -d --name {container} --restart unless-stopped --network $network --label caddy={route} --label 'caddy.reverse_proxy={{{{upstreams {port}}}}}' --label caddy.tls=internal {image}; for i in $(seq 1 20); do ip=$(docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {container}); if [ -n \"$ip\" ] && curl -fsS http://$ip:{port}{health} >/dev/null 2>&1; then exit 0; fi; sleep 0.5; done; docker logs {container}; exit 1",
         image = shell_quote(&report.image),
         container = shell_quote(&report.container),
         route = shell_quote(&route),
@@ -454,13 +454,38 @@ async fn run_remote_deploy(
     .await
 }
 
+async fn ensure_local_platform(quiet: bool) -> gumgum_core::Result<()> {
+    progress(quiet, "ensuring GumGum.dev Docker network");
+    run_command_streaming(
+        TokioCommand::new("sh").arg("-c").arg("docker network inspect gumgum-network >/dev/null 2>&1 || docker network create gumgum-network >/dev/null"),
+        quiet,
+    )
+    .await?;
+
+    ensure_local_registry(quiet).await?;
+    ensure_local_dnsmasq(quiet).await?;
+    ensure_local_caddy(quiet).await
+}
+
 async fn ensure_local_registry(quiet: bool) -> gumgum_core::Result<()> {
     progress(quiet, "ensuring GumGum.dev registry container");
     run_command_streaming(
-        TokioCommand::new("sh").arg("-c").arg("docker inspect gumgum-registry >/dev/null 2>&1 && docker start gumgum-registry >/dev/null || docker run -d --name gumgum-registry --restart unless-stopped -p 127.0.0.1:55000:5000 registry:2 >/dev/null"),
+        TokioCommand::new("sh").arg("-c").arg("docker inspect gumgum-registry >/dev/null 2>&1 && docker start gumgum-registry >/dev/null || docker run -d --name gumgum-registry --restart unless-stopped --network gumgum-network -p 127.0.0.1:55000:5000 registry:2 >/dev/null"),
         quiet,
     )
     .await
+}
+
+async fn ensure_local_dnsmasq(quiet: bool) -> gumgum_core::Result<()> {
+    progress(quiet, "ensuring GumGum.dev dnsmasq container");
+    let script = "set -e; mkdir -p ~/.gumgum/dnsmasq; test -f ~/.gumgum/dnsmasq/dnsmasq.conf || printf 'listen-address=0.0.0.0\nbind-interfaces\nno-resolv\nserver=1.1.1.1\ncache-size=10000\n' > ~/.gumgum/dnsmasq/dnsmasq.conf; if docker inspect gumgum-dnsmasq >/dev/null 2>&1; then docker start gumgum-dnsmasq >/dev/null; elif docker ps --format '{{.Ports}}' | grep -qE '(^|, )0\\.0\\.0\\.0:53->|(^|, )[^ ]*:53->|:53->'; then echo 'warning: port 53 is already in use; gumgum-dnsmasq not started' >&2; else docker run -d --name gumgum-dnsmasq --restart unless-stopped --network gumgum-network -p 53:53/tcp -p 53:53/udp -v $HOME/.gumgum/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro jpillora/dnsmasq:latest >/dev/null; fi";
+    run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
+}
+
+async fn ensure_local_caddy(quiet: bool) -> gumgum_core::Result<()> {
+    progress(quiet, "ensuring GumGum.dev Caddy container");
+    let script = "set -e; if docker inspect gumgum-caddy >/dev/null 2>&1; then docker start gumgum-caddy >/dev/null; elif docker ps --format '{{.Ports}}' | grep -qE '(^|, )0\\.0\\.0\\.0:(80|443)->|(^|, )[^ ]*:(80|443)->'; then echo 'warning: ports 80/443 are already in use; gumgum-caddy not started' >&2; else docker run -d --name gumgum-caddy --restart unless-stopped --network gumgum-network -p 80:80 -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock:ro lucaslorentz/caddy-docker-proxy:2.9-alpine >/dev/null; fi";
+    run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
 }
 
 async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Result<()> {
@@ -864,7 +889,7 @@ async fn configure_host_dns(test_domain: &str, quiet: bool) -> gumgum_core::Resu
     progress(quiet, format!("configuring host DNS for *.{test_domain}"));
     let domain = shell_escape_plain(test_domain);
     let script = format!(
-        "set -e; ip=$(hostname -I 2>/dev/null | awk '{{print $1}}'); [ -n \"$ip\" ] || ip=127.0.0.1; if docker inspect dnsmasq >/dev/null 2>&1 && [ -w /apps/fleet/gateway/dnsmasq/dnsmasq.conf ]; then if ! grep -q '^address=/{domain}/' /apps/fleet/gateway/dnsmasq/dnsmasq.conf; then printf '\n# GumGum.dev test domain\naddress=/{domain}/%s\n' \"$ip\" >> /apps/fleet/gateway/dnsmasq/dnsmasq.conf; fi; docker restart dnsmasq >/dev/null; fi"
+        "set -e; ip=$(hostname -I 2>/dev/null | awk '{{print $1}}'); [ -n \"$ip\" ] || ip=127.0.0.1; if docker inspect gumgum-dnsmasq >/dev/null 2>&1 && [ -w $HOME/.gumgum/dnsmasq/dnsmasq.conf ]; then if ! grep -q '^address=/{domain}/' $HOME/.gumgum/dnsmasq/dnsmasq.conf; then printf '\n# GumGum.dev test domain\naddress=/{domain}/%s\n' \"$ip\" >> $HOME/.gumgum/dnsmasq/dnsmasq.conf; fi; docker restart gumgum-dnsmasq >/dev/null; fi; if docker inspect dnsmasq >/dev/null 2>&1 && [ -w /apps/fleet/gateway/dnsmasq/dnsmasq.conf ]; then if ! grep -q '^address=/{domain}/' /apps/fleet/gateway/dnsmasq/dnsmasq.conf; then printf '\n# GumGum.dev test domain\naddress=/{domain}/%s\n' \"$ip\" >> /apps/fleet/gateway/dnsmasq/dnsmasq.conf; fi; docker restart dnsmasq >/dev/null; fi"
     );
     run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
 }
@@ -950,7 +975,7 @@ async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
 }
 
 async fn run_daemon() -> gumgum_core::Result<()> {
-    ensure_local_registry(false).await?;
+    ensure_local_platform(false).await?;
     let app = Router::new()
         .route("/healthz", get(daemon_healthz))
         .route("/v0/status", get(daemon_status));
