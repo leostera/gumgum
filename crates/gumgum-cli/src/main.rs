@@ -857,6 +857,37 @@ async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
     })
 }
 
+async fn configure_client_resolver(
+    test_domain: &str,
+    host: &str,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    match std::env::consts::OS {
+        "macos" => {
+            progress(
+                quiet,
+                format!("configuring local resolver for {test_domain} -> {host}"),
+            );
+            let script = format!(
+                "set -e; if [ ! -t 0 ] && ! sudo -n true 2>/dev/null; then echo 'warning: run this to enable browser DNS: sudo mkdir -p /etc/resolver && printf nameserver\\ {host}\\\\n | sudo tee /etc/resolver/{domain}' >&2; exit 0; fi; sudo mkdir -p /etc/resolver; printf 'nameserver {host}\n' | sudo tee /etc/resolver/{domain} >/dev/null; sudo dscacheutil -flushcache",
+                host = shell_escape_plain(host),
+                domain = shell_escape_plain(test_domain)
+            );
+            run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
+        }
+        _ => {
+            progress(
+                quiet,
+                format!(
+                    "skipping automatic resolver setup on {}; configure {test_domain} to use nameserver {host}",
+                    std::env::consts::OS
+                ),
+            );
+            Ok(())
+        }
+    }
+}
+
 async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
     let mut last_error = None;
     for _ in 0..20 {
@@ -936,6 +967,9 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
         test_domain: setup.test_domain.clone(),
         health_url: health_url.clone(),
     })?;
+    if !setup.local {
+        configure_client_resolver(&setup.test_domain, &setup.host, quiet).await?;
+    }
     Ok(SetupReport {
         ok: true,
         name: setup.name,
@@ -1149,6 +1183,7 @@ async fn run_command_streaming(cmd: &mut TokioCommand, quiet: bool) -> gumgum_co
         return run_command(cmd).await;
     }
     let status = cmd
+        .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
@@ -1209,6 +1244,13 @@ fn ssh_target(user: Option<&str>, host: &str) -> String {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_escape_plain(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
+        .collect()
 }
 
 fn user_systemd_service() -> &'static str {
