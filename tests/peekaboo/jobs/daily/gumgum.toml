@@ -1,0 +1,22 @@
+[project]
+namespace = "root"
+
+[worker]
+name = "peekaboo-daily"
+image = "./Dockerfile"
+build_context = "."
+command = "python3 daily.py"
+health = "/healthz"
+
+[[database]]
+name = "main"
+dns = "peekaboo.db.leostera.dev"
+binding = "DATABASE_URL"
+access = "read-write"
+
+[observability]
+enabled = true
+
+[limits]
+cpus = 0.5
+memory_mb = 512

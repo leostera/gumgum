@@ -124,6 +124,60 @@ pub struct GraphReport {
     pub ok: bool,
     pub format: String,
     pub graph: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<GraphNode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ObjectRequest {
+    pub kind: String,
+    pub name: String,
+    pub namespace: String,
+    pub root_domain: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ObjectReport {
+    pub ok: bool,
+    pub kind: String,
+    pub name: String,
+    pub dns: String,
+    pub provider: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BindingRequest {
+    pub object_kind: String,
+    pub object_name: String,
+    pub worker: String,
+    pub binding: String,
+    pub access: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BindingReport {
+    pub ok: bool,
+    pub object: String,
+    pub worker: String,
+    pub binding: String,
+    pub message: String,
 }
 
 pub fn not_configured_status() -> StatusReport {

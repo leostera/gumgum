@@ -6,7 +6,8 @@ use axum::{
 };
 use clap::{Args, Parser, Subcommand};
 use gumgum_api::{
-    DeployApplyReport, DeployRequest, GraphReport, LogsReport, PingReport, ServerListReport,
+    BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge, GraphNode,
+    GraphReport, LogsReport, ObjectReport, ObjectRequest, PingReport, ServerListReport,
     ServerRecord, SetupPlan, SetupReport, not_configured_status, setup_actions,
 };
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
@@ -40,6 +41,8 @@ enum Command {
     Deploy(DeployArgs),
     Logs(LogsArgs),
     Graph(GraphArgs),
+    Db(ObjectArgs),
+    Kv(ObjectArgs),
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),
@@ -88,6 +91,42 @@ struct DeployArgs {
 struct GraphArgs {
     #[arg(long)]
     host: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ObjectArgs {
+    #[command(subcommand)]
+    command: ObjectCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ObjectCommand {
+    Create(CreateObjectArgs),
+    Bind(BindObjectArgs),
+}
+
+#[derive(Debug, Args)]
+struct CreateObjectArgs {
+    name: String,
+    #[arg(long)]
+    host: Option<String>,
+    #[arg(long, default_value = "root")]
+    namespace: String,
+    #[arg(long)]
+    root_domain: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct BindObjectArgs {
+    name: String,
+    #[arg(long)]
+    host: Option<String>,
+    #[arg(long = "to")]
+    to: Option<String>,
+    #[arg(long = "as")]
+    binding: String,
+    #[arg(long, default_value = "read-write")]
+    access: String,
 }
 
 #[derive(Debug, Args)]
@@ -241,6 +280,12 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         }
         Command::Graph(args) => {
             graph(args, cli.json).await?;
+        }
+        Command::Db(args) => {
+            object_command("db", args, cli.json).await?;
+        }
+        Command::Kv(args) => {
+            object_command("kv", args, cli.json).await?;
         }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
@@ -514,6 +559,138 @@ async fn graph(args: GraphArgs, json: bool) -> gumgum_core::Result<()> {
         println!("{}", report.graph);
     }
     Ok(())
+}
+
+async fn object_command(kind: &str, args: ObjectArgs, json: bool) -> gumgum_core::Result<()> {
+    match args.command {
+        ObjectCommand::Create(args) => create_object(kind, args, json).await,
+        ObjectCommand::Bind(args) => bind_object(kind, args, json).await,
+    }
+}
+
+async fn create_object(kind: &str, args: CreateObjectArgs, json: bool) -> gumgum_core::Result<()> {
+    let server = resolve_server(args.host)?;
+    let root_domain = args
+        .root_domain
+        .unwrap_or_else(|| server.root_domain.clone());
+    let url = format!("http://{}:7777/v0/objects", server.host);
+    let request = ObjectRequest {
+        kind: kind.to_owned(),
+        name: args.name,
+        namespace: args.namespace,
+        root_domain,
+    };
+    let report: ObjectReport = reqwest::Client::new()
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to call gumgumd object API",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .error_for_status()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd object API returned an error",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .json()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd object API returned invalid JSON",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    print_value(json, &report);
+    Ok(())
+}
+
+async fn bind_object(kind: &str, args: BindObjectArgs, json: bool) -> gumgum_core::Result<()> {
+    let server = resolve_server(args.host)?;
+    let worker = match args.to {
+        Some(worker) => worker,
+        None => load_worker_path(&PathBuf::from("gumgum.toml"))?.worker.name,
+    };
+    let url = format!("http://{}:7777/v0/bindings", server.host);
+    let request = BindingRequest {
+        object_kind: kind.to_owned(),
+        object_name: args.name,
+        worker,
+        binding: args.binding,
+        access: args.access,
+    };
+    let report: BindingReport = reqwest::Client::new()
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to call gumgumd binding API",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .error_for_status()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd binding API returned an error",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .json()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd binding API returned invalid JSON",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    print_value(json, &report);
+    Ok(())
+}
+
+fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
+    match host {
+        Some(host) => Ok(ServerRecord {
+            name: sanitize_name(&host),
+            host: host.clone(),
+            root_domain: String::new(),
+            test_domain: String::new(),
+            health_url: format!("http://{host}:7777/healthz"),
+        }),
+        None => load_default_server()?.ok_or_else(|| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::InvalidArgs,
+                "no GumGum.dev server configured",
+            )
+            .next_command("gumgum setup <host> --root-domain <domain>")
+            .build()
+        }),
+    }
 }
 
 async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
@@ -1272,6 +1449,8 @@ async fn run_daemon() -> gumgum_core::Result<()> {
         .route("/healthz", get(daemon_healthz))
         .route("/v0/status", get(daemon_status))
         .route("/v0/deploy", post(daemon_deploy))
+        .route("/v0/objects", post(daemon_create_object))
+        .route("/v0/bindings", post(daemon_create_binding))
         .route("/v0/graph", get(daemon_graph))
         .route("/v0/logs/{container}", get(daemon_logs))
         .with_state(state);
@@ -1305,19 +1484,31 @@ async fn daemon_status() -> Json<gumgum_core::StatusReport> {
 
 async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {
     let path = (*state.graph_path).clone();
-    let graph = tokio::task::spawn_blocking(move || render_mermaid_graph(&path))
+    let (nodes, edges) = tokio::task::spawn_blocking(move || load_graph(&path))
         .await
         .ok()
         .and_then(Result::ok)
-        .unwrap_or_else(|| "graph TD\n  gumgumd[gumgumd]\n".to_owned());
+        .unwrap_or_else(|| {
+            (
+                vec![GraphNode {
+                    id: "gumgumd".to_owned(),
+                    kind: "daemon".to_owned(),
+                    label: "gumgumd".to_owned(),
+                }],
+                Vec::new(),
+            )
+        });
+    let graph = render_mermaid(&nodes, &edges);
     Json(GraphReport {
         ok: true,
         format: "mermaid".to_owned(),
         graph,
+        nodes,
+        edges,
     })
 }
 
-fn render_mermaid_graph(path: &PathBuf) -> gumgum_core::Result<String> {
+fn load_graph(path: &PathBuf) -> gumgum_core::Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
     init_graph_db(path)?;
     let conn = Connection::open(path).map_err(|source| {
         GumgumError::structured(
@@ -1328,7 +1519,21 @@ fn render_mermaid_graph(path: &PathBuf) -> gumgum_core::Result<String> {
         .likely_cause(source.to_string())
         .build()
     })?;
-    let mut graph = "graph TD\n  gumgumd[gumgumd]\n  registry[gumgum-registry]\n  dnsmasq[gumgum-dnsmasq]\n  caddy[gumgum-caddy]\n  gumgumd --> registry\n  gumgumd --> dnsmasq\n  gumgumd --> caddy\n".to_owned();
+    let mut nodes = vec![
+        graph_node("gumgumd", "daemon", "gumgumd"),
+        graph_node("provider/registry.platform", "provider", "gumgum-registry"),
+        graph_node("provider/dnsmasq.platform", "provider", "gumgum-dnsmasq"),
+        graph_node("provider/caddy.gateway", "provider", "gumgum-caddy"),
+        graph_node("provider/postgres.main", "provider", "postgres.main"),
+        graph_node("provider/redis.main", "provider", "redis.main"),
+    ];
+    let mut edges = vec![
+        graph_edge("gumgumd", "provider/registry.platform", "owns"),
+        graph_edge("gumgumd", "provider/dnsmasq.platform", "owns"),
+        graph_edge("gumgumd", "provider/caddy.gateway", "owns"),
+        graph_edge("gumgumd", "provider/postgres.main", "owns"),
+        graph_edge("gumgumd", "provider/redis.main", "owns"),
+    ];
     let mut stmt = conn
         .prepare("SELECT worker, image, container, route FROM desired_deployments ORDER BY worker")
         .map_err(|source| {
@@ -1368,21 +1573,279 @@ fn render_mermaid_graph(path: &PathBuf) -> gumgum_core::Result<String> {
             .likely_cause(source.to_string())
             .build()
         })?;
-        let worker_id = mermaid_id(&format!("worker-{worker}"));
-        let image_id = mermaid_id(&format!("image-{worker}"));
-        let container_id = mermaid_id(&format!("container-{container}"));
-        let route_id = mermaid_id(&format!("route-{route}"));
-        graph.push_str(&format!("  {worker_id}[worker: {worker}]\n"));
-        graph.push_str(&format!("  {image_id}[image: {image}]\n"));
-        graph.push_str(&format!("  {container_id}[container: {container}]\n"));
-        graph.push_str(&format!("  {route_id}[route: {route}]\n"));
-        graph.push_str(&format!("  gumgumd --> {worker_id}\n  {worker_id} --> {image_id}\n  {worker_id} --> {container_id}\n  {worker_id} --> {route_id}\n  registry --> {image_id}\n  caddy --> {route_id}\n  {route_id} --> {container_id}\n"));
+        let worker_id = format!("worker/{worker}");
+        let image_id = format!("image/{worker}");
+        let container_id = format!("container/{container}");
+        let route_id = format!("route/{route}");
+        nodes.push(graph_node(&worker_id, "worker", &worker));
+        nodes.push(graph_node(&image_id, "image", &image));
+        nodes.push(graph_node(&container_id, "container", &container));
+        nodes.push(graph_node(&route_id, "route", &route));
+        edges.push(graph_edge("gumgumd", &worker_id, "owns"));
+        edges.push(graph_edge(&worker_id, &image_id, "created_from"));
+        edges.push(graph_edge(&worker_id, &container_id, "runs"));
+        edges.push(graph_edge(&worker_id, &route_id, "owns"));
+        edges.push(graph_edge("provider/registry.platform", &image_id, "backs"));
+        edges.push(graph_edge("provider/caddy.gateway", &route_id, "routes"));
+        edges.push(graph_edge(&route_id, &container_id, "routes_to"));
     }
-    Ok(graph)
+    let mut stmt = conn
+        .prepare("SELECT kind, name, dns, provider FROM global_objects ORDER BY kind, name")
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not query graph objects",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not read graph objects",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    for row in rows {
+        let (kind, name, dns, provider) = row.map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not decode graph object",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        let object_id = format!("{kind}/{name}");
+        let provider_id = format!("provider/{provider}");
+        nodes.push(graph_node(
+            &object_id,
+            "global_object",
+            &format!("{kind}: {dns}"),
+        ));
+        edges.push(graph_edge(&provider_id, &object_id, "backs"));
+    }
+    let mut stmt = conn
+        .prepare("SELECT object_kind, object_name, worker, binding, access FROM bindings ORDER BY worker, binding")
+        .map_err(|source| {
+            GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not query graph bindings")
+                .likely_cause(source.to_string())
+                .build()
+        })?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not read graph bindings",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    for row in rows {
+        let (kind, name, worker, binding, access) = row.map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not decode graph binding",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        let binding_id = format!("binding/{worker}/{binding}");
+        let worker_id = format!("worker/{worker}");
+        let object_id = format!("{kind}/{name}");
+        nodes.push(graph_node(
+            &binding_id,
+            "binding",
+            &format!("{binding} ({access})"),
+        ));
+        edges.push(graph_edge(&worker_id, &binding_id, "binds"));
+        edges.push(graph_edge(&binding_id, &object_id, "projects_as"));
+    }
+    Ok((nodes, edges))
+}
+
+fn graph_node(id: &str, kind: &str, label: &str) -> GraphNode {
+    GraphNode {
+        id: id.to_owned(),
+        kind: kind.to_owned(),
+        label: label.to_owned(),
+    }
+}
+
+fn graph_edge(from: &str, to: &str, kind: &str) -> GraphEdge {
+    GraphEdge {
+        from: from.to_owned(),
+        to: to.to_owned(),
+        kind: kind.to_owned(),
+    }
+}
+
+fn render_mermaid(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
+    let mut graph = "graph TD\n".to_owned();
+    for node in nodes {
+        graph.push_str(&format!("  {}[{}]\n", mermaid_id(&node.id), node.label));
+    }
+    for edge in edges {
+        graph.push_str(&format!(
+            "  {} -->|{}| {}\n",
+            mermaid_id(&edge.from),
+            edge.kind,
+            mermaid_id(&edge.to)
+        ));
+    }
+    graph
 }
 
 fn mermaid_id(value: &str) -> String {
     sanitize_name(value).replace('-', "_")
+}
+
+async fn daemon_create_object(
+    State(state): State<DaemonState>,
+    Json(request): Json<ObjectRequest>,
+) -> Json<ObjectReport> {
+    let path = (*state.graph_path).clone();
+    let request_for_db = request.clone();
+    let provider = provider_for_object(&request.kind).to_owned();
+    let dns = format!("{}.{}.{}", request.name, request.kind, request.root_domain);
+    let ok = tokio::task::spawn_blocking(move || materialize_object(&path, &request_for_db))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(false);
+    Json(ObjectReport {
+        ok,
+        kind: request.kind,
+        name: request.name,
+        dns,
+        provider,
+        message: "global object materialized in graph".to_owned(),
+    })
+}
+
+async fn daemon_create_binding(
+    State(state): State<DaemonState>,
+    Json(request): Json<BindingRequest>,
+) -> Json<BindingReport> {
+    let path = (*state.graph_path).clone();
+    let request_for_db = request.clone();
+    let ok = tokio::task::spawn_blocking(move || materialize_binding(&path, &request_for_db))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(false);
+    Json(BindingReport {
+        ok,
+        object: format!("{}/{}", request.object_kind, request.object_name),
+        worker: request.worker,
+        binding: request.binding,
+        message: "binding materialized in graph".to_owned(),
+    })
+}
+
+fn provider_for_object(kind: &str) -> &'static str {
+    match kind {
+        "db" | "database" => "postgres.main",
+        "kv" => "redis.main",
+        "bucket" | "blob" => "minio.main",
+        "queue" => "redpanda.main",
+        _ => "manual.main",
+    }
+}
+
+fn materialize_object(path: &PathBuf, request: &ObjectRequest) -> gumgum_core::Result<bool> {
+    init_graph_db(path)?;
+    let conn = Connection::open(path).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not open graph database",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    let dns = format!("{}.{}.{}", request.name, request.kind, request.root_domain);
+    let provider = provider_for_object(&request.kind);
+    conn.execute(
+        "INSERT INTO global_objects (kind, name, namespace, root_domain, dns, provider, status, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ready', CURRENT_TIMESTAMP)
+         ON CONFLICT(kind, name) DO UPDATE SET
+           namespace=excluded.namespace,
+           root_domain=excluded.root_domain,
+           dns=excluded.dns,
+           provider=excluded.provider,
+           status='ready',
+           updated_at=CURRENT_TIMESTAMP",
+        params![request.kind, request.name, request.namespace, request.root_domain, dns, provider],
+    )
+    .map_err(|source| {
+        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not materialize object")
+            .likely_cause(source.to_string())
+            .build()
+    })?;
+    Ok(true)
+}
+
+fn materialize_binding(path: &PathBuf, request: &BindingRequest) -> gumgum_core::Result<bool> {
+    init_graph_db(path)?;
+    let conn = Connection::open(path).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not open graph database",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    conn.execute(
+        "INSERT INTO bindings (object_kind, object_name, worker, binding, access, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+         ON CONFLICT(worker, binding) DO UPDATE SET
+           object_kind=excluded.object_kind,
+           object_name=excluded.object_name,
+           access=excluded.access,
+           updated_at=CURRENT_TIMESTAMP",
+        params![
+            request.object_kind,
+            request.object_name,
+            request.worker,
+            request.binding,
+            request.access
+        ],
+    )
+    .map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not materialize binding",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    Ok(true)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1477,6 +1940,26 @@ fn init_graph_db(path: &PathBuf) -> gumgum_core::Result<()> {
             port INTEGER NOT NULL,
             health TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS global_objects (
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            namespace TEXT NOT NULL,
+            root_domain TEXT NOT NULL,
+            dns TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ready',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(kind, name)
+        );
+        CREATE TABLE IF NOT EXISTS bindings (
+            object_kind TEXT NOT NULL,
+            object_name TEXT NOT NULL,
+            worker TEXT NOT NULL,
+            binding TEXT NOT NULL,
+            access TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(worker, binding)
         );",
     )
     .map_err(|source| {

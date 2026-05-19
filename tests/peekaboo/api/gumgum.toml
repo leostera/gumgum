@@ -1,0 +1,38 @@
+[project]
+namespace = "root"
+
+[worker]
+name = "peekaboo-api"
+image = "./Dockerfile"
+build_context = "."
+command = "python3 server.py"
+port = 3000
+health = "/healthz"
+
+[[ingress]]
+name = "api-http"
+protocol = "http"
+local_domain = "api.peekaboo.leostera.test"
+public_domain = "api.peekaboo.leostera.dev"
+publish = false
+
+[[database]]
+name = "main"
+dns = "peekaboo.db.leostera.dev"
+binding = "DATABASE_URL"
+access = "read-write"
+
+[[kv]]
+name = "online_users"
+dns = "online-users.kv.leostera.dev"
+binding = "ONLINE_USERS"
+access = "read-write"
+
+[observability]
+enabled = true
+
+[limits]
+cpus = 1.0
+memory_mb = 1024
+pids = 256
+restart = "unless-stopped"
