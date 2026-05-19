@@ -14,6 +14,7 @@ use tokio::process::Command as TokioCommand;
 #[derive(Debug, Parser)]
 #[command(name = "gumgum")]
 #[command(about = "GumGum.dev local cloud control plane")]
+#[command(version)]
 struct Cli {
     #[arg(long, global = true, help = "Emit stable JSON output")]
     json: bool,
@@ -28,6 +29,7 @@ enum Command {
     Status(StatusArgs),
     Ping(PingArgs),
     Doctor,
+    Version,
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),
@@ -136,6 +138,9 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             };
             print_value(cli.json, &report)
         }
+        Command::Version => {
+            print_value(cli.json, &version_report());
+        }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
             if cli.dry_run {
@@ -180,6 +185,23 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         },
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct VersionReport {
+    ok: bool,
+    version: &'static str,
+    git_sha: &'static str,
+    target: &'static str,
+}
+
+fn version_report() -> VersionReport {
+    VersionReport {
+        ok: true,
+        version: option_env!("GUMGUM_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
+        git_sha: option_env!("GUMGUM_BUILD_SHA").unwrap_or("unknown"),
+        target: option_env!("GUMGUM_BUILD_TARGET").unwrap_or("unknown"),
+    }
 }
 
 #[derive(Debug)]

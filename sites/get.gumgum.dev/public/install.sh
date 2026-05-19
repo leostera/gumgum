@@ -144,7 +144,9 @@ add_to_path() {
 verify() {
   export PATH="$GUMGUM_BIN_DIR:$PATH"
   command -v gumgum >/dev/null 2>&1 || { err "gumgum not found after install"; exit 1; }
+  VERSION_OUTPUT=$(gumgum version 2>/dev/null || gumgum --version 2>/dev/null || echo unknown)
   info "GumGum.dev installed successfully"
+  echo "$VERSION_OUTPUT"
   echo "  gumgum --help"
   echo "  gumgum setup <host> --root-domain <domain>"
 }

@@ -19,7 +19,12 @@ command -v docker >/dev/null 2>&1 || {
 }
 
 echo "→ building $BIN for $TARGET in $DOCKER_IMAGE"
+GIT_SHA=${GIT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || printf unknown)}
+
 docker run --rm --platform linux/amd64 \
+  -e GUMGUM_BUILD_VERSION="$VERSION" \
+  -e GUMGUM_BUILD_SHA="$GIT_SHA" \
+  -e GUMGUM_BUILD_TARGET="$TARGET" \
   -v "$PWD:/work" \
   -v "gumgum-cargo-registry:/usr/local/cargo/registry" \
   -w /work \
@@ -44,7 +49,6 @@ Daemon: ~/.gumgum/bin/gumgum daemon
 EOF
 
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$work_dir" -czf "$archive" .
-GIT_SHA=${GIT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || printf unknown)}
 cat > "$out_dir/release.json" <<EOF
 {"version":"$VERSION","git_sha":"$GIT_SHA","target":"$TARGET","archive":"$BIN-$VERSION-$TARGET.tar.gz"}
 EOF
