@@ -274,15 +274,22 @@ struct InitReport {
     path: String,
     manifest_kind: &'static str,
     created: bool,
+    files: Vec<String>,
     message: String,
 }
 
 fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitReport> {
     let path = PathBuf::from("gumgum.toml");
     let name = args.name.unwrap_or_else(default_project_name);
+    let root_domain = args.root_domain.or_else(|| {
+        load_default_server()
+            .ok()
+            .flatten()
+            .map(|server| server.root_domain)
+    });
     let raw = match args.kind {
-        InitKind::Workspace => workspace_manifest(&name, args.root_domain.as_deref()),
-        InitKind::Worker => worker_manifest(&name, args.port),
+        InitKind::Workspace => workspace_manifest(&name, root_domain.as_deref()),
+        InitKind::Worker => worker_manifest(&name, args.port, root_domain.as_deref()),
     };
 
     if path.exists() && !args.force {
@@ -295,8 +302,14 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
                 InitKind::Worker => "worker",
             },
             created: false,
+            files: vec![path.display().to_string()],
             message: "gumgum.toml already exists; use --force to overwrite".to_owned(),
         });
+    }
+
+    let mut files = vec![path.display().to_string()];
+    if matches!(args.kind, InitKind::Worker) {
+        files.extend(scaffold_example_files(dry_run)?);
     }
 
     if !dry_run {
@@ -320,6 +333,7 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
             InitKind::Worker => "worker",
         },
         created: !dry_run,
+        files,
         message: if dry_run {
             "would create gumgum.toml".to_owned()
         } else {
@@ -348,10 +362,77 @@ fn workspace_manifest(name: &str, root_domain: Option<&str>) -> String {
     raw
 }
 
-fn worker_manifest(name: &str, port: u16) -> String {
+fn worker_manifest(name: &str, port: u16, root_domain: Option<&str>) -> String {
+    let local_domain = match root_domain {
+        Some(root_domain) => format!("{name}.{}", root_domain.trim_start_matches("*.")),
+        None => format!("{name}.local"),
+    };
     format!(
-        "[worker]\nname = \"{name}\"\nbuild_context = \".\"\nport = {port}\nhealth = \"/healthz\"\n\n[[ingress]]\nname = \"web\"\nprotocol = \"http\"\nlocal_domain = \"{name}.local\"\n"
+        "[worker]\nname = \"{name}\"\nbuild_context = \".\"\nport = {port}\nhealth = \"/healthz\"\n\n[[ingress]]\nname = \"web\"\nprotocol = \"http\"\nlocal_domain = \"{local_domain}\"\n"
     )
+}
+
+fn scaffold_example_files(dry_run: bool) -> gumgum_core::Result<Vec<String>> {
+    let files = vec!["Dockerfile".to_owned(), "server.py".to_owned()];
+    if dry_run {
+        return Ok(files);
+    }
+
+    write_if_missing(
+        "Dockerfile",
+        r#"FROM python:3.12-alpine
+WORKDIR /app
+COPY server.py .
+ENV PORT=3000
+EXPOSE 3000
+CMD ["python", "server.py"]
+"#,
+    )?;
+    write_if_missing(
+        "server.py",
+        r#"from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import os
+
+PORT = int(os.environ.get("PORT", "3000"))
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/healthz":
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
+
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        body = {"ok": True, "message": "Hello from GumGum.dev"}
+        self.wfile.write(json.dumps(body).encode())
+
+    def log_message(self, format, *args):
+        return
+
+HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+"#,
+    )?;
+    Ok(files)
+}
+
+fn write_if_missing(path: &str, contents: &str) -> gumgum_core::Result<()> {
+    if PathBuf::from(path).exists() {
+        return Ok(());
+    }
+    fs::write(path, contents).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            format!("could not write {path}"),
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })
 }
 
 #[derive(Debug, Serialize)]

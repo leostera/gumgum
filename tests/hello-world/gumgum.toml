@@ -1,0 +1,10 @@
+[worker]
+name = "hello-world"
+build_context = "."
+port = 3000
+health = "/healthz"
+
+[[ingress]]
+name = "web"
+protocol = "http"
+local_domain = "hello-world.leostera.dev"
