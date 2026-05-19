@@ -298,7 +298,7 @@ fn deploy_report(
     dry_run: bool,
 ) -> DeployReport {
     let worker = manifest.worker.name.clone();
-    let image = format!("gumgum/{worker}:latest");
+    let image = format!("127.0.0.1:55000/gumgum/{worker}:latest");
     let container = format!("gumgum-{}", sanitize_name(&worker));
     let routes: Vec<String> = manifest
         .ingress
@@ -381,30 +381,56 @@ async fn run_remote_deploy(
     quiet: bool,
 ) -> gumgum_core::Result<()> {
     let context = manifest.worker.build_context.as_deref().unwrap_or(".");
-    let remote_dir = format!("~/.gumgum/deploy/{}", shell_quote(&report.worker));
     let host = &server.host;
-    progress(quiet, format!("syncing build context to {host}"));
-    run_command_streaming(
-        TokioCommand::new("ssh")
-            .arg(host)
-            .arg(format!("mkdir -p {remote_dir}")),
-        quiet,
-    )
-    .await?;
-    run_command_streaming(
-        TokioCommand::new("rsync")
-            .arg("-az")
-            .arg("--delete")
-            .arg(format!("{}/", context.trim_end_matches('/')))
-            .arg(format!("{host}:~/.gumgum/deploy/{}/", report.worker)),
-        quiet,
-    )
-    .await?;
-
+    let local_image = report.image.replacen("127.0.0.1", "localhost", 1);
     let route = deploy_route(report, server);
+
+    ensure_remote_registry(host, quiet).await?;
+    progress(quiet, format!("opening registry tunnel to {host}"));
+    let mut tunnel = TokioCommand::new("ssh")
+        .arg("-N")
+        .arg("-L")
+        .arg("55000:127.0.0.1:55000")
+        .arg(host)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "could not open registry tunnel",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    progress(quiet, format!("building image {local_image} locally"));
+    let build_result = run_command_streaming(
+        TokioCommand::new("docker")
+            .arg("build")
+            .arg("--platform")
+            .arg("linux/amd64")
+            .arg("-t")
+            .arg(&local_image)
+            .arg(context),
+        quiet,
+    )
+    .await;
+    if build_result.is_ok() {
+        progress(quiet, "pushing image to GumGum.dev registry");
+        run_command_streaming(
+            TokioCommand::new("docker").arg("push").arg(&local_image),
+            quiet,
+        )
+        .await?;
+    }
+    let _ = tunnel.kill().await;
+    build_result?;
+
     let script = format!(
-        "set -e; cd ~/.gumgum/deploy/{worker}; test -f Dockerfile; docker build -t {image} .; docker rm -f {container} >/dev/null 2>&1 || true; docker run -d --name {container} --restart unless-stopped --network caddy-network --label caddy={route} --label 'caddy.reverse_proxy={{{{upstreams {port}}}}}' --label caddy.tls=internal {image}; for i in $(seq 1 20); do ip=$(docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {container}); if [ -n \"$ip\" ] && curl -fsS http://$ip:{port}{health} >/dev/null 2>&1; then exit 0; fi; sleep 0.5; done; docker logs {container}; exit 1",
-        worker = shell_quote(&report.worker),
+        "set -e; docker pull {image}; docker rm -f {container} >/dev/null 2>&1 || true; docker run -d --name {container} --restart unless-stopped --network caddy-network --label caddy={route} --label 'caddy.reverse_proxy={{{{upstreams {port}}}}}' --label caddy.tls=internal {image}; for i in $(seq 1 20); do ip=$(docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {container}); if [ -n \"$ip\" ] && curl -fsS http://$ip:{port}{health} >/dev/null 2>&1; then exit 0; fi; sleep 0.5; done; docker logs {container}; exit 1",
         image = shell_quote(&report.image),
         container = shell_quote(&report.container),
         route = shell_quote(&route),
@@ -413,7 +439,7 @@ async fn run_remote_deploy(
     );
     progress(
         quiet,
-        format!("building and running {} on {host}", report.worker),
+        format!("pulling and running {} on {host}", report.worker),
     );
     run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await?;
     verify_route(
@@ -423,6 +449,12 @@ async fn run_remote_deploy(
         quiet,
     )
     .await
+}
+
+async fn ensure_remote_registry(host: &str, quiet: bool) -> gumgum_core::Result<()> {
+    progress(quiet, format!("ensuring GumGum.dev registry on {host}"));
+    let script = "docker inspect gumgum-registry >/dev/null 2>&1 && docker start gumgum-registry >/dev/null || docker run -d --name gumgum-registry --restart unless-stopped -p 127.0.0.1:55000:5000 registry:2 >/dev/null";
+    run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await
 }
 
 fn deploy_route(report: &DeployReport, server: &ServerRecord) -> String {
