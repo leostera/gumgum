@@ -1,4 +1,5 @@
 use anyhow::Result;
+use axum::{Json, Router, routing::get};
 use clap::{Args, Parser, Subcommand};
 use gumgum_api::{
     PingReport, ServerListReport, ServerRecord, SetupPlan, SetupReport, not_configured_status,
@@ -9,6 +10,7 @@ use gumgum_manifest::validate_path;
 use serde::Serialize;
 use std::{
     fs,
+    net::SocketAddr,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -35,6 +37,7 @@ enum Command {
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),
+    Daemon,
 }
 
 #[derive(Debug, Args)]
@@ -155,6 +158,7 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
                 print_value(cli.json, &report)
             }
         }
+        Command::Daemon => run_daemon().await?,
         Command::Server(server) => match server.command {
             ServerSubcommand::List => {
                 let report = ServerListReport {
@@ -330,23 +334,58 @@ async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
     })
 }
 
+async fn run_daemon() -> gumgum_core::Result<()> {
+    let app = Router::new()
+        .route("/healthz", get(daemon_healthz))
+        .route("/v0/status", get(daemon_status));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 7777));
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "could not bind gumgum daemon",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    tracing::info!(%addr, "gumgum daemon listening");
+    axum::serve(listener, app).await.map_err(|source| {
+        GumgumError::structured(Subsystem::Api, ErrorCode::Io, "gumgum daemon failed")
+            .likely_cause(source.to_string())
+            .build()
+    })
+}
+
+async fn daemon_healthz() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "ok": true, "service": "gumgumd" }))
+}
+
+async fn daemon_status() -> Json<gumgum_core::StatusReport> {
+    Json(not_configured_status())
+}
+
 async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Result<SetupReport> {
     progress(quiet, "resolving setup target");
     if setup.local {
-        progress(quiet, "building gumgumd locally");
-        build_local_gumgumd(quiet).await?;
-        progress(quiet, "installing local user service into ~/.gumgum/daemon");
+        progress(quiet, "building gumgum locally");
+        build_local_gumgum(quiet).await?;
+        progress(
+            quiet,
+            "installing local binary into ~/.gumgum/bin and daemon service into ~/.gumgum/daemon",
+        );
         install_local_user_service(quiet).await?;
     } else {
         let target = ssh_target(setup.user.as_deref(), &setup.host);
-        progress(quiet, format!("building gumgumd on {target}"));
-        let remote_gumgumd = build_remote_gumgumd(&target, quiet).await?;
+        progress(quiet, format!("building gumgum on {target}"));
+        let remote_gumgum = build_remote_gumgum(&target, quiet).await?;
         progress(quiet, "detecting install mode");
         let install_mode = detect_install_mode(&target).await?;
         progress(quiet, "installing gumgumd service");
         match install_mode {
-            InstallMode::System => install_system_service(&target, &remote_gumgumd, quiet).await?,
-            InstallMode::User => install_user_service(&target, &remote_gumgumd, quiet).await?,
+            InstallMode::System => install_system_service(&target, &remote_gumgum, quiet).await?,
+            InstallMode::User => install_user_service(&target, &remote_gumgum, quiet).await?,
         }
     }
     progress(quiet, "checking gumgumd health");
@@ -377,7 +416,7 @@ enum InstallMode {
     User,
 }
 
-async fn build_local_gumgumd(quiet: bool) -> gumgum_core::Result<()> {
+async fn build_local_gumgum(quiet: bool) -> gumgum_core::Result<()> {
     let root = workspace_root().ok_or_else(|| {
         GumgumError::structured(
             Subsystem::Setup,
@@ -391,7 +430,7 @@ async fn build_local_gumgumd(quiet: bool) -> gumgum_core::Result<()> {
         TokioCommand::new("cargo")
             .arg("build")
             .arg("-p")
-            .arg("gumgumd")
+            .arg("gumgum-cli")
             .current_dir(root),
         quiet,
     )
@@ -407,7 +446,7 @@ async fn install_local_user_service(quiet: bool) -> gumgum_core::Result<()> {
         )
         .build()
     })?;
-    let gumgumd = root.join("target/debug/gumgumd");
+    let gumgum = root.join("target/debug/gumgum");
     let home = std::env::var("HOME").map_err(|source| {
         GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "could not read HOME")
             .likely_cause(source.to_string())
@@ -422,7 +461,16 @@ async fn install_local_user_service(quiet: bool) -> gumgum_core::Result<()> {
         .likely_cause(source.to_string())
         .build()
     })?;
-    fs::copy(&gumgumd, format!("{home}/.gumgum/daemon/gumgumd")).map_err(|source| {
+    fs::create_dir_all(format!("{home}/.gumgum/bin")).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "could not create ~/.gumgum/bin",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    fs::copy(&gumgum, format!("{home}/.gumgum/bin/gumgum")).map_err(|source| {
         GumgumError::structured(
             Subsystem::Setup,
             ErrorCode::Io,
@@ -434,7 +482,7 @@ async fn install_local_user_service(quiet: bool) -> gumgum_core::Result<()> {
     run_command_streaming(
         TokioCommand::new("chmod")
             .arg("0755")
-            .arg(format!("{home}/.gumgum/daemon/gumgumd")),
+            .arg(format!("{home}/.gumgum/bin/gumgum")),
         quiet,
     )
     .await?;
@@ -486,7 +534,7 @@ async fn install_local_user_service(quiet: bool) -> gumgum_core::Result<()> {
     .await
 }
 
-async fn build_remote_gumgumd(target: &str, quiet: bool) -> gumgum_core::Result<String> {
+async fn build_remote_gumgum(target: &str, quiet: bool) -> gumgum_core::Result<String> {
     let root = workspace_root().ok_or_else(|| {
         GumgumError::structured(
             Subsystem::Setup,
@@ -510,15 +558,15 @@ async fn build_remote_gumgumd(target: &str, quiet: bool) -> gumgum_core::Result<
         quiet,
     )
     .await?;
-    progress(quiet, "compiling gumgumd on remote host");
+    progress(quiet, "compiling gumgum on remote host");
     run_command_streaming(
         TokioCommand::new("ssh")
             .arg(target)
-            .arg("cd /tmp/gumgum-src && cargo build -p gumgumd"),
+            .arg("cd /tmp/gumgum-src && cargo build -p gumgum-cli"),
         quiet,
     )
     .await?;
-    Ok("/tmp/gumgum-src/target/debug/gumgumd".to_owned())
+    Ok("/tmp/gumgum-src/target/debug/gumgum".to_owned())
 }
 
 fn workspace_root() -> Option<PathBuf> {
@@ -551,13 +599,13 @@ async fn detect_install_mode(target: &str) -> gumgum_core::Result<InstallMode> {
 
 async fn install_system_service(
     target: &str,
-    remote_gumgumd: &str,
+    remote_gumgum: &str,
     quiet: bool,
 ) -> gumgum_core::Result<()> {
     run_command_streaming(
         TokioCommand::new("ssh")
             .arg(target)
-            .arg(format!("install -d -m 0755 /var/lib/gumgum /usr/local/bin && install -m 0755 {remote_gumgumd} /usr/local/bin/gumgumd")),
+            .arg(format!("install -d -m 0755 /root/.gumgum/bin /root/.gumgum/daemon && install -m 0755 {remote_gumgum} /root/.gumgum/bin/gumgum")),
         quiet,
     )
     .await?;
@@ -573,13 +621,13 @@ async fn install_system_service(
 
 async fn install_user_service(
     target: &str,
-    remote_gumgumd: &str,
+    remote_gumgum: &str,
     quiet: bool,
 ) -> gumgum_core::Result<()> {
     run_command_streaming(
         TokioCommand::new("ssh")
             .arg(target)
-            .arg(format!("mkdir -p ~/.gumgum/daemon ~/.config/systemd/user && install -m 0755 {remote_gumgumd} ~/.gumgum/daemon/gumgumd")),
+            .arg(format!("mkdir -p ~/.gumgum/bin ~/.gumgum/daemon ~/.config/systemd/user && install -m 0755 {remote_gumgum} ~/.gumgum/bin/gumgum")),
         quiet,
     )
     .await?;
@@ -734,7 +782,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/gumgumd
+ExecStart=/root/.gumgum/bin/gumgum daemon
 Restart=on-failure
 RestartSec=2
 User=root
@@ -750,7 +798,7 @@ After=default.target
 
 [Service]
 Type=simple
-ExecStart=%h/.gumgum/daemon/gumgumd
+ExecStart=%h/.gumgum/bin/gumgum daemon
 Restart=on-failure
 RestartSec=2
 

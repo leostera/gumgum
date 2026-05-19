@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
 clap.workspace = true
 gumgum-api = { path = "../gumgum-api" }
 gumgum-core = { path = "../gumgum-core" }

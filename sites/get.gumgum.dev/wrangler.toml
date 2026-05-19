@@ -1,0 +1,11 @@
+name = "get-gumgum-dev"
+main = "src/index.ts"
+compatibility_date = "2026-05-15"
+
+routes = [
+  { pattern = "get.gumgum.dev", custom_domain = true }
+]
+
+[[r2_buckets]]
+binding = "GUMGUM_RELEASES"
+bucket_name = "dev-gumgum-cdn"
