@@ -149,6 +149,19 @@ pub fn validate_path(path: &Path) -> Result<ValidationReport> {
     validate_str(&raw, &path.display().to_string()).map_err(Into::into)
 }
 
+pub fn load_worker_path(path: &Path) -> Result<WorkerManifest> {
+    let raw = fs::read_to_string(path).map_err(|source| ManifestError::Read {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let manifest: WorkerManifest = toml::from_str(&raw).map_err(|source| ManifestError::Parse {
+        path: path.display().to_string(),
+        source,
+    })?;
+    validate_worker(&manifest)?;
+    Ok(manifest)
+}
+
 pub fn validate_str(raw: &str, path: &str) -> std::result::Result<ValidationReport, ManifestError> {
     let value: toml::Value = toml::from_str(raw).map_err(|source| ManifestError::Parse {
         path: path.to_owned(),

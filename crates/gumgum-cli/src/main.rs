@@ -6,7 +6,7 @@ use gumgum_api::{
     setup_actions,
 };
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
-use gumgum_manifest::validate_path;
+use gumgum_manifest::{WorkerManifest, load_worker_path, validate_path};
 use serde::Serialize;
 use std::{fs, net::SocketAddr, path::PathBuf, process::Stdio, time::Duration};
 use tokio::process::Command as TokioCommand;
@@ -31,6 +31,7 @@ enum Command {
     Doctor,
     Version,
     Init(InitArgs),
+    Deploy(DeployArgs),
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),
@@ -50,6 +51,12 @@ struct PingArgs {
     host: String,
     #[arg(long)]
     user: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct DeployArgs {
+    #[arg(default_value = "gumgum.toml")]
+    path: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -166,6 +173,10 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             let report = init_manifest(args, cli.dry_run)?;
             print_value(cli.json, &report);
         }
+        Command::Deploy(args) => {
+            let report = deploy_plan(args, cli.dry_run)?;
+            print_value(cli.json, &report);
+        }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
             if cli.dry_run {
@@ -210,6 +221,51 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         },
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct DeployPlanReport {
+    ok: bool,
+    dry_run: bool,
+    path: String,
+    worker: String,
+    build_context: Option<String>,
+    image: Option<String>,
+    port: Option<u16>,
+    routes: Vec<String>,
+    message: String,
+}
+
+fn deploy_plan(args: DeployArgs, dry_run: bool) -> gumgum_core::Result<DeployPlanReport> {
+    if !dry_run {
+        return Err(GumgumError::structured(
+            Subsystem::Cli,
+            ErrorCode::NotImplemented,
+            "gumgum deploy currently supports --dry-run only",
+        )
+        .next_command("gumgum --dry-run deploy")
+        .build());
+    }
+    let manifest = load_worker_path(&args.path)?;
+    Ok(deploy_plan_report(args.path, manifest))
+}
+
+fn deploy_plan_report(path: PathBuf, manifest: WorkerManifest) -> DeployPlanReport {
+    DeployPlanReport {
+        ok: true,
+        dry_run: true,
+        path: path.display().to_string(),
+        worker: manifest.worker.name,
+        build_context: manifest.worker.build_context,
+        image: manifest.worker.image,
+        port: manifest.worker.port,
+        routes: manifest
+            .ingress
+            .into_iter()
+            .map(|ingress| ingress.local_domain)
+            .collect(),
+        message: "validated worker manifest; no containers changed".to_owned(),
+    }
 }
 
 #[derive(Debug, Serialize)]
