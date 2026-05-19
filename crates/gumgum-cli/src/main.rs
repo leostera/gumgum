@@ -60,6 +60,8 @@ struct DeployArgs {
     path: PathBuf,
     #[arg(long)]
     host: Option<String>,
+    #[arg(long)]
+    prod: bool,
 }
 
 #[derive(Debug, Args)]
@@ -84,6 +86,10 @@ struct InitArgs {
     port: u16,
     #[arg(long)]
     root_domain: Option<String>,
+    #[arg(long)]
+    namespace: Option<String>,
+    #[arg(long = "zone")]
+    zones: Vec<String>,
     #[arg(long)]
     force: bool,
 }
@@ -269,7 +275,8 @@ async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Re
         }),
         None => load_default_server()?,
     };
-    let report = deploy_report(args.path.clone(), &manifest, server.as_ref(), dry_run);
+    let prod = args.prod;
+    let report = deploy_report(args.path.clone(), &manifest, server.as_ref(), dry_run, prod);
     if dry_run {
         return Ok(report);
     }
@@ -299,35 +306,34 @@ fn deploy_report(
     manifest: &WorkerManifest,
     server: Option<&ServerRecord>,
     dry_run: bool,
+    prod: bool,
 ) -> DeployReport {
     let worker = manifest.worker.name.clone();
     let image = format!("127.0.0.1:55000/gumgum/{worker}:latest");
     let container = format!("gumgum-{}", sanitize_name(&worker));
-    let routes: Vec<String> = manifest
-        .ingress
-        .iter()
-        .map(|ingress| ingress.local_domain.clone())
-        .collect();
-    let health_url = routes.first().map(|route| {
-        let display_route = server
-            .map(|server| {
-                let root_suffix = format!(".{}", server.root_domain);
-                if route.ends_with(&root_suffix) {
-                    format!(
-                        "{}.{test_domain}",
-                        route.trim_end_matches(&root_suffix),
-                        test_domain = server.test_domain
-                    )
-                } else {
-                    route.clone()
-                }
-            })
-            .unwrap_or_else(|| route.clone());
-        format!(
-            "http://{display_route}{}",
-            manifest.worker.health.as_deref().unwrap_or("/healthz")
-        )
-    });
+    let routes = derived_routes(manifest, server, prod);
+    let health_url = derived_routes(manifest, server, false)
+        .first()
+        .map(|route| {
+            let display_route = server
+                .map(|server| {
+                    let root_suffix = format!(".{}", server.root_domain);
+                    if route.ends_with(&root_suffix) {
+                        format!(
+                            "{}.{test_domain}",
+                            route.trim_end_matches(&root_suffix),
+                            test_domain = server.test_domain
+                        )
+                    } else {
+                        route.clone()
+                    }
+                })
+                .unwrap_or_else(|| route.clone());
+            format!(
+                "http://{display_route}{}",
+                manifest.worker.health.as_deref().unwrap_or("/healthz")
+            )
+        });
     DeployReport {
         ok: true,
         dry_run,
@@ -341,7 +347,10 @@ fn deploy_report(
         routes,
         health_url,
         message: if dry_run {
-            "validated worker manifest; no containers changed".to_owned()
+            format!(
+                "validated worker manifest for {} deploy; no containers changed",
+                if prod { "prod" } else { "test" }
+            )
         } else {
             "deployment pending".to_owned()
         },
@@ -497,20 +506,45 @@ async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Resul
     run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await
 }
 
-fn deploy_route(report: &DeployReport, server: &ServerRecord) -> String {
-    let test_suffix = format!(".{}", server.test_domain);
-    let root_suffix = format!(".{}", server.root_domain);
+fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> String {
     report
         .routes
         .first()
-        .map(|route| {
-            if route.ends_with(&root_suffix) {
-                format!("{}{}", route.trim_end_matches(&root_suffix), test_suffix)
-            } else {
-                route.clone()
-            }
-        })
-        .unwrap_or_else(|| format!("{}.{}", report.worker, server.test_domain))
+        .cloned()
+        .unwrap_or_else(|| format!("{}.local", report.worker))
+}
+
+fn derived_routes(
+    manifest: &WorkerManifest,
+    server: Option<&ServerRecord>,
+    prod: bool,
+) -> Vec<String> {
+    let worker = sanitize_name(&manifest.worker.name);
+    let project = manifest
+        .project
+        .as_ref()
+        .map(|project| sanitize_name(&project.namespace))
+        .unwrap_or_else(default_project_name);
+    let Some(server) = server else {
+        return manifest
+            .ingress
+            .iter()
+            .map(|ingress| ingress.local_domain.clone())
+            .collect();
+    };
+
+    if prod {
+        let mut routes = vec![format!("{worker}.{project}.{}", server.root_domain)];
+        routes.extend(
+            manifest
+                .zone
+                .iter()
+                .map(|zone| format!("{worker}.{}", zone.name.trim_start_matches("*."))),
+        );
+        routes
+    } else {
+        vec![format!("{worker}.{project}.{}", server.test_domain)]
+    }
 }
 
 async fn verify_route(
@@ -573,9 +607,10 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
             .flatten()
             .map(|server| server.root_domain)
     });
+    let namespace = args.namespace.unwrap_or_else(|| name.clone());
     let raw = match args.kind {
         InitKind::Workspace => workspace_manifest(&name, root_domain.as_deref()),
-        InitKind::Worker => worker_manifest(&name, args.port, root_domain.as_deref()),
+        InitKind::Worker => worker_manifest(&name, &namespace, args.port, &args.zones),
     };
 
     if path.exists() && !args.force {
@@ -648,14 +683,14 @@ fn workspace_manifest(name: &str, root_domain: Option<&str>) -> String {
     raw
 }
 
-fn worker_manifest(name: &str, port: u16, root_domain: Option<&str>) -> String {
-    let local_domain = match root_domain {
-        Some(root_domain) => format!("{name}.{}", root_domain.trim_start_matches("*.")),
-        None => format!("{name}.local"),
-    };
-    format!(
-        "[worker]\nname = \"{name}\"\nbuild_context = \".\"\nport = {port}\nhealth = \"/healthz\"\n\n[[ingress]]\nname = \"web\"\nprotocol = \"http\"\nlocal_domain = \"{local_domain}\"\n"
-    )
+fn worker_manifest(name: &str, namespace: &str, port: u16, zones: &[String]) -> String {
+    let mut raw = format!(
+        "[project]\nnamespace = \"{namespace}\"\n\n[worker]\nname = \"{name}\"\nbuild_context = \".\"\nport = {port}\nhealth = \"/healthz\"\n"
+    );
+    for zone in zones {
+        raw.push_str(&format!("\n[[zone]]\nname = \"{zone}\"\n"));
+    }
+    raw
 }
 
 fn scaffold_example_files(dry_run: bool) -> gumgum_core::Result<Vec<String>> {

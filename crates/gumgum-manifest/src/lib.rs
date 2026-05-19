@@ -68,7 +68,11 @@ pub struct Workspace {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct WorkerManifest {
+    #[serde(default)]
+    pub project: Option<Project>,
     pub worker: Worker,
+    #[serde(default)]
+    pub zone: Vec<Zone>,
     #[serde(default)]
     pub ingress: Vec<Ingress>,
     #[serde(default)]
@@ -81,6 +85,16 @@ pub struct WorkerManifest {
     pub observability: Option<Observability>,
     #[serde(default)]
     pub limits: Option<Limits>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Project {
+    pub namespace: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Zone {
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -218,6 +232,20 @@ fn validate_worker(manifest: &WorkerManifest) -> std::result::Result<(), Manifes
             "worker.name must not be empty".to_owned(),
         ));
     }
+    if let Some(project) = &manifest.project {
+        if project.namespace.trim().is_empty() {
+            return Err(ManifestError::Validation(
+                "project.namespace must not be empty".to_owned(),
+            ));
+        }
+    }
+    for zone in &manifest.zone {
+        if zone.name.trim().is_empty() {
+            return Err(ManifestError::Validation(
+                "zone.name must not be empty".to_owned(),
+            ));
+        }
+    }
     if manifest.worker.image.is_none() && manifest.worker.build_context.is_none() {
         return Err(ManifestError::Validation(
             "worker.image or worker.build_context is required".to_owned(),
@@ -245,9 +273,15 @@ mod tests {
     #[test]
     fn validates_worker_manifest() {
         let raw = r#"
+            [project]
+            namespace = "peekaboo"
+
             [worker]
-            name = "peekaboo-api"
+            name = "api"
             build_context = "."
+
+            [[zone]]
+            name = "peekaboo.dev"
         "#;
         let report = validate_str(raw, "api/gumgum.toml").unwrap();
         assert!(report.ok);
