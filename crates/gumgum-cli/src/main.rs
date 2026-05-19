@@ -6,8 +6,8 @@ use axum::{
 };
 use clap::{Args, Parser, Subcommand};
 use gumgum_api::{
-    DeployApplyReport, DeployRequest, LogsReport, PingReport, ServerListReport, ServerRecord,
-    SetupPlan, SetupReport, not_configured_status, setup_actions,
+    DeployApplyReport, DeployRequest, GraphReport, LogsReport, PingReport, ServerListReport,
+    ServerRecord, SetupPlan, SetupReport, not_configured_status, setup_actions,
 };
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
 use gumgum_manifest::{WorkerManifest, load_worker_path, validate_path};
@@ -39,6 +39,7 @@ enum Command {
     Init(InitArgs),
     Deploy(DeployArgs),
     Logs(LogsArgs),
+    Graph(GraphArgs),
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),
@@ -81,6 +82,12 @@ struct DeployArgs {
     host: Option<String>,
     #[arg(long)]
     prod: bool,
+}
+
+#[derive(Debug, Args)]
+struct GraphArgs {
+    #[arg(long)]
+    host: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -231,6 +238,9 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         }
         Command::Logs(args) => {
             logs(args, cli.json).await?;
+        }
+        Command::Graph(args) => {
+            graph(args, cli.json).await?;
         }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
@@ -444,6 +454,66 @@ fn deploy_report(
             "deployment pending".to_owned()
         },
     }
+}
+
+async fn graph(args: GraphArgs, json: bool) -> gumgum_core::Result<()> {
+    let server = match args.host {
+        Some(host) => host,
+        None => {
+            load_default_server()?
+                .ok_or_else(|| {
+                    GumgumError::structured(
+                        Subsystem::Config,
+                        ErrorCode::InvalidArgs,
+                        "no GumGum.dev server configured",
+                    )
+                    .next_command("gumgum setup <host> --root-domain <domain>")
+                    .build()
+                })?
+                .host
+        }
+    };
+    let url = format!("http://{server}:7777/v0/graph");
+    let report: GraphReport = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to call gumgumd graph API",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .error_for_status()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd graph API returned an error",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .json()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd graph API returned invalid JSON",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if json {
+        print_value(true, &report);
+    } else {
+        println!("{}", report.graph);
+    }
+    Ok(())
 }
 
 async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
@@ -1202,6 +1272,7 @@ async fn run_daemon() -> gumgum_core::Result<()> {
         .route("/healthz", get(daemon_healthz))
         .route("/v0/status", get(daemon_status))
         .route("/v0/deploy", post(daemon_deploy))
+        .route("/v0/graph", get(daemon_graph))
         .route("/v0/logs/{container}", get(daemon_logs))
         .with_state(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], 7777));
@@ -1230,6 +1301,88 @@ async fn daemon_healthz() -> Json<serde_json::Value> {
 
 async fn daemon_status() -> Json<gumgum_core::StatusReport> {
     Json(not_configured_status())
+}
+
+async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {
+    let path = (*state.graph_path).clone();
+    let graph = tokio::task::spawn_blocking(move || render_mermaid_graph(&path))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_else(|| "graph TD\n  gumgumd[gumgumd]\n".to_owned());
+    Json(GraphReport {
+        ok: true,
+        format: "mermaid".to_owned(),
+        graph,
+    })
+}
+
+fn render_mermaid_graph(path: &PathBuf) -> gumgum_core::Result<String> {
+    init_graph_db(path)?;
+    let conn = Connection::open(path).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not open graph database",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    let mut graph = "graph TD\n  gumgumd[gumgumd]\n  registry[gumgum-registry]\n  dnsmasq[gumgum-dnsmasq]\n  caddy[gumgum-caddy]\n  gumgumd --> registry\n  gumgumd --> dnsmasq\n  gumgumd --> caddy\n".to_owned();
+    let mut stmt = conn
+        .prepare("SELECT worker, image, container, route FROM desired_deployments ORDER BY worker")
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not query graph database",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not read graph rows",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    for row in rows {
+        let (worker, image, container, route) = row.map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not decode graph row",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        let worker_id = mermaid_id(&format!("worker-{worker}"));
+        let image_id = mermaid_id(&format!("image-{worker}"));
+        let container_id = mermaid_id(&format!("container-{container}"));
+        let route_id = mermaid_id(&format!("route-{route}"));
+        graph.push_str(&format!("  {worker_id}[worker: {worker}]\n"));
+        graph.push_str(&format!("  {image_id}[image: {image}]\n"));
+        graph.push_str(&format!("  {container_id}[container: {container}]\n"));
+        graph.push_str(&format!("  {route_id}[route: {route}]\n"));
+        graph.push_str(&format!("  gumgumd --> {worker_id}\n  {worker_id} --> {image_id}\n  {worker_id} --> {container_id}\n  {worker_id} --> {route_id}\n  registry --> {image_id}\n  caddy --> {route_id}\n  {route_id} --> {container_id}\n"));
+    }
+    Ok(graph)
+}
+
+fn mermaid_id(value: &str) -> String {
+    sanitize_name(value).replace('-', "_")
 }
 
 #[derive(Debug, serde::Deserialize)]

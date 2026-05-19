@@ -119,6 +119,13 @@ pub struct LogsReport {
     pub logs: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphReport {
+    pub ok: bool,
+    pub format: String,
+    pub graph: String,
+}
+
 pub fn not_configured_status() -> StatusReport {
     StatusReport {
         ok: true,
