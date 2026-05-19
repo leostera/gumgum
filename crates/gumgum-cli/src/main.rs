@@ -385,7 +385,7 @@ async fn run_remote_deploy(
     let local_image = report.image.replacen("127.0.0.1", "localhost", 1);
     let route = deploy_route(report, server);
 
-    ensure_remote_registry(host, quiet).await?;
+    wait_for_remote_registry(host, quiet).await?;
     progress(quiet, format!("opening registry tunnel to {host}"));
     let mut tunnel = TokioCommand::new("ssh")
         .arg("-N")
@@ -451,9 +451,21 @@ async fn run_remote_deploy(
     .await
 }
 
-async fn ensure_remote_registry(host: &str, quiet: bool) -> gumgum_core::Result<()> {
-    progress(quiet, format!("ensuring GumGum.dev registry on {host}"));
-    let script = "docker inspect gumgum-registry >/dev/null 2>&1 && docker start gumgum-registry >/dev/null || docker run -d --name gumgum-registry --restart unless-stopped -p 127.0.0.1:55000:5000 registry:2 >/dev/null";
+async fn ensure_local_registry(quiet: bool) -> gumgum_core::Result<()> {
+    progress(quiet, "ensuring GumGum.dev registry container");
+    run_command_streaming(
+        TokioCommand::new("sh").arg("-c").arg("docker inspect gumgum-registry >/dev/null 2>&1 && docker start gumgum-registry >/dev/null || docker run -d --name gumgum-registry --restart unless-stopped -p 127.0.0.1:55000:5000 registry:2 >/dev/null"),
+        quiet,
+    )
+    .await
+}
+
+async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Result<()> {
+    progress(
+        quiet,
+        format!("checking GumGum.dev registry managed by daemon on {host}"),
+    );
+    let script = "for i in $(seq 1 20); do if docker inspect -f '{{.State.Running}}' gumgum-registry 2>/dev/null | grep -q true; then exit 0; fi; sleep 0.5; done; echo 'gumgum-registry is not running; is gumgumd active?' >&2; exit 1";
     run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await
 }
 
@@ -869,6 +881,7 @@ async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
 }
 
 async fn run_daemon() -> gumgum_core::Result<()> {
+    ensure_local_registry(false).await?;
     let app = Router::new()
         .route("/healthz", get(daemon_healthz))
         .route("/v0/status", get(daemon_status));
