@@ -2066,6 +2066,7 @@ async fn daemon_deploy(
     Json(request): Json<DeployRequest>,
 ) -> Json<DeployApplyReport> {
     let path = (*state.graph_path).clone();
+    let reconcile_path = path.clone();
     let request_for_db = request.clone();
     let materialized =
         tokio::task::spawn_blocking(move || materialize_deploy(&path, &request_for_db))
@@ -2073,12 +2074,14 @@ async fn daemon_deploy(
             .ok()
             .and_then(Result::ok)
             .unwrap_or(false);
-    let (changed, actions) = reconcile_deploy(&request).await.unwrap_or_else(|error| {
-        (
-            false,
-            vec![format!("reconcile failed: {}", error.to_report().message)],
-        )
-    });
+    let (changed, actions) = reconcile_deploy(&reconcile_path, &request)
+        .await
+        .unwrap_or_else(|error| {
+            (
+                false,
+                vec![format!("reconcile failed: {}", error.to_report().message)],
+            )
+        });
     Json(DeployApplyReport {
         ok: materialized,
         worker: request.worker,
@@ -2201,8 +2204,12 @@ fn materialize_deploy(path: &PathBuf, request: &DeployRequest) -> gumgum_core::R
     Ok(true)
 }
 
-async fn reconcile_deploy(request: &DeployRequest) -> gumgum_core::Result<(bool, Vec<String>)> {
+async fn reconcile_deploy(
+    path: &PathBuf,
+    request: &DeployRequest,
+) -> gumgum_core::Result<(bool, Vec<String>)> {
     let mut actions = Vec::new();
+    let binding_env = load_binding_env(path, &request.worker)?;
     let inspect = TokioCommand::new("docker")
         .arg("inspect")
         .arg("-f")
@@ -2223,7 +2230,7 @@ async fn reconcile_deploy(request: &DeployRequest) -> gumgum_core::Result<(bool,
     let expected_proxy = format!("{{{{upstreams {}}}}}", request.port);
     let expected = format!("{} {} {}", request.image, request.route, expected_proxy);
     let route_label = format!("caddy={}", request.route);
-    if inspect.status.success() && current == expected {
+    if inspect.status.success() && current == expected && binding_env.is_empty() {
         actions.push("container already matches desired image".to_owned());
         return Ok((false, actions));
     }
@@ -2238,6 +2245,9 @@ async fn reconcile_deploy(request: &DeployRequest) -> gumgum_core::Result<(bool,
     } else {
         "caddy-network"
     };
+    if !binding_env.is_empty() {
+        actions.push(format!("project {} binding env var(s)", binding_env.len()));
+    }
     actions.push(format!("recreate {}", request.container));
     let _ = run_command_streaming(
         TokioCommand::new("docker")
@@ -2247,31 +2257,101 @@ async fn reconcile_deploy(request: &DeployRequest) -> gumgum_core::Result<(bool,
         true,
     )
     .await;
-    run_command_streaming(
-        TokioCommand::new("docker")
-            .arg("run")
-            .arg("-d")
-            .arg("--name")
-            .arg(&request.container)
-            .arg("--restart")
-            .arg("unless-stopped")
-            .arg("--network")
-            .arg(network)
-            .arg("--label")
-            .arg(route_label)
-            .arg("--label")
-            .arg(format!(
-                "caddy.reverse_proxy={{{{upstreams {}}}}}",
-                request.port
-            ))
-            .arg("--label")
-            .arg("caddy.tls=internal")
-            .arg(&request.image),
-        false,
-    )
-    .await?;
+    let mut run = TokioCommand::new("docker");
+    run.arg("run")
+        .arg("-d")
+        .arg("--name")
+        .arg(&request.container)
+        .arg("--restart")
+        .arg("unless-stopped")
+        .arg("--network")
+        .arg(network)
+        .arg("--label")
+        .arg(route_label)
+        .arg("--label")
+        .arg(format!(
+            "caddy.reverse_proxy={{{{upstreams {}}}}}",
+            request.port
+        ))
+        .arg("--label")
+        .arg("caddy.tls=internal");
+    for (name, value) in &binding_env {
+        run.arg("-e").arg(format!("{name}={value}"));
+    }
+    run.arg(&request.image);
+    run_command_streaming(&mut run, false).await?;
     wait_for_container_health(&request.container, request.port, &request.health).await?;
     Ok((true, actions))
+}
+
+fn load_binding_env(path: &PathBuf, worker: &str) -> gumgum_core::Result<Vec<(String, String)>> {
+    init_graph_db(path)?;
+    let conn = Connection::open(path).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not open graph database",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT b.binding, b.object_kind, b.object_name, o.dns
+             FROM bindings b
+             JOIN global_objects o ON o.kind = b.object_kind AND o.name = b.object_name
+             WHERE b.worker = ?1
+             ORDER BY b.binding",
+        )
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not query binding env",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    let rows = stmt
+        .query_map(params![worker], |row| {
+            let binding: String = row.get(0)?;
+            let kind: String = row.get(1)?;
+            let name: String = row.get(2)?;
+            let dns: String = row.get(3)?;
+            Ok((binding, binding_value(&kind, &name, &dns)))
+        })
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not read binding env",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    let mut env = Vec::new();
+    for row in rows {
+        env.push(row.map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not decode binding env",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?);
+    }
+    Ok(env)
+}
+
+fn binding_value(kind: &str, name: &str, dns: &str) -> String {
+    match kind {
+        "db" | "database" => format!("postgres://{name}:gumgum@{dns}:5432/{name}"),
+        "kv" => format!("redis://{dns}:6379/0"),
+        "bucket" | "blob" => format!("s3://{dns}/{name}"),
+        "queue" => format!("kafka://{dns}/{name}"),
+        _ => dns.to_owned(),
+    }
 }
 
 async fn docker_running(name: &str) -> bool {
