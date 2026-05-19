@@ -30,6 +30,7 @@ enum Command {
     Ping(PingArgs),
     Doctor,
     Version,
+    Config(ConfigArgs),
     Init(InitArgs),
     Deploy(DeployArgs),
     Logs(LogsArgs),
@@ -52,6 +53,19 @@ struct PingArgs {
     host: String,
     #[arg(long)]
     user: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ConfigArgs {
+    #[command(subcommand)]
+    command: ConfigSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigSubcommand {
+    List,
+    Get { key: String },
+    Set { key: String, value: String },
 }
 
 #[derive(Debug, Args)]
@@ -122,6 +136,14 @@ struct ServerCommand {
 #[derive(Debug, Subcommand)]
 enum ServerSubcommand {
     List,
+    Config(ServerConfigArgs),
+}
+
+#[derive(Debug, Args)]
+struct ServerConfigArgs {
+    name: String,
+    #[command(subcommand)]
+    command: ConfigSubcommand,
 }
 
 #[derive(Debug, Args)]
@@ -190,6 +212,10 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Version => {
             print_value(cli.json, &version_report());
         }
+        Command::Config(args) => {
+            let report = config_command(None, args.command)?;
+            print_value(cli.json, &report);
+        }
         Command::Init(args) => {
             let report = init_manifest(args, cli.dry_run)?;
             print_value(cli.json, &report);
@@ -227,6 +253,10 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
                 };
                 print_value(cli.json, &report)
             }
+            ServerSubcommand::Config(args) => {
+                let report = config_command(Some(args.name), args.command)?;
+                print_value(cli.json, &report)
+            }
         },
         Command::Schema(schema) => match schema.command {
             SchemaSubcommand::Validate { path } => {
@@ -245,6 +275,60 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         },
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct ConfigReport {
+    ok: bool,
+    scope: String,
+    values: serde_json::Map<String, serde_json::Value>,
+    message: String,
+}
+
+fn config_command(
+    server_name: Option<String>,
+    command: ConfigSubcommand,
+) -> gumgum_core::Result<ConfigReport> {
+    let path = match &server_name {
+        Some(name) => server_config_path(name)?,
+        None => local_config_path()?,
+    };
+    let scope = server_name
+        .map(|name| format!("server:{name}"))
+        .unwrap_or_else(|| "local".to_owned());
+    let mut values = load_config_map(&path)?;
+    match command {
+        ConfigSubcommand::List => Ok(ConfigReport {
+            ok: true,
+            scope,
+            values,
+            message: "config values".to_owned(),
+        }),
+        ConfigSubcommand::Get { key } => {
+            let mut selected = serde_json::Map::new();
+            if let Some(value) = values.get(&key) {
+                selected.insert(key, value.clone());
+            }
+            Ok(ConfigReport {
+                ok: true,
+                scope,
+                values: selected,
+                message: "config value".to_owned(),
+            })
+        }
+        ConfigSubcommand::Set { key, value } => {
+            values.insert(key.clone(), serde_json::Value::String(value));
+            save_config_map(&path, &values)?;
+            let mut selected = serde_json::Map::new();
+            selected.insert(key.clone(), values.get(&key).cloned().unwrap());
+            Ok(ConfigReport {
+                ok: true,
+                scope,
+                values: selected,
+                message: "config value saved".to_owned(),
+            })
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1218,6 +1302,61 @@ fn gumgum_root() -> gumgum_core::Result<PathBuf> {
 
 fn config_path() -> gumgum_core::Result<PathBuf> {
     Ok(gumgum_root()?.join("servers.json"))
+}
+
+fn local_config_path() -> gumgum_core::Result<PathBuf> {
+    Ok(gumgum_root()?.join("config.json"))
+}
+
+fn server_config_path(name: &str) -> gumgum_core::Result<PathBuf> {
+    Ok(gumgum_root()?
+        .join("servers")
+        .join(sanitize_name(name))
+        .join("config.json"))
+}
+
+fn load_config_map(
+    path: &PathBuf,
+) -> gumgum_core::Result<serde_json::Map<String, serde_json::Value>> {
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    let raw = fs::read_to_string(path).map_err(|source| {
+        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not read config")
+            .likely_cause(source.to_string())
+            .build()
+    })?;
+    serde_json::from_str(&raw).map_err(|source| {
+        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not parse config")
+            .likely_cause(source.to_string())
+            .build()
+    })
+}
+
+fn save_config_map(
+    path: &PathBuf,
+    values: &serde_json::Map<String, serde_json::Value>,
+) -> gumgum_core::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not create config directory",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    }
+    fs::write(
+        path,
+        serde_json::to_string_pretty(values).expect("serialize config"),
+    )
+    .map_err(|source| {
+        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not write config")
+            .likely_cause(source.to_string())
+            .build()
+    })
 }
 
 fn load_servers() -> gumgum_core::Result<Vec<ServerRecord>> {
