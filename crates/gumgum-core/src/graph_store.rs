@@ -15,6 +15,13 @@ pub struct DesiredDeploy {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeploymentRevision {
+    pub id: i64,
+    pub deploy: DesiredDeploy,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GlobalObject {
     pub capability: Capability,
     pub name: String,
@@ -208,29 +215,46 @@ impl GraphStore {
     }
 
     pub fn latest_previous_deploy(&self, worker: &str) -> Result<Option<DesiredDeploy>> {
+        Ok(self
+            .deployment_revisions(worker, 1)?
+            .into_iter()
+            .next()
+            .map(|revision| revision.deploy))
+    }
+
+    pub fn deployment_revisions(
+        &self,
+        worker: &str,
+        limit: u32,
+    ) -> Result<Vec<DeploymentRevision>> {
         self.init()?;
         let conn = self.open()?;
         let mut stmt = conn
-            .prepare("SELECT image, container, route, port, health FROM deployment_revisions WHERE worker = ?1 ORDER BY id DESC LIMIT 1")
+            .prepare("SELECT id, image, container, route, port, health, created_at FROM deployment_revisions WHERE worker = ?1 ORDER BY id DESC LIMIT ?2")
             .map_err(|source| self.error("could not query deployment revisions", source))?;
-        let mut rows = stmt
-            .query(params![worker])
+        let rows = stmt
+            .query_map(params![worker, limit], |row| {
+                Ok(DeploymentRevision {
+                    id: row.get(0)?,
+                    deploy: DesiredDeploy {
+                        worker: worker.to_owned(),
+                        image: row.get(1)?,
+                        container: row.get(2)?,
+                        route: row.get(3)?,
+                        port: row.get::<_, i64>(4)? as u16,
+                        health: row.get(5)?,
+                    },
+                    created_at: row.get(6)?,
+                })
+            })
             .map_err(|source| self.error("could not read deployment revisions", source))?;
-        if let Some(row) = rows
-            .next()
-            .map_err(|source| self.error("could not decode deployment revision", source))?
-        {
-            Ok(Some(DesiredDeploy {
-                worker: worker.to_owned(),
-                image: row.get(0).map_err(sql_decode_error)?,
-                container: row.get(1).map_err(sql_decode_error)?,
-                route: row.get(2).map_err(sql_decode_error)?,
-                port: row.get::<_, i64>(3).map_err(sql_decode_error)? as u16,
-                health: row.get(4).map_err(sql_decode_error)?,
-            }))
-        } else {
-            Ok(None)
+        let mut revisions = Vec::new();
+        for row in rows {
+            revisions.push(
+                row.map_err(|source| self.error("could not decode deployment revision", source))?,
+            );
         }
+        Ok(revisions)
     }
 
     pub fn binding_env(&self, worker: &str) -> Result<Vec<(String, String)>> {
@@ -452,16 +476,6 @@ pub fn provider_for_object(kind: &str) -> &'static str {
         .provider()
 }
 
-fn sql_decode_error(source: rusqlite::Error) -> GumgumError {
-    GumgumError::structured(
-        Subsystem::Config,
-        ErrorCode::Io,
-        "could not decode deployment revision",
-    )
-    .likely_cause(source.to_string())
-    .build()
-}
-
 fn binding_value(kind: &str, name: &str, dns: &str) -> String {
     match Capability::from_str(kind).unwrap_or(Capability::Manual) {
         Capability::Db => format!("postgres://{name}:gumgum@{dns}:5432/{name}"),
@@ -641,6 +655,40 @@ mod tests {
         assert_eq!(previous.route, first.route);
         assert_eq!(previous.port, first.port);
         assert_eq!(previous.health, first.health);
+        let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
+    fn deployment_revisions_list_newest_first_with_metadata() {
+        let store = temp_store("revision-list");
+        let first = DesiredDeploy {
+            worker: "api".to_owned(),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            route: "api.example.test".to_owned(),
+            port: 3000,
+            health: "/healthz".to_owned(),
+        };
+        store.materialize_deploy(&first).unwrap();
+        let mut second = first.clone();
+        second.image = "registry/api:2".to_owned();
+        store.materialize_deploy(&second).unwrap();
+        let mut third = second.clone();
+        third.route = "api-v3.example.test".to_owned();
+        store.materialize_deploy(&third).unwrap();
+
+        let revisions = store.deployment_revisions("api", 10).unwrap();
+        assert_eq!(revisions.len(), 2);
+        assert!(revisions[0].id > revisions[1].id);
+        assert_eq!(revisions[0].deploy.image, second.image);
+        assert_eq!(revisions[0].deploy.route, second.route);
+        assert_eq!(revisions[1].deploy.image, first.image);
+        assert_eq!(revisions[1].deploy.route, first.route);
+        assert!(!revisions[0].created_at.is_empty());
+
+        let limited = store.deployment_revisions("api", 1).unwrap();
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].id, revisions[0].id);
         let _ = fs::remove_file(store.path);
     }
 }

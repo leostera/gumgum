@@ -14,8 +14,8 @@ pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
 pub use graph_store::{
-    DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, connection_examples, object_dns,
-    provider_for_object,
+    DeploymentRevision, DesiredDeploy, GlobalObject, GraphStore, WorkerBinding,
+    connection_examples, object_dns, provider_for_object,
 };
 pub use manifest::{
     Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,
