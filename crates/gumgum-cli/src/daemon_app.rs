@@ -4,9 +4,9 @@ use axum::{
     routing::{get, post},
 };
 use gumgum_api::{
-    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest,
-    DeploymentRevisionsReport, GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest,
-    RollbackReport, RollbackRequest,
+    AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
+    DeployRequest, DeploymentRevisionsReport, GraphNode, GraphReport, LogsReport, ObjectReport,
+    ObjectRequest, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
@@ -59,6 +59,7 @@ impl DaemonApp {
     fn router(&self, state: DaemonState) -> Router {
         Router::new()
             .route("/healthz", get(healthz))
+            .route("/v0/version", get(daemon_version))
             .route("/v0/status", get(status))
             .route("/v0/deploy", post(daemon_deploy))
             .route("/v0/rollback", post(daemon_rollback))
@@ -74,6 +75,32 @@ impl DaemonApp {
 
 async fn healthz() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "ok": true, "service": "gumgumd" }))
+}
+
+async fn daemon_version() -> Json<DaemonVersionReport> {
+    Json(daemon_version_report())
+}
+
+fn daemon_version_report() -> DaemonVersionReport {
+    DaemonVersionReport {
+        ok: true,
+        version: option_env!("GUMGUM_BUILD_VERSION")
+            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            .to_owned(),
+        git_sha: option_env!("GUMGUM_BUILD_SHA")
+            .unwrap_or("unknown")
+            .to_owned(),
+        target: option_env!("GUMGUM_BUILD_TARGET")
+            .unwrap_or("unknown")
+            .to_owned(),
+        capabilities: vec![
+            "graph".to_owned(),
+            "logs".to_owned(),
+            "rollback".to_owned(),
+            "rollback_revisions".to_owned(),
+            "rollback_revision_id".to_owned(),
+        ],
+    }
 }
 
 async fn status() -> Json<gumgum_core::StatusReport> {
@@ -458,6 +485,23 @@ mod tests {
         third.route = "api-v3.example.test".to_owned();
         store.materialize_deploy(&third).unwrap();
         store.deployment_revisions("api", 10).unwrap()
+    }
+
+    #[test]
+    fn daemon_version_report_advertises_rollback_revision_capabilities() {
+        let report = daemon_version_report();
+
+        assert!(report.ok);
+        assert!(
+            report
+                .capabilities
+                .contains(&"rollback_revisions".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"rollback_revision_id".to_owned())
+        );
     }
 
     fn revision(id: i64) -> gumgum_core::DeploymentRevision {

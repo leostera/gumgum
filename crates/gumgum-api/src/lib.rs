@@ -127,6 +127,15 @@ pub struct AffectedReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DaemonVersionReport {
+    pub ok: bool,
+    pub version: String,
+    pub git_sha: String,
+    pub target: String,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RollbackRequest {
     pub worker: String,
     #[serde(default)]

@@ -95,11 +95,22 @@ impl ServerClient {
         worker: &str,
         limit: u32,
     ) -> gumgum_core::Result<DeploymentRevisionsReport> {
-        self.get_json(
-            &format!("/v0/revisions/{worker}?limit={limit}"),
-            "revisions",
-        )
-        .await
+        let path = format!("/v0/revisions/{worker}?limit={limit}");
+        let response = self
+            .http
+            .get(self.url(&path))
+            .send()
+            .await
+            .map_err(|source| self.api_error("failed to call gumgumd revisions API", source))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(self.unsupported_revisions_error(worker));
+        }
+        response
+            .error_for_status()
+            .map_err(|source| self.api_error("gumgumd revisions API returned an error", source))?
+            .json()
+            .await
+            .map_err(|source| self.api_error("gumgumd revisions API returned invalid JSON", source))
     }
 
     pub(crate) async fn logs(&self, container: &str, tail: u32) -> gumgum_core::Result<LogsReport> {
@@ -159,5 +170,53 @@ impl ServerClient {
         GumgumError::structured(Subsystem::Api, ErrorCode::Io, message.into())
             .likely_cause(source.to_string())
             .build()
+    }
+
+    fn unsupported_revisions_error(&self, worker: &str) -> GumgumError {
+        GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::Io,
+            "gumgumd does not expose deployment revisions",
+        )
+        .likely_cause(format!(
+            "server {} returned 404 for /v0/revisions/{worker}; the daemon is probably older than the CLI or was installed from a release before rollback revisions were added",
+            self.host
+        ))
+        .next_command(format!(
+            "gumgum setup {} --root-domain <domain>",
+            self.host
+        ))
+        .next_command("gumgum version")
+        .build()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_revisions_error_explains_old_daemon() {
+        let report = ServerClient::new("192.168.0.3")
+            .unsupported_revisions_error("hello-world")
+            .to_report();
+
+        assert_eq!(
+            report.message,
+            "gumgumd does not expose deployment revisions"
+        );
+        assert!(
+            report
+                .likely_cause
+                .unwrap()
+                .contains("/v0/revisions/hello-world")
+        );
+        assert_eq!(
+            report.next_commands,
+            vec![
+                "gumgum setup 192.168.0.3 --root-domain <domain>",
+                "gumgum version",
+            ]
+        );
     }
 }
