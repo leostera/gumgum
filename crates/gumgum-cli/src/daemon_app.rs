@@ -263,25 +263,14 @@ async fn daemon_rollback(
     let store = GraphStore::new((*state.graph_path).clone());
     let worker = request.worker.clone();
     let revision_id = request.revision_id;
-    let rollback_revision = tokio::task::spawn_blocking(move || {
-        if let Some(revision_id) = revision_id {
-            store.deployment_revision(&worker, revision_id)
-        } else {
-            Ok(store.latest_previous_deploy(&worker)?.map(|deploy| {
-                gumgum_core::DeploymentRevision {
-                    id: 0,
-                    deploy,
-                    created_at: String::new(),
-                }
-            }))
-        }
-    })
-    .await
-    .ok()
-    .and_then(Result::ok)
-    .flatten();
+    let rollback_revision =
+        tokio::task::spawn_blocking(move || store.rollback_revision(&worker, revision_id))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten();
     if let Some(revision) = rollback_revision {
-        let revision_id = (revision.id != 0).then_some(revision.id);
+        let revision_id = Some(revision.id);
         let deploy = revision.deploy;
         let image = deploy.image.clone();
         let container = deploy.container.clone();

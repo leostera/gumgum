@@ -216,10 +216,23 @@ impl GraphStore {
 
     pub fn latest_previous_deploy(&self, worker: &str) -> Result<Option<DesiredDeploy>> {
         Ok(self
-            .deployment_revisions(worker, 1)?
-            .into_iter()
-            .next()
+            .latest_previous_revision(worker)?
             .map(|revision| revision.deploy))
+    }
+
+    pub fn latest_previous_revision(&self, worker: &str) -> Result<Option<DeploymentRevision>> {
+        Ok(self.deployment_revisions(worker, 1)?.into_iter().next())
+    }
+
+    pub fn rollback_revision(
+        &self,
+        worker: &str,
+        revision_id: Option<i64>,
+    ) -> Result<Option<DeploymentRevision>> {
+        match revision_id {
+            Some(revision_id) => self.deployment_revision(worker, revision_id),
+            None => self.latest_previous_revision(worker),
+        }
     }
 
     pub fn deployment_revision(
@@ -677,6 +690,9 @@ mod tests {
         assert_eq!(previous.route, first.route);
         assert_eq!(previous.port, first.port);
         assert_eq!(previous.health, first.health);
+        let previous_revision = store.latest_previous_revision("api").unwrap().unwrap();
+        assert_eq!(previous_revision.deploy.image, first.image);
+        assert!(previous_revision.id > 0);
         let _ = fs::remove_file(store.path);
     }
 
@@ -739,12 +755,14 @@ mod tests {
         assert_eq!(limited[0].id, revisions[0].id);
 
         let selected = store
-            .deployment_revision("api", revisions[1].id)
+            .rollback_revision("api", Some(revisions[1].id))
             .unwrap()
             .unwrap();
         assert_eq!(selected.id, revisions[1].id);
         assert_eq!(selected.deploy.image, first.image);
-        assert!(store.deployment_revision("api", -1).unwrap().is_none());
+        let latest = store.rollback_revision("api", None).unwrap().unwrap();
+        assert_eq!(latest.id, revisions[0].id);
+        assert!(store.rollback_revision("api", Some(-1)).unwrap().is_none());
         let _ = fs::remove_file(store.path);
     }
 }
