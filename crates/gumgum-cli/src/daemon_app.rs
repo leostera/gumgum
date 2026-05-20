@@ -268,20 +268,26 @@ async fn daemon_boot_default_providers() -> Json<ProviderBootReport> {
         .and_then(|store| store.load_or_init_default_provider_credentials());
     match credentials {
         Ok(credentials) => match ProviderReconciler::boot_defaults(&credentials).await {
-            Ok(actions) => Json(ProviderBootReport {
-                ok: true,
-                message: "default providers booted".to_owned(),
-                actions,
-            }),
+            Ok(actions) => {
+                let providers = ProviderReconciler::statuses().await;
+                Json(ProviderBootReport {
+                    ok: true,
+                    message: "default providers booted".to_owned(),
+                    actions,
+                    providers,
+                })
+            }
             Err(error) => Json(ProviderBootReport {
                 ok: false,
                 actions: Vec::new(),
+                providers: Vec::new(),
                 message: error.to_report().message,
             }),
         },
         Err(error) => Json(ProviderBootReport {
             ok: false,
             actions: Vec::new(),
+            providers: Vec::new(),
             message: error.to_report().message,
         }),
     }

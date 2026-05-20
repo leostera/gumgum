@@ -148,6 +148,7 @@ pub struct ProviderCredentialsInitReport {
 pub struct ProviderBootReport {
     pub ok: bool,
     pub actions: Vec<String>,
+    pub providers: Vec<ProviderStatus>,
     pub message: String,
 }
 
