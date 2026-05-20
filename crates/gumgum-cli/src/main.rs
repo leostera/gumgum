@@ -1866,7 +1866,10 @@ fn save_server(server: ServerRecord) -> gumgum_core::Result<()> {
     })
 }
 
-async fn run_command_streaming(cmd: &mut TokioCommand, quiet: bool) -> gumgum_core::Result<()> {
+pub(crate) async fn run_command_streaming(
+    cmd: &mut TokioCommand,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
     if quiet {
         return run_command(cmd).await;
     }

@@ -439,9 +439,11 @@ dependencies = [
 name = "gumgum-core"
 version = "0.1.0"
 dependencies = [
+ "reqwest",
  "rusqlite",
  "serde",
  "thiserror",
+ "tokio",
  "toml",
 ]
 

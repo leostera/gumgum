@@ -1,6 +1,8 @@
+pub mod container_reconciler;
 pub mod graph_store;
 pub mod manifest;
 
+pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use graph_store::{
     DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, connection_examples, object_dns,
     provider_for_object,
