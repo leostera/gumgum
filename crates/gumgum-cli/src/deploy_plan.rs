@@ -1,6 +1,5 @@
-use crate::{DeployPlanEdge, DeployPlanGraph, DeployPlanNode};
+use gumgum_core::{PlanEdge, PlanGraph, PlanNode};
 use gumgum_manifest::WorkerManifest;
-use std::collections::BTreeSet;
 
 pub(crate) struct DeployPlanner<'a> {
     manifest: &'a WorkerManifest,
@@ -11,7 +10,7 @@ impl<'a> DeployPlanner<'a> {
         Self { manifest }
     }
 
-    pub(crate) fn graph(&self) -> DeployPlanGraph {
+    pub(crate) fn graph(&self) -> PlanGraph {
         let worker = &self.manifest.worker.name;
         let mut graph = MutablePlanGraph::new(worker);
 
@@ -40,8 +39,8 @@ impl<'a> DeployPlanner<'a> {
 }
 
 struct MutablePlanGraph {
-    nodes: Vec<DeployPlanNode>,
-    edges: Vec<DeployPlanEdge>,
+    nodes: Vec<PlanNode>,
+    edges: Vec<PlanEdge>,
 }
 
 impl MutablePlanGraph {
@@ -152,59 +151,17 @@ impl MutablePlanGraph {
         }
     }
 
-    fn finish(self) -> DeployPlanGraph {
-        let execution_levels = topo_levels(&self.nodes, &self.edges);
-        DeployPlanGraph {
-            nodes: self.nodes,
-            edges: self.edges,
-            execution_levels,
-        }
+    fn finish(self) -> PlanGraph {
+        PlanGraph::new(self.nodes, self.edges)
     }
 }
 
-fn node(id: &str, kind: &str, label: &str, action: &str) -> DeployPlanNode {
-    DeployPlanNode {
-        id: id.to_owned(),
-        kind: kind.to_owned(),
-        label: label.to_owned(),
-        action: action.to_owned(),
-    }
+fn node(id: &str, kind: &str, label: &str, action: &str) -> PlanNode {
+    PlanNode::new(id, kind, label, action)
 }
 
-fn edge(from: &str, to: &str, kind: &str) -> DeployPlanEdge {
-    DeployPlanEdge {
-        from: from.to_owned(),
-        to: to.to_owned(),
-        kind: kind.to_owned(),
-    }
-}
-
-fn topo_levels(nodes: &[DeployPlanNode], edges: &[DeployPlanEdge]) -> Vec<Vec<String>> {
-    let mut remaining = nodes
-        .iter()
-        .map(|node| node.id.clone())
-        .collect::<BTreeSet<_>>();
-    let mut levels = Vec::new();
-    while !remaining.is_empty() {
-        let ready = remaining
-            .iter()
-            .filter(|id| {
-                !edges
-                    .iter()
-                    .any(|edge| edge.to == **id && remaining.contains(&edge.from))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if ready.is_empty() {
-            levels.push(remaining.iter().cloned().collect());
-            break;
-        }
-        for id in &ready {
-            remaining.remove(id);
-        }
-        levels.push(ready);
-    }
-    levels
+fn edge(from: &str, to: &str, kind: &str) -> PlanEdge {
+    PlanEdge::new(from, to, kind)
 }
 
 fn provider_for_object(kind: &str) -> &'static str {

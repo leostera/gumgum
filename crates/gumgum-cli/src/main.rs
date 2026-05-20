@@ -20,7 +20,7 @@ use gumgum_api::{
     RollbackRequest, ServerListReport, ServerRecord, SetupPlan, SetupReport, not_configured_status,
     setup_actions,
 };
-use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
+use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, PlanGraph, Subsystem};
 use gumgum_manifest::{
     ManifestKind, WorkerManifest, load_worker_path, load_workspace_path, validate_path,
 };
@@ -459,30 +459,8 @@ pub(crate) struct DeployReport {
     pub(crate) routes: Vec<String>,
     pub(crate) health_url: Option<String>,
     pub(crate) plan: Vec<String>,
-    pub(crate) plan_graph: DeployPlanGraph,
+    pub(crate) plan_graph: PlanGraph,
     pub(crate) message: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct DeployPlanGraph {
-    pub(crate) nodes: Vec<DeployPlanNode>,
-    pub(crate) edges: Vec<DeployPlanEdge>,
-    pub(crate) execution_levels: Vec<Vec<String>>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct DeployPlanNode {
-    pub(crate) id: String,
-    pub(crate) kind: String,
-    pub(crate) label: String,
-    pub(crate) action: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct DeployPlanEdge {
-    pub(crate) from: String,
-    pub(crate) to: String,
-    pub(crate) kind: String,
 }
 
 #[derive(Debug, Serialize)]
