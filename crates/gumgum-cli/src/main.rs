@@ -1,3 +1,4 @@
+mod config_command;
 mod daemon_app;
 mod deploy_executor;
 mod graph_presenter;
@@ -6,6 +7,7 @@ mod server_client;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use config_command::config_command;
 use daemon_app::DaemonApp;
 use deploy_executor::DeployExecutor;
 use graph_presenter::GraphPresenter;
@@ -14,8 +16,8 @@ use gumgum_api::{
     ObjectRequest, PingReport, ServerListReport, SetupPlan, SetupReport,
 };
 use gumgum_core::{
-    Capability, ConfigScope, ConfigStore, DaemonHealthClient, DaemonPingReport,
-    DeploymentDescriptor, DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller,
+    Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
+    DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller,
     InitManifestKind as CoreInitKind, ManifestKind, PlanGraph, ServerRecord, SetupOptions,
     SetupTarget, Subsystem, WorkerManifest, default_project_name, init_plan, load_worker_path,
     load_workspace_path, not_configured_status,
@@ -82,7 +84,7 @@ struct ConfigArgs {
 }
 
 #[derive(Debug, Subcommand)]
-enum ConfigSubcommand {
+pub(crate) enum ConfigSubcommand {
     List,
     Get { key: String },
     Set { key: String, value: String },
@@ -387,58 +389,6 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         },
     }
     Ok(())
-}
-
-#[derive(Debug, Serialize)]
-struct ConfigReport {
-    ok: bool,
-    scope: String,
-    values: serde_json::Map<String, serde_json::Value>,
-    message: String,
-}
-
-fn config_command(
-    server_name: Option<String>,
-    command: ConfigSubcommand,
-) -> gumgum_core::Result<ConfigReport> {
-    let store = ConfigStore::from_home_env()?;
-    let config_scope = server_name
-        .map(ConfigScope::Server)
-        .unwrap_or(ConfigScope::Local);
-    let scope = config_scope.label();
-    let mut values = store.load_config(&config_scope)?;
-    match command {
-        ConfigSubcommand::List => Ok(ConfigReport {
-            ok: true,
-            scope,
-            values,
-            message: "config values".to_owned(),
-        }),
-        ConfigSubcommand::Get { key } => {
-            let mut selected = serde_json::Map::new();
-            if let Some(value) = values.get(&key) {
-                selected.insert(key, value.clone());
-            }
-            Ok(ConfigReport {
-                ok: true,
-                scope,
-                values: selected,
-                message: "config value".to_owned(),
-            })
-        }
-        ConfigSubcommand::Set { key, value } => {
-            values.insert(key.clone(), serde_json::Value::String(value));
-            store.save_config(&config_scope, &values)?;
-            let mut selected = serde_json::Map::new();
-            selected.insert(key.clone(), values.get(&key).cloned().unwrap());
-            Ok(ConfigReport {
-                ok: true,
-                scope,
-                values: selected,
-                message: "config value saved".to_owned(),
-            })
-        }
-    }
 }
 
 #[derive(Debug, Serialize)]
