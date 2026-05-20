@@ -190,21 +190,17 @@ async fn daemon_create_object(
     let dns = object_dns(&capability_name, &request.name, &request.root_domain);
     let provider_plan = object_provider_plan(capability, &request.name, &dns);
     let provider = provider_plan.provider.provider.clone();
-    let provider_credentials = if capability == gumgum_core::Capability::Blob {
-        match ConfigStore::from_home_env().and_then(|store| store.load_minio_credentials()) {
-            Ok(Some(credentials)) => Some(credentials),
-            _ => {
-                return Json(missing_provider_credentials_report(
-                    capability_name,
-                    request.name,
-                    dns,
-                    provider,
-                    provider_plan.connection_examples,
-                ));
-            }
+    let provider_credentials = match required_provider_credentials(capability) {
+        Ok(credentials) => credentials,
+        Err(()) => {
+            return Json(missing_provider_credentials_report(
+                capability_name,
+                request.name,
+                dns,
+                provider,
+                provider_plan.connection_examples,
+            ));
         }
-    } else {
-        None
     };
     let ok = tokio::task::spawn_blocking(move || store.materialize_object(&request_for_db))
         .await
@@ -230,6 +226,22 @@ async fn daemon_create_object(
         provider_actions,
         message: "global object materialized and provider reconciled".to_owned(),
     })
+}
+
+fn required_provider_credentials(
+    capability: gumgum_core::Capability,
+) -> Result<Option<gumgum_core::ProviderCredentials>, ()> {
+    let provider = match capability {
+        gumgum_core::Capability::Kv => "redis.main",
+        gumgum_core::Capability::Blob => "minio.main",
+        _ => return Ok(None),
+    };
+    ConfigStore::from_home_env()
+        .and_then(|store| store.load_provider_credentials(provider))
+        .ok()
+        .flatten()
+        .map(Some)
+        .ok_or(())
 }
 
 fn missing_provider_credentials_report(

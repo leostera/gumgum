@@ -50,6 +50,16 @@ impl ProviderCredentials {
         Self::generated("POSTGRES_USER", "POSTGRES_PASSWORD", "gumgum")
     }
 
+    pub fn redis_local_dev() -> Self {
+        Self {
+            username_env: "REDIS_USER".to_owned(),
+            password_env: "REDIS_PASSWORD".to_owned(),
+            username: std::env::var("GUMGUM_REDIS_USER").unwrap_or_else(|_| "gumgum".to_owned()),
+            password: std::env::var("GUMGUM_REDIS_PASSWORD")
+                .unwrap_or_else(|_| "gumgum-local-dev".to_owned()),
+        }
+    }
+
     pub fn redis_generated() -> Self {
         Self::generated("REDIS_USER", "REDIS_PASSWORD", "gumgum")
     }

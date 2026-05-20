@@ -539,8 +539,17 @@ pub fn provider_for_object(kind: &str) -> &'static str {
 
 fn binding_values(kind: &str, binding: &str, name: &str, dns: &str) -> Vec<(String, String)> {
     match Capability::from_str(kind).unwrap_or(Capability::Manual) {
+        Capability::Kv => {
+            let credentials = provider_credentials("redis.main")
+                .unwrap_or_else(crate::ProviderCredentials::redis_local_dev);
+            vec![(
+                binding.to_owned(),
+                format!("redis://:{}@{dns}:6379/0", credentials.password),
+            )]
+        }
         Capability::Blob => {
-            let credentials = crate::ProviderCredentials::minio_local_dev();
+            let credentials = provider_credentials("minio.main")
+                .unwrap_or_else(crate::ProviderCredentials::minio_local_dev);
             vec![
                 (binding.to_owned(), format!("s3://{dns}/{name}")),
                 (format!("{binding}_ENDPOINT"), format!("http://{dns}:9000")),
@@ -552,6 +561,13 @@ fn binding_values(kind: &str, binding: &str, name: &str, dns: &str) -> Vec<(Stri
         }
         _ => vec![(binding.to_owned(), binding_value(kind, name, dns))],
     }
+}
+
+fn provider_credentials(provider: &str) -> Option<crate::ProviderCredentials> {
+    crate::ConfigStore::from_home_env()
+        .and_then(|store| store.load_provider_credentials(provider))
+        .ok()
+        .flatten()
 }
 
 fn binding_value(kind: &str, name: &str, dns: &str) -> String {
@@ -680,7 +696,7 @@ mod tests {
             store.binding_env("api").unwrap(),
             vec![(
                 "SESSIONS".to_owned(),
-                "redis://sessions.kv.leostera.dev:6379/0".to_owned()
+                "redis://:gumgum-local-dev@sessions.kv.leostera.dev:6379/0".to_owned()
             )]
         );
         store
