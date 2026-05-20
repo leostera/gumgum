@@ -16,7 +16,7 @@ pub struct DesiredDeploy {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GlobalObject {
-    pub kind: String,
+    pub capability: Capability,
     pub name: String,
     pub namespace: String,
     pub root_domain: String,
@@ -24,7 +24,7 @@ pub struct GlobalObject {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorkerBinding {
-    pub object_kind: String,
+    pub capability: Capability,
     pub object_name: String,
     pub worker: String,
     pub binding: String,
@@ -125,8 +125,9 @@ impl GraphStore {
     pub fn materialize_object(&self, object: &GlobalObject) -> Result<bool> {
         self.init()?;
         let conn = self.open()?;
-        let dns = object_dns(&object.kind, &object.name, &object.root_domain);
-        let provider = provider_for_object(&object.kind);
+        let kind = object.capability.to_string();
+        let dns = object_dns(&kind, &object.name, &object.root_domain);
+        let provider = object.capability.provider();
         conn.execute(
             "INSERT INTO global_objects (kind, name, namespace, root_domain, dns, provider, status, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ready', CURRENT_TIMESTAMP)
@@ -137,7 +138,7 @@ impl GraphStore {
                provider=excluded.provider,
                status='ready',
                updated_at=CURRENT_TIMESTAMP",
-            params![object.kind, object.name, object.namespace, object.root_domain, dns, provider],
+            params![kind, object.name, object.namespace, object.root_domain, dns, provider],
         )
         .map_err(|source| self.error("could not materialize object", source))?;
         Ok(true)
@@ -155,7 +156,7 @@ impl GraphStore {
                access=excluded.access,
                updated_at=CURRENT_TIMESTAMP",
             params![
-                binding.object_kind,
+                binding.capability.to_string(),
                 binding.object_name,
                 binding.worker,
                 binding.binding,

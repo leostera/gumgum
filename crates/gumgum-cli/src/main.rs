@@ -1769,7 +1769,7 @@ async fn daemon_create_object(
 ) -> Json<ObjectReport> {
     let store = GraphStore::new((*state.graph_path).clone());
     let request_for_db = GlobalObject {
-        kind: request.capability.to_string(),
+        capability: request.capability,
         name: request.name.clone(),
         namespace: request.namespace.clone(),
         root_domain: request.root_domain.clone(),
@@ -1800,7 +1800,7 @@ async fn daemon_create_binding(
 ) -> Json<BindingReport> {
     let store = GraphStore::new((*state.graph_path).clone());
     let request_for_db = WorkerBinding {
-        object_kind: request.capability.to_string(),
+        capability: request.capability,
         object_name: request.object_name.clone(),
         worker: request.worker.clone(),
         binding: request.binding.clone(),
