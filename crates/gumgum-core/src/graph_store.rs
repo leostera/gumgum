@@ -336,12 +336,12 @@ impl GraphStore {
                 let kind: String = row.get(1)?;
                 let name: String = row.get(2)?;
                 let dns: String = row.get(3)?;
-                Ok((binding, binding_value(&kind, &name, &dns)))
+                Ok(binding_values(&kind, &binding, &name, &dns))
             })
             .map_err(|source| self.error("could not read binding env", source))?;
         let mut env = Vec::new();
         for row in rows {
-            env.push(row.map_err(|source| self.error("could not decode binding env", source))?);
+            env.extend(row.map_err(|source| self.error("could not decode binding env", source))?);
         }
         Ok(env)
     }
@@ -514,7 +514,7 @@ impl GraphStore {
 }
 
 pub fn object_dns(kind: &str, name: &str, root_domain: &str) -> String {
-    format!("{name}.{kind}.{root_domain}")
+    format!("{}.{kind}.{root_domain}", crate::sanitize_name(name))
 }
 
 pub fn connection_examples(kind: &str, name: &str, dns: &str) -> Vec<String> {
@@ -535,6 +535,23 @@ pub fn provider_for_object(kind: &str) -> &'static str {
     Capability::from_str(kind)
         .unwrap_or(Capability::Manual)
         .provider()
+}
+
+fn binding_values(kind: &str, binding: &str, name: &str, dns: &str) -> Vec<(String, String)> {
+    match Capability::from_str(kind).unwrap_or(Capability::Manual) {
+        Capability::Blob => vec![
+            (binding.to_owned(), format!("s3://{dns}/{name}")),
+            (format!("{binding}_ENDPOINT"), format!("http://{dns}:9000")),
+            (format!("{binding}_BUCKET"), crate::sanitize_name(name)),
+            (format!("{binding}_ACCESS_KEY_ID"), "gumgum".to_owned()),
+            (
+                format!("{binding}_SECRET_ACCESS_KEY"),
+                "gumgum-local-dev".to_owned(),
+            ),
+            (format!("{binding}_FORCE_PATH_STYLE"), "true".to_owned()),
+        ],
+        _ => vec![(binding.to_owned(), binding_value(kind, name, dns))],
+    }
 }
 
 fn binding_value(kind: &str, name: &str, dns: &str) -> String {
@@ -666,6 +683,30 @@ mod tests {
                 "redis://sessions.kv.leostera.dev:6379/0".to_owned()
             )]
         );
+        store
+            .materialize_object(&GlobalObject {
+                capability: Capability::Blob,
+                name: "User Uploads".to_owned(),
+                namespace: "peekaboo".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_binding(&WorkerBinding {
+                capability: Capability::Blob,
+                object_name: "User Uploads".to_owned(),
+                worker: "api".to_owned(),
+                binding: "UPLOADS".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+        let env = store.binding_env("api").unwrap();
+        assert!(env.contains(&(
+            "UPLOADS_ENDPOINT".to_owned(),
+            "http://user-uploads.blob.leostera.dev:9000".to_owned()
+        )));
+        assert!(env.contains(&("UPLOADS_BUCKET".to_owned(), "user-uploads".to_owned())));
+        assert!(env.contains(&("UPLOADS_FORCE_PATH_STYLE".to_owned(), "true".to_owned())));
 
         let first = DesiredDeploy {
             worker: "api".to_owned(),
