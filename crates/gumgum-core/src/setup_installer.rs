@@ -1,4 +1,4 @@
-use crate::{ErrorCode, GumgumError, Subsystem};
+use crate::{ErrorCode, GumgumError, Subsystem, derive_test_domain, sanitize_name};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, process::Stdio};
 use tokio::process::Command as TokioCommand;
@@ -13,9 +13,49 @@ pub struct SetupTarget {
     pub local: bool,
 }
 
+impl SetupTarget {
+    pub fn ssh_target(&self) -> String {
+        ssh_target(self.user.as_deref(), &self.host)
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SetupOptions {
+    pub host: Option<String>,
+    pub name: Option<String>,
+    pub user: Option<String>,
+    pub root_domain: Option<String>,
+    pub test_domain: Option<String>,
+}
+
 pub struct GumgumInstaller;
 
 impl GumgumInstaller {
+    pub async fn resolve_target(options: SetupOptions) -> crate::Result<SetupTarget> {
+        let local = options.host.is_none();
+        let host = options.host.unwrap_or_else(|| "127.0.0.1".to_owned());
+        let target = ssh_target(options.user.as_deref(), &host);
+        let name = match options.name {
+            Some(name) => name,
+            None if local => local_hostname().await?,
+            None => remote_hostname(&target)
+                .await
+                .unwrap_or_else(|_| sanitize_name(&host)),
+        };
+        let root_domain = options.root_domain.unwrap_or_else(|| format!("{name}.dev"));
+        let test_domain = options
+            .test_domain
+            .unwrap_or_else(|| derive_test_domain(&root_domain));
+        Ok(SetupTarget {
+            name,
+            host,
+            user: options.user,
+            root_domain,
+            test_domain,
+            local,
+        })
+    }
+
     pub async fn install_local_user_service(quiet: bool) -> crate::Result<()> {
         let gumgum = std::env::current_exe().map_err(|source| {
             GumgumError::structured(
@@ -224,6 +264,62 @@ async fn run_command(cmd: &mut TokioCommand) -> crate::Result<()> {
             .next_command("gumgum setup <host> --root-domain <domain> --dry-run")
             .build(),
     )
+}
+
+async fn local_hostname() -> crate::Result<String> {
+    let output = TokioCommand::new("hostname")
+        .output()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "failed to read local hostname",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if !output.status.success() {
+        return Ok("localhost".to_owned());
+    }
+    Ok(sanitize_name(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
+}
+
+async fn remote_hostname(target: &str) -> crate::Result<String> {
+    let output = TokioCommand::new("ssh")
+        .arg(target)
+        .arg("hostname")
+        .output()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "failed to read remote hostname",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if !output.status.success() {
+        return Err(GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "remote hostname failed",
+        )
+        .build());
+    }
+    Ok(sanitize_name(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
+}
+
+fn ssh_target(user: Option<&str>, host: &str) -> String {
+    match user {
+        Some(user) => format!("{user}@{host}"),
+        None => host.to_owned(),
+    }
 }
 
 fn shell_quote(value: &str) -> String {

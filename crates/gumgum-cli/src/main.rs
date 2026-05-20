@@ -16,7 +16,7 @@ use gumgum_api::{
 use gumgum_core::{
     Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
     DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph,
-    ServerRecord, SetupTarget, Subsystem, WorkerManifest, default_project_name, derive_test_domain,
+    ServerRecord, SetupOptions, SetupTarget, Subsystem, WorkerManifest, default_project_name,
     load_worker_path, load_workspace_path, not_configured_status, sanitize_name, setup_actions,
     validate_path,
 };
@@ -1252,99 +1252,15 @@ fn version_report() -> VersionReport {
     }
 }
 
-#[derive(Debug)]
-struct ResolvedSetup {
-    name: String,
-    host: String,
-    user: Option<String>,
-    root_domain: String,
-    test_domain: String,
-    local: bool,
-}
-
-fn setup_target(setup: &ResolvedSetup) -> SetupTarget {
-    SetupTarget {
-        name: setup.name.clone(),
-        host: setup.host.clone(),
-        user: setup.user.clone(),
-        root_domain: setup.root_domain.clone(),
-        test_domain: setup.test_domain.clone(),
-        local: setup.local,
-    }
-}
-
-async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<ResolvedSetup> {
-    let local = args.host.is_none();
-    let host = args.host.unwrap_or_else(|| "127.0.0.1".to_owned());
-    let target = ssh_target(args.user.as_deref(), &host);
-    let name = match args.name {
-        Some(name) => name,
-        None if local => local_hostname().await?,
-        None => remote_hostname(&target)
-            .await
-            .unwrap_or_else(|_| sanitize_name(&host)),
-    };
-    let root_domain = args.root_domain.unwrap_or_else(|| format!("{name}.dev"));
-    let test_domain = args
-        .test_domain
-        .unwrap_or_else(|| derive_test_domain(&root_domain));
-    Ok(ResolvedSetup {
-        name,
-        host,
+async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<SetupTarget> {
+    GumgumInstaller::resolve_target(SetupOptions {
+        host: args.host,
+        name: args.name,
         user: args.user,
-        root_domain,
-        test_domain,
-        local,
+        root_domain: args.root_domain,
+        test_domain: args.test_domain,
     })
-}
-
-async fn local_hostname() -> gumgum_core::Result<String> {
-    let output = TokioCommand::new("hostname")
-        .output()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "failed to read local hostname",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    if !output.status.success() {
-        return Ok("localhost".to_owned());
-    }
-    Ok(sanitize_name(
-        String::from_utf8_lossy(&output.stdout).trim(),
-    ))
-}
-
-async fn remote_hostname(target: &str) -> gumgum_core::Result<String> {
-    let output = TokioCommand::new("ssh")
-        .arg(target)
-        .arg("hostname")
-        .output()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "failed to read remote hostname",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    if !output.status.success() {
-        return Err(GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "remote hostname failed",
-        )
-        .build());
-    }
-    Ok(sanitize_name(
-        String::from_utf8_lossy(&output.stdout).trim(),
-    ))
+    .await
 }
 
 async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
@@ -1367,7 +1283,7 @@ async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
     ))
 }
 
-async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Result<SetupReport> {
+async fn install_gumgumd(setup: SetupTarget, quiet: bool) -> gumgum_core::Result<SetupReport> {
     progress(quiet, "resolving setup target");
     if setup.local {
         progress(
@@ -1381,9 +1297,9 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
         );
         GumgumInstaller::configure_host_dns(&setup.test_domain, quiet).await?;
     } else {
-        let target = ssh_target(setup.user.as_deref(), &setup.host);
+        let target = setup.ssh_target();
         progress(quiet, format!("running remote bootstrap on {target}"));
-        GumgumInstaller::run_remote_setup(&target, &setup_target(&setup), quiet).await?;
+        GumgumInstaller::run_remote_setup(&target, &setup, quiet).await?;
     }
     progress(quiet, "checking gumgumd health");
     wait_for_ping(&setup.host).await?;
@@ -1528,7 +1444,7 @@ struct SchemaExplanation {
 
 #[cfg(test)]
 mod tests {
-    use super::derive_test_domain;
+    use gumgum_core::derive_test_domain;
 
     #[test]
     fn derives_test_domain_from_root_domain() {

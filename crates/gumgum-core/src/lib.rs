@@ -23,7 +23,7 @@ pub use manifest::{
 };
 pub use platform::LocalPlatform;
 pub use setup::{not_configured_status, setup_actions};
-pub use setup_installer::{GumgumInstaller, SetupTarget};
+pub use setup_installer::{GumgumInstaller, SetupOptions, SetupTarget};
 
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
