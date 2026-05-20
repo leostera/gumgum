@@ -1,3 +1,5 @@
+mod presentation;
+
 use anyhow::Result;
 use axum::{
     Json, Router,
@@ -436,59 +438,59 @@ fn config_command(
 }
 
 #[derive(Debug, Serialize)]
-struct DeployReport {
-    ok: bool,
-    dry_run: bool,
-    path: String,
-    worker: String,
-    host: Option<String>,
-    build_context: Option<String>,
-    image: String,
-    container: String,
-    port: u16,
-    routes: Vec<String>,
-    health_url: Option<String>,
-    plan: Vec<String>,
-    plan_graph: DeployPlanGraph,
-    message: String,
+pub(crate) struct DeployReport {
+    pub(crate) ok: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) path: String,
+    pub(crate) worker: String,
+    pub(crate) host: Option<String>,
+    pub(crate) build_context: Option<String>,
+    pub(crate) image: String,
+    pub(crate) container: String,
+    pub(crate) port: u16,
+    pub(crate) routes: Vec<String>,
+    pub(crate) health_url: Option<String>,
+    pub(crate) plan: Vec<String>,
+    pub(crate) plan_graph: DeployPlanGraph,
+    pub(crate) message: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct DeployPlanGraph {
-    nodes: Vec<DeployPlanNode>,
-    edges: Vec<DeployPlanEdge>,
-    execution_levels: Vec<Vec<String>>,
+pub(crate) struct DeployPlanGraph {
+    pub(crate) nodes: Vec<DeployPlanNode>,
+    pub(crate) edges: Vec<DeployPlanEdge>,
+    pub(crate) execution_levels: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct DeployPlanNode {
-    id: String,
-    kind: String,
-    label: String,
-    action: String,
+pub(crate) struct DeployPlanNode {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) label: String,
+    pub(crate) action: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct DeployPlanEdge {
-    from: String,
-    to: String,
-    kind: String,
+pub(crate) struct DeployPlanEdge {
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) kind: String,
 }
 
 #[derive(Debug, Serialize)]
-struct WorkspaceDeployReport {
-    ok: bool,
-    dry_run: bool,
-    path: String,
-    workspace: String,
-    workers: Vec<DeployReport>,
-    plan: Vec<String>,
-    message: String,
+pub(crate) struct WorkspaceDeployReport {
+    pub(crate) ok: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) path: String,
+    pub(crate) workspace: String,
+    pub(crate) workers: Vec<DeployReport>,
+    pub(crate) plan: Vec<String>,
+    pub(crate) message: String,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-enum DeployOutput {
+pub(crate) enum DeployOutput {
     Worker(DeployReport),
     Workspace(WorkspaceDeployReport),
 }
@@ -1319,20 +1321,7 @@ async fn create_object(kind: &str, args: CreateObjectArgs, json: bool) -> gumgum
 }
 
 fn print_object_report(report: &ObjectReport) {
-    println!("{} '{}' ready", report.kind, report.name);
-    println!("DNS: {}", report.dns);
-    println!("Provider: {}", report.provider);
-    let examples = if report.connection_examples.is_empty() {
-        connection_examples(&report.kind, &report.name, &report.dns)
-    } else {
-        report.connection_examples.clone()
-    };
-    if !examples.is_empty() {
-        println!("\nConnect:");
-        for example in examples {
-            println!("  {example}");
-        }
-    }
+    presentation::Presenter::new().object_report(report);
 }
 
 async fn bind_object(kind: &str, args: BindObjectArgs, json: bool) -> gumgum_core::Result<()> {
@@ -3644,39 +3633,8 @@ fn progress(quiet: bool, message: impl AsRef<str>) {
 fn print_deploy_output(json: bool, output: &DeployOutput) {
     if json {
         print_value(true, output);
-        return;
-    }
-    match output {
-        DeployOutput::Worker(report) => print_deploy_report(report),
-        DeployOutput::Workspace(report) => {
-            println!("Workspace: {}", report.workspace);
-            println!("Plan:");
-            for step in &report.plan {
-                println!("  - {step}");
-            }
-            if !report.dry_run {
-                println!("{}", report.message);
-            }
-        }
-    }
-}
-
-fn print_deploy_report(report: &DeployReport) {
-    println!("Worker: {}", report.worker);
-    if let Some(host) = &report.host {
-        println!("Host: {host}");
-    }
-    for route in &report.routes {
-        println!("Route: {route}");
-    }
-    println!("Image: {}", report.image);
-    println!("Container: {}", report.container);
-    println!("Plan:");
-    for level in &report.plan_graph.execution_levels {
-        println!("  - {}", level.join(", "));
-    }
-    if !report.dry_run {
-        println!("{}", report.message);
+    } else {
+        presentation::Presenter::new().deploy_output(output);
     }
 }
 
