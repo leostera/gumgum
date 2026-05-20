@@ -240,6 +240,41 @@ HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
     ]
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InitManifestKind {
+    Workspace,
+    Worker,
+}
+
+#[derive(Clone, Debug)]
+pub struct InitPlan {
+    pub manifest_kind: InitManifestKind,
+    pub manifest: String,
+    pub scaffold_files: Vec<ScaffoldFile>,
+}
+
+pub fn init_plan(
+    kind: InitManifestKind,
+    name: &str,
+    namespace: &str,
+    port: u16,
+    zones: &[String],
+    root_domain: Option<&str>,
+) -> InitPlan {
+    match kind {
+        InitManifestKind::Workspace => InitPlan {
+            manifest_kind: kind,
+            manifest: workspace_manifest_template(name, root_domain),
+            scaffold_files: Vec::new(),
+        },
+        InitManifestKind::Worker => InitPlan {
+            manifest_kind: kind,
+            manifest: worker_manifest_template(name, namespace, port, zones),
+            scaffold_files: worker_scaffold_files(),
+        },
+    }
+}
+
 pub fn workspace_manifest_template(name: &str, root_domain: Option<&str>) -> String {
     let mut raw = format!("[workspace]\nname = \"{name}\"\nmembers = [\"apps/*\"]\n");
     if let Some(root_domain) = root_domain {

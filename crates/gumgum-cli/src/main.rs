@@ -15,10 +15,10 @@ use gumgum_api::{
 };
 use gumgum_core::{
     Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
-    DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph,
-    ServerRecord, SetupOptions, SetupTarget, Subsystem, WorkerManifest, default_project_name,
-    load_worker_path, load_workspace_path, not_configured_status, sanitize_name, setup_actions,
-    validate_path, worker_manifest_template, worker_scaffold_files, workspace_manifest_template,
+    DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller,
+    InitManifestKind as CoreInitKind, ManifestKind, PlanGraph, ServerRecord, SetupOptions,
+    SetupTarget, Subsystem, WorkerManifest, default_project_name, init_plan, load_worker_path,
+    load_workspace_path, not_configured_status, sanitize_name, setup_actions, validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -1099,10 +1099,17 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
             .map(|server| server.root_domain)
     });
     let namespace = args.namespace.unwrap_or_else(|| name.clone());
-    let raw = match args.kind {
-        InitKind::Workspace => workspace_manifest_template(&name, root_domain.as_deref()),
-        InitKind::Worker => worker_manifest_template(&name, &namespace, args.port, &args.zones),
-    };
+    let plan = init_plan(
+        match args.kind {
+            InitKind::Workspace => CoreInitKind::Workspace,
+            InitKind::Worker => CoreInitKind::Worker,
+        },
+        &name,
+        &namespace,
+        args.port,
+        &args.zones,
+        root_domain.as_deref(),
+    );
 
     if path.exists() && !args.force {
         validate_path(&path)?;
@@ -1121,11 +1128,11 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
 
     let mut files = vec![path.display().to_string()];
     if matches!(args.kind, InitKind::Worker) {
-        files.extend(scaffold_example_files(dry_run)?);
+        files.extend(scaffold_example_files(&plan.scaffold_files, dry_run)?);
     }
 
     if !dry_run {
-        fs::write(&path, raw).map_err(|source| {
+        fs::write(&path, plan.manifest).map_err(|source| {
             GumgumError::structured(
                 Subsystem::Config,
                 ErrorCode::Io,
@@ -1154,8 +1161,10 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
     })
 }
 
-fn scaffold_example_files(dry_run: bool) -> gumgum_core::Result<Vec<String>> {
-    let files = worker_scaffold_files();
+fn scaffold_example_files(
+    files: &[gumgum_core::ScaffoldFile],
+    dry_run: bool,
+) -> gumgum_core::Result<Vec<String>> {
     let paths = files.iter().map(|file| file.path.to_owned()).collect();
     if dry_run {
         return Ok(paths);
