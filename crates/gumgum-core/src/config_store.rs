@@ -1,4 +1,4 @@
-use crate::{ErrorCode, GumgumError, Result, Subsystem, sanitize_name};
+use crate::{ErrorCode, GumgumError, ProviderCredentials, Result, Subsystem, sanitize_name};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{fs, path::PathBuf};
@@ -109,6 +109,58 @@ impl ConfigStore {
         Ok(self.load_servers()?.into_iter().next())
     }
 
+    pub fn load_minio_credentials(&self) -> Result<Option<ProviderCredentials>> {
+        let path = self.provider_credentials_path("minio.main");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&path).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not read provider credentials",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        serde_json::from_str(&raw).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not parse provider credentials",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })
+    }
+
+    pub fn save_minio_credentials(&self, credentials: &ProviderCredentials) -> Result<()> {
+        let path = self.provider_credentials_path("minio.main");
+        self.ensure_parent(&path)?;
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(credentials).expect("serialize provider credentials"),
+        )
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not write provider credentials",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })
+    }
+
+    pub fn load_or_init_minio_credentials(&self) -> Result<ProviderCredentials> {
+        if let Some(credentials) = self.load_minio_credentials()? {
+            return Ok(credentials);
+        }
+        let credentials = ProviderCredentials::minio_local_dev();
+        self.save_minio_credentials(&credentials)?;
+        Ok(credentials)
+    }
+
     pub fn save_server(&self, server: ServerRecord) -> Result<()> {
         let path = self.servers_path();
         self.ensure_parent(&path)?;
@@ -140,6 +192,13 @@ impl ConfigStore {
             .join("servers")
             .join(sanitize_name(name))
             .join("config.json")
+    }
+
+    fn provider_credentials_path(&self, provider: &str) -> PathBuf {
+        self.root
+            .join("providers")
+            .join(sanitize_name(provider))
+            .join("credentials.json")
     }
 
     fn load_config_map(&self, path: PathBuf) -> Result<Map<String, Value>> {
@@ -237,6 +296,39 @@ mod tests {
             ConfigScope::Server("starbase".to_owned()).label(),
             "server:starbase"
         );
+    }
+
+    #[test]
+    fn stores_provider_credentials_separately_from_config() {
+        let store = temp_store("provider-credentials");
+        let credentials = ProviderCredentials {
+            username_env: "MINIO_ROOT_USER".to_owned(),
+            password_env: "MINIO_ROOT_PASSWORD".to_owned(),
+            username: "gumgum".to_owned(),
+            password: "secret".to_owned(),
+        };
+
+        assert!(store.load_minio_credentials().unwrap().is_none());
+        store.save_minio_credentials(&credentials).unwrap();
+        assert_eq!(store.load_minio_credentials().unwrap(), Some(credentials));
+        assert!(
+            store
+                .root()
+                .join("providers/minio-main/credentials.json")
+                .exists()
+        );
+        let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn initializes_provider_credentials_once() {
+        let store = temp_store("provider-credentials-init");
+        let first = store.load_or_init_minio_credentials().unwrap();
+        let mut changed = first.clone();
+        changed.password = "changed".to_owned();
+        store.save_minio_credentials(&changed).unwrap();
+        assert_eq!(store.load_or_init_minio_credentials().unwrap(), changed);
+        let _ = fs::remove_dir_all(store.root());
     }
 
     #[test]
