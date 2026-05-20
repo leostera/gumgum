@@ -211,6 +211,7 @@ impl GumgumInstaller {
             .build());
         }
         let remote_binary = "~/.gumgum/bin/gumgum";
+        let remote_staged_binary = "~/.gumgum/bin/gumgum.next";
         run_setup_command_streaming(
             TokioCommand::new("ssh")
                 .arg(target)
@@ -221,13 +222,13 @@ impl GumgumInstaller {
         run_setup_command_streaming(
             TokioCommand::new("scp")
                 .arg(binary)
-                .arg(format!("{target}:{remote_binary}")),
+                .arg(format!("{target}:{remote_staged_binary}")),
             quiet,
         )
         .await?;
         run_setup_command_streaming(
             TokioCommand::new("ssh").arg(target).arg(format!(
-                "chmod 0755 {remote_binary}; {}",
+                "chmod 0755 {remote_staged_binary}; mv -f {remote_staged_binary} {remote_binary}; {}",
                 remote_setup_command(setup, quiet)
             )),
             quiet,
