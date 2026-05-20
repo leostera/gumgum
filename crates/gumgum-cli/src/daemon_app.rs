@@ -6,7 +6,7 @@ use axum::{
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
     DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, GraphNode, GraphReport,
-    LogsReport, ObjectReport, ObjectRequest, ProviderCredentialsInitReport,
+    LogsReport, ObjectReport, ObjectRequest, ProviderBootReport, ProviderCredentialsInitReport,
     ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
@@ -68,6 +68,10 @@ impl DaemonApp {
             .route("/v0/objects", post(daemon_create_object))
             .route("/v0/bindings", post(daemon_create_binding))
             .route("/v0/providers", get(daemon_providers))
+            .route(
+                "/v0/providers/defaults/boot",
+                post(daemon_boot_default_providers),
+            )
             .route(
                 "/v0/providers/minio/credentials/init",
                 post(daemon_init_minio_credentials),
@@ -257,6 +261,30 @@ async fn daemon_providers() -> Json<ProviderStatusReport> {
         message: format!("{} provider(s)", providers.len()),
         providers,
     })
+}
+
+async fn daemon_boot_default_providers() -> Json<ProviderBootReport> {
+    let credentials = ConfigStore::from_home_env()
+        .and_then(|store| store.load_or_init_default_provider_credentials());
+    match credentials {
+        Ok(credentials) => match ProviderReconciler::boot_defaults(&credentials).await {
+            Ok(actions) => Json(ProviderBootReport {
+                ok: true,
+                message: "default providers booted".to_owned(),
+                actions,
+            }),
+            Err(error) => Json(ProviderBootReport {
+                ok: false,
+                actions: Vec::new(),
+                message: error.to_report().message,
+            }),
+        },
+        Err(error) => Json(ProviderBootReport {
+            ok: false,
+            actions: Vec::new(),
+            message: error.to_report().message,
+        }),
+    }
 }
 
 async fn daemon_init_minio_credentials() -> Json<ProviderCredentialsInitReport> {

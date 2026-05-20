@@ -182,6 +182,34 @@ impl ProviderReconciler {
         }
     }
 
+    pub async fn boot_defaults(
+        credentials: &[(String, ProviderCredentials)],
+    ) -> crate::Result<Vec<String>> {
+        let mut actions = Vec::new();
+        actions.extend(
+            ensure_postgres(
+                &provider_spec(Capability::Db),
+                provider_credentials(credentials, "postgres.main")?,
+            )
+            .await?,
+        );
+        actions.extend(
+            ensure_redis_with_credentials(
+                &provider_spec(Capability::Kv),
+                provider_credentials(credentials, "redis.main")?,
+            )
+            .await?,
+        );
+        actions.extend(
+            ensure_minio_provider(
+                &provider_spec(Capability::Blob),
+                provider_credentials(credentials, "minio.main")?,
+            )
+            .await?,
+        );
+        Ok(actions)
+    }
+
     pub async fn statuses() -> Vec<ProviderStatus> {
         let mut statuses = Vec::new();
         for capability in [
@@ -204,6 +232,69 @@ impl ProviderReconciler {
         }
         statuses
     }
+}
+
+fn provider_credentials(
+    credentials: &[(String, ProviderCredentials)],
+    provider: &str,
+) -> crate::Result<ProviderCredentials> {
+    credentials
+        .iter()
+        .find(|(name, _)| name == provider)
+        .map(|(_, credentials)| credentials.clone())
+        .ok_or_else(|| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::InvalidArgs,
+                format!("missing credentials for {provider}"),
+            )
+            .build()
+        })
+}
+
+async fn ensure_postgres(
+    provider: &ProviderSpec,
+    credentials: ProviderCredentials,
+) -> crate::Result<Vec<String>> {
+    ensure_network().await?;
+    if docker_inspect(&provider.container).await {
+        run_provider_command(
+            TokioCommand::new("docker")
+                .arg("start")
+                .arg(&provider.container),
+            "could not start postgres provider",
+        )
+        .await?;
+        return Ok(vec![format!(
+            "started existing {} provider",
+            provider.provider
+        )]);
+    }
+    run_provider_command(
+        TokioCommand::new("docker")
+            .arg("run")
+            .arg("-d")
+            .arg("--name")
+            .arg(&provider.container)
+            .arg("--restart")
+            .arg("unless-stopped")
+            .arg("--network")
+            .arg("gumgum-network")
+            .arg("-e")
+            .arg(format!(
+                "{}={}",
+                credentials.username_env, credentials.username
+            ))
+            .arg("-e")
+            .arg(format!(
+                "{}={}",
+                credentials.password_env, credentials.password
+            ))
+            .arg(&provider.image),
+        "could not create postgres provider",
+    )
+    .await?;
+    Ok(created_provider_actions(provider))
 }
 
 async fn ensure_redis(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
@@ -238,13 +329,62 @@ async fn ensure_redis(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
     Ok(created_provider_actions(provider))
 }
 
+async fn ensure_redis_with_credentials(
+    provider: &ProviderSpec,
+    credentials: ProviderCredentials,
+) -> crate::Result<Vec<String>> {
+    ensure_network().await?;
+    if docker_inspect(&provider.container).await {
+        run_provider_command(
+            TokioCommand::new("docker")
+                .arg("start")
+                .arg(&provider.container),
+            "could not start redis provider",
+        )
+        .await?;
+        return Ok(vec![format!(
+            "started existing {} provider",
+            provider.provider
+        )]);
+    }
+    run_provider_command(
+        TokioCommand::new("docker")
+            .arg("run")
+            .arg("-d")
+            .arg("--name")
+            .arg(&provider.container)
+            .arg("--restart")
+            .arg("unless-stopped")
+            .arg("--network")
+            .arg("gumgum-network")
+            .arg(&provider.image)
+            .arg("redis-server")
+            .arg("--requirepass")
+            .arg(credentials.password),
+        "could not create redis provider",
+    )
+    .await?;
+    Ok(created_provider_actions(provider))
+}
+
 async fn ensure_minio(
     plan: &ObjectProviderPlan,
     credentials: ProviderCredentials,
 ) -> crate::Result<Vec<String>> {
     let provider = &plan.provider;
+    let mut actions = ensure_minio_provider(provider, credentials.clone()).await?;
+    let bucket = sanitize_name(&plan.name);
+    ensure_minio_bucket(&bucket, &credentials).await?;
+    actions.push(format!("ensured bucket {bucket} on {}", provider.provider));
+    Ok(actions)
+}
+
+async fn ensure_minio_provider(
+    provider: &ProviderSpec,
+    credentials: ProviderCredentials,
+) -> crate::Result<Vec<String>> {
     ensure_network().await?;
-    let mut actions = if docker_inspect(&provider.container).await {
+    if docker_inspect(&provider.container).await {
         run_provider_command(
             TokioCommand::new("docker")
                 .arg("start")
@@ -252,42 +392,40 @@ async fn ensure_minio(
             "could not start minio provider",
         )
         .await?;
-        vec![format!("started existing {} provider", provider.provider)]
-    } else {
-        run_provider_command(
-            TokioCommand::new("docker")
-                .arg("run")
-                .arg("-d")
-                .arg("--name")
-                .arg(&provider.container)
-                .arg("--restart")
-                .arg("unless-stopped")
-                .arg("--network")
-                .arg("gumgum-network")
-                .arg("-e")
-                .arg(format!(
-                    "{}={}",
-                    credentials.username_env, credentials.username
-                ))
-                .arg("-e")
-                .arg(format!(
-                    "{}={}",
-                    credentials.password_env, credentials.password
-                ))
-                .arg(&provider.image)
-                .arg("server")
-                .arg("/data")
-                .arg("--console-address")
-                .arg(":9001"),
-            "could not create minio provider",
-        )
-        .await?;
-        created_provider_actions(provider)
-    };
-    let bucket = sanitize_name(&plan.name);
-    ensure_minio_bucket(&bucket, &credentials).await?;
-    actions.push(format!("ensured bucket {bucket} on {}", provider.provider));
-    Ok(actions)
+        return Ok(vec![format!(
+            "started existing {} provider",
+            provider.provider
+        )]);
+    }
+    run_provider_command(
+        TokioCommand::new("docker")
+            .arg("run")
+            .arg("-d")
+            .arg("--name")
+            .arg(&provider.container)
+            .arg("--restart")
+            .arg("unless-stopped")
+            .arg("--network")
+            .arg("gumgum-network")
+            .arg("-e")
+            .arg(format!(
+                "{}={}",
+                credentials.username_env, credentials.username
+            ))
+            .arg("-e")
+            .arg(format!(
+                "{}={}",
+                credentials.password_env, credentials.password
+            ))
+            .arg(&provider.image)
+            .arg("server")
+            .arg("/data")
+            .arg("--console-address")
+            .arg(":9001"),
+        "could not create minio provider",
+    )
+    .await?;
+    Ok(created_provider_actions(provider))
 }
 
 async fn ensure_minio_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate::Result<()> {
@@ -478,6 +616,19 @@ mod tests {
                 .iter()
                 .any(|action| action == "ensure redis.main provider is running")
         );
+    }
+
+    #[test]
+    fn provider_boot_requires_all_default_credentials() {
+        let credentials = vec![(
+            "redis.main".to_owned(),
+            ProviderCredentials::generated("REDIS_USER", "REDIS_PASSWORD", "gumgum"),
+        )];
+        let error = provider_credentials(&credentials, "postgres.main")
+            .unwrap_err()
+            .to_report();
+
+        assert_eq!(error.message, "missing credentials for postgres.main");
     }
 
     #[test]

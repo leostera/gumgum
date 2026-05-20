@@ -61,6 +61,14 @@ pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Re
             let report = ping_host(&args.host).await?;
             print_value(json, &report)
         }
+        Some(ServerSubcommand::BootProviders) => {
+            let name = required_server_name(server.name, "boot-providers")?;
+            let server = find_server(&name)?;
+            let report = ServerClient::new(server.host)
+                .boot_default_providers()
+                .await?;
+            print_value(json, &report);
+        }
         Some(ServerSubcommand::Config(args)) => {
             let name = required_server_name(server.name, "config")?;
             let report = config_command(Some(name), args.command)?;
