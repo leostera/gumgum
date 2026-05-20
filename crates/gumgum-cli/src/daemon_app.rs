@@ -4,8 +4,9 @@ use axum::{
     routing::{get, post},
 };
 use gumgum_api::{
-    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphNode,
-    GraphReport, LogsReport, ObjectReport, ObjectRequest, RollbackReport, RollbackRequest,
+    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest,
+    DeploymentRevisionsReport, GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest,
+    RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
@@ -61,6 +62,7 @@ impl DaemonApp {
             .route("/v0/status", get(status))
             .route("/v0/deploy", post(daemon_deploy))
             .route("/v0/rollback", post(daemon_rollback))
+            .route("/v0/revisions/{worker}", get(daemon_revisions))
             .route("/v0/objects", post(daemon_create_object))
             .route("/v0/bindings", post(daemon_create_binding))
             .route("/v0/graph", get(daemon_graph))
@@ -188,6 +190,35 @@ async fn daemon_create_binding(
         worker: request.worker,
         binding: request.binding,
         message: "binding materialized in graph".to_owned(),
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RevisionsQuery {
+    tail: Option<u32>,
+    limit: Option<u32>,
+}
+
+async fn daemon_revisions(
+    State(state): State<DaemonState>,
+    AxumPath(worker): AxumPath<String>,
+    Query(query): Query<RevisionsQuery>,
+) -> Json<DeploymentRevisionsReport> {
+    let path = (*state.graph_path).clone();
+    let worker_for_task = worker.clone();
+    let limit = query.limit.or(query.tail).unwrap_or(10);
+    let revisions = tokio::task::spawn_blocking(move || {
+        GraphStore::new(path).deployment_revisions(&worker_for_task, limit)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default();
+    Json(DeploymentRevisionsReport {
+        ok: true,
+        worker,
+        message: format!("{} deployment revision(s)", revisions.len()),
+        revisions,
     })
 }
 

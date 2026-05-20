@@ -1,6 +1,7 @@
 use gumgum_api::{
-    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphReport,
-    LogsReport, ObjectReport, ObjectRequest, RollbackReport, RollbackRequest,
+    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest,
+    DeploymentRevisionsReport, GraphReport, LogsReport, ObjectReport, ObjectRequest,
+    RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
 
@@ -80,6 +81,18 @@ impl ServerClient {
             "/v0/rollback",
             &RollbackRequest { worker, preview },
             "rollback",
+        )
+        .await
+    }
+
+    pub(crate) async fn revisions(
+        &self,
+        worker: &str,
+        limit: u32,
+    ) -> gumgum_core::Result<DeploymentRevisionsReport> {
+        self.get_json(
+            &format!("/v0/revisions/{worker}?limit={limit}"),
+            "revisions",
         )
         .await
     }

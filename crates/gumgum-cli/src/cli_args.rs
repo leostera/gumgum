@@ -95,6 +95,13 @@ pub(crate) struct RollbackArgs {
         help = "Show the previous deployment that would be restored without applying it"
     )]
     pub(crate) preview: bool,
+    #[arg(
+        long,
+        help = "List previous deployment revisions instead of applying rollback"
+    )]
+    pub(crate) revisions: bool,
+    #[arg(long, default_value_t = 10)]
+    pub(crate) limit: u32,
 }
 
 #[derive(Debug, Args)]

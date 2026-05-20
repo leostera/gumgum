@@ -1,5 +1,5 @@
 use crate::{InfoArgs, RollbackArgs, print_value, resolve_server};
-use gumgum_api::{GraphEdge, GraphNode, RollbackReport};
+use gumgum_api::{DeploymentRevisionsReport, GraphEdge, GraphNode, RollbackReport};
 use gumgum_core::load_worker_path;
 use serde::Serialize;
 
@@ -65,11 +65,20 @@ pub(crate) async fn rollback(args: RollbackArgs, json: bool) -> gumgum_core::Res
             .map(|manifest| manifest.worker.name)
             .unwrap_or_else(|_| "unknown".to_owned())
     });
-    let preview = args.preview;
     let server = resolve_server(args.host)?;
-    let report = ServerClient::new(server.host)
-        .rollback(worker, preview)
-        .await?;
+    let client = ServerClient::new(server.host);
+    if args.revisions {
+        let report = client.revisions(&worker, args.limit).await?;
+        if json {
+            print_value(true, &report);
+        } else {
+            for line in revision_lines(&report) {
+                println!("{line}");
+            }
+        }
+        return Ok(());
+    }
+    let report = client.rollback(worker, args.preview).await?;
     if json {
         print_value(true, &report);
     } else {
@@ -78,6 +87,27 @@ pub(crate) async fn rollback(args: RollbackArgs, json: bool) -> gumgum_core::Res
         }
     }
     Ok(())
+}
+
+fn revision_lines(report: &DeploymentRevisionsReport) -> Vec<String> {
+    let mut lines = vec![format!(
+        "Deployment revisions for {} ({}):",
+        report.worker,
+        report.revisions.len()
+    )];
+    for revision in &report.revisions {
+        lines.push(format!(
+            "#{} {} image={} route={} container={} port={} health={}",
+            revision.id,
+            revision.created_at,
+            revision.deploy.image,
+            revision.deploy.route,
+            revision.deploy.container,
+            revision.deploy.port,
+            revision.deploy.health
+        ));
+    }
+    lines
 }
 
 fn rollback_lines(report: &RollbackReport) -> Vec<String> {
@@ -143,6 +173,35 @@ mod tests {
                 "Health: /healthz",
                 "Actions:",
                 "  - rollback to registry/api:1",
+            ]
+        );
+    }
+
+    #[test]
+    fn revision_lines_include_revision_metadata() {
+        let report = DeploymentRevisionsReport {
+            ok: true,
+            worker: "api".to_owned(),
+            revisions: vec![gumgum_core::DeploymentRevision {
+                id: 42,
+                created_at: "2026-05-20 12:00:00".to_owned(),
+                deploy: gumgum_core::DesiredDeploy {
+                    worker: "api".to_owned(),
+                    image: "registry/api:1".to_owned(),
+                    container: "gumgum-api".to_owned(),
+                    route: "api.example.test".to_owned(),
+                    port: 3000,
+                    health: "/healthz".to_owned(),
+                },
+            }],
+            message: "1 deployment revision(s)".to_owned(),
+        };
+
+        assert_eq!(
+            revision_lines(&report),
+            vec![
+                "Deployment revisions for api (1):",
+                "#42 2026-05-20 12:00:00 image=registry/api:1 route=api.example.test container=gumgum-api port=3000 health=/healthz",
             ]
         );
     }

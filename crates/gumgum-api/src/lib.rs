@@ -1,5 +1,5 @@
 use gumgum_core::Capability;
-pub use gumgum_core::{GraphEdge, GraphNode, ServerRecord};
+pub use gumgum_core::{DeploymentRevision, GraphEdge, GraphNode, ServerRecord};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -147,5 +147,13 @@ pub struct RollbackReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<String>,
     pub actions: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeploymentRevisionsReport {
+    pub ok: bool,
+    pub worker: String,
+    pub revisions: Vec<DeploymentRevision>,
     pub message: String,
 }
