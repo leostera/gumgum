@@ -85,6 +85,8 @@ pub struct ObjectRequest {
     pub name: String,
     pub namespace: String,
     pub root_domain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

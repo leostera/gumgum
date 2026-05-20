@@ -79,9 +79,13 @@ impl ProviderCredentials {
             username_env: username_env.to_owned(),
             password_env: password_env.to_owned(),
             username: username.to_owned(),
-            password: generate_secret(),
+            password: generated_secret_value(),
         }
     }
+}
+
+pub fn generated_secret_value() -> String {
+    generate_secret()
 }
 
 fn generate_secret() -> String {

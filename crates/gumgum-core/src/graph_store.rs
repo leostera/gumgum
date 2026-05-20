@@ -100,6 +100,16 @@ impl GraphStore {
                 port INTEGER NOT NULL,
                 health TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS object_secrets (
+                object_kind TEXT NOT NULL,
+                object_name TEXT NOT NULL,
+                field TEXT NOT NULL,
+                env_name TEXT NOT NULL,
+                secret_ref TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(object_kind, object_name, field)
             );",
         )
         .map_err(|source| self.error("could not initialize graph database", source))
@@ -149,6 +159,57 @@ impl GraphStore {
         )
         .map_err(|source| self.error("could not materialize object", source))?;
         Ok(true)
+    }
+
+    pub fn materialize_object_secret(
+        &self,
+        object_kind: &str,
+        object_name: &str,
+        field: &str,
+        env_name: &str,
+        secret_ref: &str,
+        value: &str,
+    ) -> Result<bool> {
+        self.init()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO object_secrets (object_kind, object_name, field, env_name, secret_ref, value, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
+             ON CONFLICT(object_kind, object_name, field) DO UPDATE SET
+               env_name=excluded.env_name,
+               secret_ref=excluded.secret_ref,
+               value=excluded.value,
+               updated_at=CURRENT_TIMESTAMP",
+            params![object_kind, object_name, field, env_name, secret_ref, value],
+        )
+        .map_err(|source| self.error("could not materialize object secret", source))?;
+        Ok(true)
+    }
+
+    pub fn object_secret(
+        &self,
+        object_kind: &str,
+        object_name: &str,
+        field: &str,
+    ) -> Result<Option<String>> {
+        self.init()?;
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare("SELECT value FROM object_secrets WHERE object_kind = ?1 AND object_name = ?2 AND field = ?3")
+            .map_err(|source| self.error("could not query object secret", source))?;
+        let mut rows = stmt
+            .query(params![object_kind, object_name, field])
+            .map_err(|source| self.error("could not read object secret", source))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|source| self.error("could not decode object secret", source))?
+        {
+            Ok(Some(row.get(0).map_err(|source| {
+                self.error("could not decode object secret", source)
+            })?))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn materialize_binding(&self, binding: &WorkerBinding) -> Result<bool> {
@@ -332,16 +393,24 @@ impl GraphStore {
             .map_err(|source| self.error("could not query binding env", source))?;
         let rows = stmt
             .query_map(params![worker], |row| {
-                let binding: String = row.get(0)?;
-                let kind: String = row.get(1)?;
-                let name: String = row.get(2)?;
-                let dns: String = row.get(3)?;
-                Ok(binding_values(&kind, &binding, &name, &dns))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
             })
             .map_err(|source| self.error("could not read binding env", source))?;
         let mut env = Vec::new();
         for row in rows {
-            env.extend(row.map_err(|source| self.error("could not decode binding env", source))?);
+            let (binding, kind, name, dns) =
+                row.map_err(|source| self.error("could not decode binding env", source))?;
+            let secret = if kind == "db" {
+                self.object_secret(&kind, &name, "password")?
+            } else {
+                None
+            };
+            env.extend(binding_values(&kind, &binding, &name, &dns, secret));
         }
         Ok(env)
     }
@@ -537,17 +606,24 @@ pub fn provider_for_object(kind: &str) -> &'static str {
         .provider()
 }
 
-fn binding_values(kind: &str, binding: &str, name: &str, dns: &str) -> Vec<(String, String)> {
+fn binding_values(
+    kind: &str,
+    binding: &str,
+    name: &str,
+    dns: &str,
+    secret: Option<String>,
+) -> Vec<(String, String)> {
     match Capability::from_str(kind).unwrap_or(Capability::Manual) {
         Capability::Db => {
             let credentials = provider_credentials("postgres.main")
                 .unwrap_or_else(crate::ProviderCredentials::postgres_local_dev);
+            let password = secret.unwrap_or(credentials.password);
             vec![(
                 binding.to_owned(),
                 format!(
                     "postgres://{}:{}@{dns}:5432/{}",
                     credentials.username,
-                    credentials.password,
+                    password,
                     crate::sanitize_name(name)
                 ),
             )]

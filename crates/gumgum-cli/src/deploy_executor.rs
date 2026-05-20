@@ -52,6 +52,7 @@ impl<'a> DeployExecutor<'a> {
                 name: object_name.clone(),
                 namespace: "root".to_owned(),
                 root_domain: self.server.root_domain.clone(),
+                password: None,
             })
             .await;
         if let Some(env) = &binding.binding {

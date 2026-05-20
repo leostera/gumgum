@@ -202,11 +202,45 @@ async fn daemon_create_object(
             ));
         }
     };
-    let ok = tokio::task::spawn_blocking(move || store.materialize_object(&request_for_db))
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or(false);
+    let db_password = if capability == gumgum_core::Capability::Db {
+        Some(
+            request
+                .password
+                .clone()
+                .unwrap_or_else(gumgum_core::generated_secret_value),
+        )
+    } else {
+        None
+    };
+    let secret_object_name = format!("{}-password", gumgum_core::sanitize_name(&request.name));
+    let object_name_for_secret = request.name.clone();
+    let ok = tokio::task::spawn_blocking(move || {
+        let ok = store.materialize_object(&request_for_db)?;
+        if let Some(password) = db_password {
+            store.materialize_object(&GlobalObject {
+                capability: gumgum_core::Capability::Secret,
+                name: secret_object_name.clone(),
+                namespace: request_for_db.namespace.clone(),
+                root_domain: request_for_db.root_domain.clone(),
+            })?;
+            store.materialize_object_secret(
+                "db",
+                &object_name_for_secret,
+                "password",
+                "PASSWORD",
+                &format!(
+                    "onepassword://gumgum/db/{}/password",
+                    gumgum_core::sanitize_name(&object_name_for_secret)
+                ),
+                &password,
+            )?;
+        }
+        Ok::<bool, gumgum_core::GumgumError>(ok)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false);
     let provider_actions =
         ProviderReconciler::ensure_with_credentials(&provider_plan, provider_credentials)
             .await
@@ -224,7 +258,12 @@ async fn daemon_create_object(
         provider,
         connection_examples: provider_plan.connection_examples,
         provider_actions,
-        message: "global object materialized and provider reconciled".to_owned(),
+        message: if capability == gumgum_core::Capability::Db {
+            "global object materialized with managed password secret and provider reconciled"
+        } else {
+            "global object materialized and provider reconciled"
+        }
+        .to_owned(),
     })
 }
 

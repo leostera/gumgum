@@ -160,6 +160,11 @@ pub(crate) struct CreateObjectArgs {
     pub(crate) namespace: String,
     #[arg(long)]
     pub(crate) root_domain: Option<String>,
+    #[arg(
+        long,
+        help = "Use this password for credential-backed objects such as db"
+    )]
+    pub(crate) password: Option<String>,
 }
 
 #[derive(Debug, Args)]

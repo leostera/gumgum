@@ -58,6 +58,7 @@ async fn create_object(
         name: args.name,
         namespace: args.namespace,
         root_domain,
+        password: args.password,
     };
     let report: ObjectReport = ServerClient::new(server.host)
         .create_object(&request)
