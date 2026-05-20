@@ -1,3 +1,4 @@
+mod daemon_app;
 mod deploy_executor;
 mod deploy_plan;
 mod graph_presenter;
@@ -6,11 +7,11 @@ mod server_client;
 
 use anyhow::Result;
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxumPath, Query, State},
-    routing::{get, post},
 };
 use clap::{Args, Parser, Subcommand};
+use daemon_app::{DaemonApp, DaemonState};
 use deploy_executor::DeployExecutor;
 use deploy_plan::DeployPlanner;
 use graph_presenter::GraphPresenter;
@@ -28,7 +29,7 @@ use gumgum_core::{
 };
 use serde::Serialize;
 use server_client::ServerClient;
-use std::{fs, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
+use std::{fs, path::PathBuf, process::Stdio, time::Duration};
 use tokio::process::Command as TokioCommand;
 
 #[derive(Debug, Parser)]
@@ -355,7 +356,7 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
                 print_value(cli.json, &report)
             }
         }
-        Command::Daemon => run_daemon().await?,
+        Command::Daemon => DaemonApp::new().run().await?,
         Command::Server(server) => match server.command {
             ServerSubcommand::List => {
                 let report = ServerListReport {
@@ -1580,57 +1581,6 @@ async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
             .next_command("gumgum setup 127.0.0.1 --root-domain <domain>")
             .build(),
     )
-}
-
-#[derive(Clone)]
-struct DaemonState {
-    graph_path: Arc<PathBuf>,
-}
-
-async fn run_daemon() -> gumgum_core::Result<()> {
-    ensure_local_platform(false).await?;
-    let graph_path = gumgum_root()?.join("graph.sqlite");
-    GraphStore::new(graph_path.clone()).init()?;
-    let state = DaemonState {
-        graph_path: Arc::new(graph_path),
-    };
-    let app = Router::new()
-        .route("/healthz", get(daemon_healthz))
-        .route("/v0/status", get(daemon_status))
-        .route("/v0/deploy", post(daemon_deploy))
-        .route("/v0/rollback", post(daemon_rollback))
-        .route("/v0/objects", post(daemon_create_object))
-        .route("/v0/bindings", post(daemon_create_binding))
-        .route("/v0/graph", get(daemon_graph))
-        .route("/v0/graph/affected", get(daemon_graph_affected))
-        .route("/v0/logs/{container}", get(daemon_logs))
-        .with_state(state);
-    let addr = SocketAddr::from(([0, 0, 0, 0], 7777));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "could not bind gumgum daemon",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    tracing::info!(%addr, "gumgum daemon listening");
-    axum::serve(listener, app).await.map_err(|source| {
-        GumgumError::structured(Subsystem::Api, ErrorCode::Io, "gumgum daemon failed")
-            .likely_cause(source.to_string())
-            .build()
-    })
-}
-
-async fn daemon_healthz() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "ok": true, "service": "gumgumd" }))
-}
-
-async fn daemon_status() -> Json<gumgum_core::StatusReport> {
-    Json(not_configured_status())
 }
 
 async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {
