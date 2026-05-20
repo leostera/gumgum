@@ -18,7 +18,7 @@ use gumgum_core::{
     DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph,
     ServerRecord, SetupOptions, SetupTarget, Subsystem, WorkerManifest, default_project_name,
     load_worker_path, load_workspace_path, not_configured_status, sanitize_name, setup_actions,
-    validate_path,
+    validate_path, worker_manifest_template, workspace_manifest_template,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -1100,8 +1100,8 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
     });
     let namespace = args.namespace.unwrap_or_else(|| name.clone());
     let raw = match args.kind {
-        InitKind::Workspace => workspace_manifest(&name, root_domain.as_deref()),
-        InitKind::Worker => worker_manifest(&name, &namespace, args.port, &args.zones),
+        InitKind::Workspace => workspace_manifest_template(&name, root_domain.as_deref()),
+        InitKind::Worker => worker_manifest_template(&name, &namespace, args.port, &args.zones),
     };
 
     if path.exists() && !args.force {
@@ -1152,24 +1152,6 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
             "created gumgum.toml".to_owned()
         },
     })
-}
-
-fn workspace_manifest(name: &str, root_domain: Option<&str>) -> String {
-    let mut raw = format!("[workspace]\nname = \"{name}\"\nmembers = [\"apps/*\"]\n");
-    if let Some(root_domain) = root_domain {
-        raw.push_str(&format!("root_domain = \"{root_domain}\"\n"));
-    }
-    raw
-}
-
-fn worker_manifest(name: &str, namespace: &str, port: u16, zones: &[String]) -> String {
-    let mut raw = format!(
-        "[project]\nnamespace = \"{namespace}\"\n\n[worker]\nname = \"{name}\"\nbuild_context = \".\"\nport = {port}\nhealth = \"/healthz\"\n"
-    );
-    for zone in zones {
-        raw.push_str(&format!("\n[[zone]]\nname = \"{zone}\"\n"));
-    }
-    raw
 }
 
 fn scaffold_example_files(dry_run: bool) -> gumgum_core::Result<Vec<String>> {

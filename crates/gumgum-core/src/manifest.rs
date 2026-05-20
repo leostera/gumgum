@@ -190,6 +190,29 @@ pub fn load_workspace_path(path: &Path) -> Result<WorkspaceManifest> {
     Ok(manifest)
 }
 
+pub fn workspace_manifest_template(name: &str, root_domain: Option<&str>) -> String {
+    let mut raw = format!("[workspace]\nname = \"{name}\"\nmembers = [\"apps/*\"]\n");
+    if let Some(root_domain) = root_domain {
+        raw.push_str(&format!("root_domain = \"{root_domain}\"\n"));
+    }
+    raw
+}
+
+pub fn worker_manifest_template(
+    name: &str,
+    namespace: &str,
+    port: u16,
+    zones: &[String],
+) -> String {
+    let mut raw = format!(
+        "[project]\nnamespace = \"{namespace}\"\n\n[worker]\nname = \"{name}\"\nbuild_context = \".\"\nport = {port}\nhealth = \"/healthz\"\n"
+    );
+    for zone in zones {
+        raw.push_str(&format!("\n[[zone]]\nname = \"{zone}\"\n"));
+    }
+    raw
+}
+
 pub fn validate_str(raw: &str, path: &str) -> std::result::Result<ValidationReport, ManifestError> {
     let value: toml::Value = toml::from_str(raw).map_err(|source| ManifestError::Parse {
         path: path.to_owned(),
