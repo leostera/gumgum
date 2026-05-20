@@ -7,8 +7,9 @@ use axum::{
 use clap::{Args, Parser, Subcommand};
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge,
-    GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, PingReport, ServerListReport,
-    ServerRecord, SetupPlan, SetupReport, not_configured_status, setup_actions,
+    GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, PingReport, RollbackReport,
+    RollbackRequest, ServerListReport, ServerRecord, SetupPlan, SetupReport, not_configured_status,
+    setup_actions,
 };
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
 use gumgum_manifest::{WorkerManifest, load_worker_path, validate_path};
@@ -33,12 +34,15 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Status(StatusArgs),
+    #[command(hide = true)]
     Ping(PingArgs),
     Doctor,
     Version,
     Config(ConfigArgs),
     Init(InitArgs),
     Deploy(DeployArgs),
+    Info(InfoArgs),
+    Rollback(RollbackArgs),
     Logs(LogsArgs),
     Graph(GraphArgs),
     Db(ObjectArgs),
@@ -88,9 +92,34 @@ struct DeployArgs {
 }
 
 #[derive(Debug, Args)]
+struct InfoArgs {
+    #[arg(default_value = "gumgum.toml")]
+    path: PathBuf,
+    #[arg(long)]
+    host: Option<String>,
+    #[arg(long)]
+    worker: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct RollbackArgs {
+    #[arg(default_value = "gumgum.toml")]
+    path: PathBuf,
+    #[arg(long)]
+    host: Option<String>,
+    #[arg(long)]
+    worker: Option<String>,
+}
+
+#[derive(Debug, Args)]
 struct GraphArgs {
     #[arg(long)]
     host: Option<String>,
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    worker: Option<String>,
+    resource: Option<String>,
     #[command(subcommand)]
     command: Option<GraphCommand>,
 }
@@ -195,6 +224,7 @@ struct ServerCommand {
 #[derive(Debug, Subcommand)]
 enum ServerSubcommand {
     List,
+    Ping(PingArgs),
     Config(ServerConfigArgs),
 }
 
@@ -283,6 +313,12 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             let report = deploy(args, cli.dry_run, cli.json).await?;
             print_value(cli.json, &report);
         }
+        Command::Info(args) => {
+            info(args, cli.json).await?;
+        }
+        Command::Rollback(args) => {
+            rollback(args, cli.json).await?;
+        }
         Command::Logs(args) => {
             logs(args, cli.json).await?;
         }
@@ -319,6 +355,10 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
                     ok: true,
                     servers: load_servers()?,
                 };
+                print_value(cli.json, &report)
+            }
+            ServerSubcommand::Ping(args) => {
+                let report = ping_host(&args.host).await?;
                 print_value(cli.json, &report)
             }
             ServerSubcommand::Config(args) => {
@@ -442,9 +482,7 @@ async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Re
         .build()
     })?;
     run_remote_deploy(&server, &manifest, &report, quiet).await?;
-    if let Some(route) = report.health_url.as_deref().and_then(route_from_health_url) {
-        configure_client_host_route(route, &server.host, quiet).await?;
-    }
+    configure_client_resolver(&server.test_domain, &server.host, quiet).await?;
     Ok(DeployReport {
         ok: true,
         dry_run: false,
@@ -509,6 +547,148 @@ fn deploy_report(
     }
 }
 
+#[derive(Debug, Serialize)]
+struct InfoReport {
+    ok: bool,
+    worker: String,
+    nodes: Vec<GraphNode>,
+    edges: Vec<GraphEdge>,
+    urls: Vec<String>,
+    latest_image: Option<String>,
+    message: String,
+}
+
+async fn info(args: InfoArgs, json: bool) -> gumgum_core::Result<()> {
+    let worker = args.worker.unwrap_or_else(|| {
+        load_worker_path(&args.path)
+            .map(|manifest| manifest.worker.name)
+            .unwrap_or_else(|_| "unknown".to_owned())
+    });
+    let server = resolve_server(args.host)?;
+    let target = format!("worker/{worker}");
+    let url = reqwest::Url::parse_with_params(
+        &format!("http://{}:7777/v0/graph/affected", server.host),
+        &[("target", target.as_str())],
+    )
+    .map_err(|source| {
+        GumgumError::structured(Subsystem::Api, ErrorCode::InvalidArgs, "invalid info URL")
+            .likely_cause(source.to_string())
+            .build()
+    })?;
+    let affected: AffectedReport = reqwest::Client::new()
+        .get(url)
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to call gumgumd info API",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .error_for_status()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd info API returned an error",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .json()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd info API returned invalid JSON",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    let urls = affected
+        .nodes
+        .iter()
+        .filter(|node| node.kind == "route")
+        .map(|node| format!("http://{}", node.label))
+        .collect::<Vec<_>>();
+    let latest_image = affected
+        .nodes
+        .iter()
+        .find(|node| node.kind == "image")
+        .map(|node| node.label.clone());
+    let report = InfoReport {
+        ok: true,
+        worker,
+        nodes: affected.nodes,
+        edges: affected.edges,
+        urls,
+        latest_image,
+        message: "current project info".to_owned(),
+    };
+    if json {
+        print_value(true, &report);
+    } else {
+        println!("Worker: {}", report.worker);
+        for url in &report.urls {
+            println!("URL: {url}");
+        }
+        if let Some(image) = &report.latest_image {
+            println!("Image: {image}");
+        }
+    }
+    Ok(())
+}
+
+async fn rollback(args: RollbackArgs, json: bool) -> gumgum_core::Result<()> {
+    let worker = args.worker.unwrap_or_else(|| {
+        load_worker_path(&args.path)
+            .map(|manifest| manifest.worker.name)
+            .unwrap_or_else(|_| "unknown".to_owned())
+    });
+    let server = resolve_server(args.host)?;
+    let report: RollbackReport = reqwest::Client::new()
+        .post(format!("http://{}:7777/v0/rollback", server.host))
+        .json(&RollbackRequest { worker })
+        .send()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "failed to call gumgumd rollback API",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .error_for_status()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd rollback API returned an error",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .json()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "gumgumd rollback API returned invalid JSON",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    print_value(json, &report);
+    Ok(())
+}
+
 async fn graph(args: GraphArgs, json: bool) -> gumgum_core::Result<()> {
     let server = match args.host {
         Some(host) => host,
@@ -526,9 +706,42 @@ async fn graph(args: GraphArgs, json: bool) -> gumgum_core::Result<()> {
                 .host
         }
     };
+    let scoped_target = args
+        .resource
+        .or_else(|| args.worker.map(|worker| format!("worker/{worker}")))
+        .or_else(|| infer_graph_target_from_manifest().ok().flatten());
     match args.command.unwrap_or(GraphCommand::Show) {
-        GraphCommand::Show => graph_show(&server, json).await,
-        GraphCommand::Affected { target } => graph_affected(&server, &target, json).await,
+        GraphCommand::Show => {
+            if let Some(target) = scoped_target {
+                graph_affected(&server, &normalize_graph_target(&target), json).await
+            } else {
+                graph_show(&server, json).await
+            }
+        }
+        GraphCommand::Affected { target } => {
+            graph_affected(&server, &normalize_graph_target(&target), json).await
+        }
+    }
+}
+
+fn infer_graph_target_from_manifest() -> gumgum_core::Result<Option<String>> {
+    let path = PathBuf::from("gumgum.toml");
+    if path.exists() {
+        return Ok(Some(format!(
+            "worker/{}",
+            load_worker_path(&path)?.worker.name
+        )));
+    }
+    Ok(None)
+}
+
+fn normalize_graph_target(target: &str) -> String {
+    if target.contains('/') {
+        target.to_owned()
+    } else if target.contains('.') {
+        format!("route/{target}")
+    } else {
+        format!("worker/{target}")
     }
 }
 
@@ -768,15 +981,6 @@ fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
 }
 
 async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
-    if args.follow {
-        return Err(GumgumError::structured(
-            Subsystem::Api,
-            ErrorCode::NotImplemented,
-            "gumgum logs -f will stream through gumgumd in a later release",
-        )
-        .next_command("gumgum logs")
-        .build());
-    }
     let manifest = load_worker_path(&args.path)?;
     let server = match args.host {
         Some(host) => host,
@@ -795,11 +999,44 @@ async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
         }
     };
     let container = format!("gumgum-{}", sanitize_name(&manifest.worker.name));
-    let url = format!(
-        "http://{server}:7777/v0/logs/{container}?tail={}",
-        args.tail
-    );
-    let report: LogsReport = reqwest::Client::new()
+    if args.follow && quiet {
+        return Err(GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::InvalidArgs,
+            "gumgum logs -f does not support --json yet",
+        )
+        .next_command("gumgum logs --json")
+        .build());
+    }
+    if args.follow {
+        let mut seen = String::new();
+        loop {
+            let report = fetch_logs(&server, &container, args.tail).await?;
+            if let Some(delta) = report.logs.strip_prefix(&seen) {
+                print!("{delta}");
+            } else {
+                print!("{}", report.logs);
+            }
+            seen = report.logs;
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => break,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+        }
+        return Ok(());
+    }
+    let report = fetch_logs(&server, &container, args.tail).await?;
+    if quiet {
+        print_value(true, &report);
+    } else {
+        print!("{}", report.logs);
+    }
+    Ok(())
+}
+
+async fn fetch_logs(server: &str, container: &str, tail: u32) -> gumgum_core::Result<LogsReport> {
+    let url = format!("http://{server}:7777/v0/logs/{container}?tail={tail}");
+    reqwest::Client::new()
         .get(&url)
         .send()
         .await
@@ -832,13 +1069,7 @@ async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
             )
             .likely_cause(source.to_string())
             .build()
-        })?;
-    if quiet {
-        print_value(true, &report);
-    } else {
-        print!("{}", report.logs);
-    }
-    Ok(())
+        })
 }
 
 async fn run_remote_deploy(
@@ -1427,32 +1658,6 @@ async fn configure_host_dns(test_domain: &str, quiet: bool) -> gumgum_core::Resu
     run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
 }
 
-fn route_from_health_url(url: &str) -> Option<&str> {
-    url.strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .and_then(|rest| rest.split('/').next())
-}
-
-async fn configure_client_host_route(
-    route: &str,
-    host: &str,
-    quiet: bool,
-) -> gumgum_core::Result<()> {
-    if std::env::consts::OS != "macos" {
-        return Ok(());
-    }
-    progress(
-        quiet,
-        format!("configuring local hosts entry for {route} -> {host}"),
-    );
-    let route = shell_escape_plain(route);
-    let host = shell_escape_plain(host);
-    let script = format!(
-        "set -e; if [ ! -t 0 ] && ! sudo -n true 2>/dev/null; then echo 'warning: run this to enable browser/curl route: printf \"{host} {route}\\n\" | sudo tee -a /etc/hosts' >&2; exit 0; fi; if ! grep -q '[[:space:]]{route}$' /etc/hosts; then printf '{host} {route}\n' | sudo tee -a /etc/hosts >/dev/null; fi; sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder 2>/dev/null || true"
-    );
-    run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
-}
-
 async fn configure_client_resolver(
     test_domain: &str,
     host: &str,
@@ -1523,6 +1728,7 @@ async fn run_daemon() -> gumgum_core::Result<()> {
         .route("/healthz", get(daemon_healthz))
         .route("/v0/status", get(daemon_status))
         .route("/v0/deploy", post(daemon_deploy))
+        .route("/v0/rollback", post(daemon_rollback))
         .route("/v0/objects", post(daemon_create_object))
         .route("/v0/bindings", post(daemon_create_binding))
         .route("/v0/graph", get(daemon_graph))
@@ -1885,7 +2091,11 @@ fn graph_edge(from: &str, to: &str, kind: &str) -> GraphEdge {
 fn render_mermaid(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
     let mut graph = "graph TD\n".to_owned();
     for node in nodes {
-        graph.push_str(&format!("  {}[{}]\n", mermaid_id(&node.id), node.label));
+        graph.push_str(&format!(
+            "  {}[\"{}\"]\n",
+            mermaid_id(&node.id),
+            mermaid_label(&node.label)
+        ));
     }
     for edge in edges {
         graph.push_str(&format!(
@@ -1902,6 +2112,10 @@ fn mermaid_id(value: &str) -> String {
     sanitize_name(value).replace('-', "_")
 }
 
+fn mermaid_label(value: &str) -> String {
+    value.replace('"', "\\\"")
+}
+
 async fn daemon_create_object(
     State(state): State<DaemonState>,
     Json(request): Json<ObjectRequest>,
@@ -1915,12 +2129,14 @@ async fn daemon_create_object(
         .ok()
         .and_then(Result::ok)
         .unwrap_or(false);
+    let connection_examples = connection_examples(&request.kind, &request.name, &dns);
     Json(ObjectReport {
         ok,
         kind: request.kind,
         name: request.name,
         dns,
         provider,
+        connection_examples,
         message: "global object materialized in graph".to_owned(),
     })
 }
@@ -1943,6 +2159,20 @@ async fn daemon_create_binding(
         binding: request.binding,
         message: "binding materialized in graph".to_owned(),
     })
+}
+
+fn connection_examples(kind: &str, name: &str, dns: &str) -> Vec<String> {
+    match kind {
+        "db" | "database" => vec![
+            format!("psql postgres://{name}:<password>@{dns}:5432/{name}"),
+            format!("pgAdmin host={dns} port=5432 database={name} username={name}"),
+        ],
+        "kv" => vec![
+            format!("redis-cli -u redis://{dns}:6379/0"),
+            format!("RedisInsight host={dns} port=6379 database=0"),
+        ],
+        _ => Vec::new(),
+    }
 }
 
 fn provider_for_object(kind: &str) -> &'static str {
@@ -2061,6 +2291,33 @@ async fn daemon_logs(
     })
 }
 
+async fn daemon_rollback(
+    State(state): State<DaemonState>,
+    Json(request): Json<RollbackRequest>,
+) -> Json<RollbackReport> {
+    let path = (*state.graph_path).clone();
+    let worker = request.worker.clone();
+    let previous = tokio::task::spawn_blocking(move || latest_previous_image(&path, &worker))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+    Json(RollbackReport {
+        ok: previous.is_some(),
+        worker: request.worker,
+        image: previous.clone(),
+        actions: previous
+            .as_ref()
+            .map(|image| vec![format!("rollback candidate image: {image}")])
+            .unwrap_or_else(|| vec!["no previous image recorded".to_owned()]),
+        message: if previous.is_some() {
+            "rollback candidate found; container restore will be wired next".to_owned()
+        } else {
+            "no previous deployment image recorded".to_owned()
+        },
+    })
+}
+
 async fn daemon_deploy(
     State(state): State<DaemonState>,
     Json(request): Json<DeployRequest>,
@@ -2142,6 +2399,16 @@ fn init_graph_db(path: &PathBuf) -> gumgum_core::Result<()> {
             access TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY(worker, binding)
+        );
+        CREATE TABLE IF NOT EXISTS deployment_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker TEXT NOT NULL,
+            image TEXT NOT NULL,
+            container TEXT NOT NULL,
+            route TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            health TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );",
     )
     .map_err(|source| {
@@ -2176,6 +2443,22 @@ fn materialize_deploy(path: &PathBuf, request: &DeployRequest) -> gumgum_core::R
         .build()
     })?;
     tx.execute(
+        "INSERT INTO deployment_revisions (worker, image, container, route, port, health)
+         SELECT worker, image, container, route, port, health
+         FROM desired_deployments
+         WHERE worker = ?1 AND image != ?2",
+        params![request.worker, request.image],
+    )
+    .map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not record deployment revision",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    tx.execute(
         "INSERT INTO desired_deployments (worker, image, container, route, port, health, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
          ON CONFLICT(worker) DO UPDATE SET
@@ -2202,6 +2485,63 @@ fn materialize_deploy(path: &PathBuf, request: &DeployRequest) -> gumgum_core::R
         .build()
     })?;
     Ok(true)
+}
+
+fn latest_previous_image(path: &PathBuf, worker: &str) -> gumgum_core::Result<Option<String>> {
+    init_graph_db(path)?;
+    let conn = Connection::open(path).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not open graph database",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT image FROM deployment_revisions WHERE worker = ?1 ORDER BY id DESC LIMIT 1",
+        )
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not query deployment revisions",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    let mut rows = stmt.query(params![worker]).map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::Io,
+            "could not read deployment revisions",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    rows.next()
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not decode deployment revision",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?
+        .map(|row| {
+            row.get::<_, String>(0).map_err(|source| {
+                GumgumError::structured(
+                    Subsystem::Config,
+                    ErrorCode::Io,
+                    "could not decode deployment image",
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })
+        })
+        .transpose()
 }
 
 async fn reconcile_deploy(

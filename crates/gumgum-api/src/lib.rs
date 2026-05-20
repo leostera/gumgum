@@ -159,6 +159,8 @@ pub struct ObjectReport {
     pub name: String,
     pub dns: String,
     pub provider: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connection_examples: Vec<String>,
     pub message: String,
 }
 
@@ -186,6 +188,20 @@ pub struct AffectedReport {
     pub target: String,
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RollbackRequest {
+    pub worker: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RollbackReport {
+    pub ok: bool,
+    pub worker: String,
+    pub image: Option<String>,
+    pub actions: Vec<String>,
     pub message: String,
 }
 
