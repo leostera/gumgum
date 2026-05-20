@@ -409,6 +409,33 @@ mod tests {
     }
 
     #[test]
+    fn init_plan_includes_scaffold_only_for_workers() {
+        let worker = init_plan(
+            InitManifestKind::Worker,
+            "api",
+            "experiments",
+            8080,
+            &[],
+            None,
+        );
+        assert_eq!(worker.manifest_kind, InitManifestKind::Worker);
+        assert!(worker.manifest.contains("[worker]"));
+        assert_eq!(worker.scaffold_files.len(), 2);
+
+        let workspace = init_plan(
+            InitManifestKind::Workspace,
+            "peekaboo",
+            "ignored",
+            3000,
+            &[],
+            Some("leostera.dev"),
+        );
+        assert_eq!(workspace.manifest_kind, InitManifestKind::Workspace);
+        assert!(workspace.manifest.contains("[workspace]"));
+        assert!(workspace.scaffold_files.is_empty());
+    }
+
+    #[test]
     fn worker_scaffold_contains_health_checked_python_server() {
         let files = worker_scaffold_files();
         assert_eq!(
