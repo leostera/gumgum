@@ -1,3 +1,4 @@
+mod deploy_plan;
 mod presentation;
 mod server_client;
 
@@ -8,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use clap::{Args, Parser, Subcommand};
+use deploy_plan::DeployPlanner;
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge,
     GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, PingReport, RollbackReport,
@@ -671,8 +673,8 @@ fn deploy_report(
         port: manifest.worker.port.unwrap_or(3000),
         routes,
         health_url,
-        plan: deploy_plan(manifest),
-        plan_graph: deploy_plan_graph(manifest),
+        plan: DeployPlanner::new(manifest).plan_lines(),
+        plan_graph: DeployPlanner::new(manifest).graph(),
         message: if dry_run {
             format!(
                 "validated worker manifest for {} deploy; no containers changed",
@@ -682,208 +684,6 @@ fn deploy_report(
             "deployment pending".to_owned()
         },
     }
-}
-
-fn deploy_plan(manifest: &WorkerManifest) -> Vec<String> {
-    deploy_plan_graph(manifest)
-        .execution_levels
-        .iter()
-        .enumerate()
-        .flat_map(|(index, level)| {
-            level
-                .iter()
-                .map(move |node| format!("level {}: {node}", index + 1))
-        })
-        .collect()
-}
-
-fn deploy_plan_graph(manifest: &WorkerManifest) -> DeployPlanGraph {
-    let worker = &manifest.worker.name;
-    let mut nodes = vec![
-        deploy_plan_node(
-            "source/manifests",
-            "source",
-            "gumgum.toml files",
-            "collect manifest desired state",
-        ),
-        deploy_plan_node(
-            "actual/containers",
-            "source",
-            "docker state",
-            "collect actual container state",
-        ),
-        deploy_plan_node(
-            "provider/registry.platform",
-            "provider",
-            "registry.platform",
-            "ensure local registry provider is running",
-        ),
-        deploy_plan_node(
-            &format!("image/{worker}"),
-            "image",
-            worker,
-            "build and push worker image",
-        ),
-        deploy_plan_node(
-            &format!("container/{worker}"),
-            "container",
-            worker,
-            "reconcile worker container",
-        ),
-        deploy_plan_node(
-            &format!("health/{worker}"),
-            "health_check",
-            worker,
-            "verify health check and routes",
-        ),
-    ];
-    let mut edges = vec![
-        deploy_plan_edge(
-            "source/manifests",
-            &format!("image/{worker}"),
-            "desired_state",
-        ),
-        deploy_plan_edge(
-            "actual/containers",
-            &format!("container/{worker}"),
-            "actual_state",
-        ),
-        deploy_plan_edge(
-            "provider/registry.platform",
-            &format!("image/{worker}"),
-            "backs",
-        ),
-        deploy_plan_edge(
-            &format!("image/{worker}"),
-            &format!("container/{worker}"),
-            "created_from",
-        ),
-        deploy_plan_edge(
-            &format!("container/{worker}"),
-            &format!("health/{worker}"),
-            "has_health_check",
-        ),
-    ];
-    for db in &manifest.database {
-        add_binding_plan(
-            &mut nodes,
-            &mut edges,
-            worker,
-            "db",
-            &db.name,
-            db.binding.as_deref(),
-        );
-    }
-    for kv in &manifest.kv {
-        add_binding_plan(
-            &mut nodes,
-            &mut edges,
-            worker,
-            "kv",
-            &kv.name,
-            kv.binding.as_deref(),
-        );
-    }
-    let execution_levels = topo_levels(&nodes, &edges);
-    DeployPlanGraph {
-        nodes,
-        edges,
-        execution_levels,
-    }
-}
-
-fn add_binding_plan(
-    nodes: &mut Vec<DeployPlanNode>,
-    edges: &mut Vec<DeployPlanEdge>,
-    worker: &str,
-    kind: &str,
-    object: &str,
-    binding: Option<&str>,
-) {
-    let provider = provider_for_object(kind);
-    let object_id = format!("{kind}/{object}");
-    nodes.push(deploy_plan_node(
-        &format!("provider/{provider}"),
-        "provider",
-        provider,
-        "ensure provider is running",
-    ));
-    nodes.push(deploy_plan_node(
-        &object_id,
-        "global_object",
-        object,
-        "ensure global object exists",
-    ));
-    edges.push(deploy_plan_edge(
-        "source/manifests",
-        &object_id,
-        "desired_state",
-    ));
-    edges.push(deploy_plan_edge(
-        &format!("provider/{provider}"),
-        &object_id,
-        "backs",
-    ));
-    if let Some(binding) = binding {
-        let binding_id = format!("binding/{worker}/{binding}");
-        nodes.push(deploy_plan_node(
-            &binding_id,
-            "binding",
-            binding,
-            "ensure worker-local binding exists",
-        ));
-        edges.push(deploy_plan_edge(&object_id, &binding_id, "projects_as"));
-        edges.push(deploy_plan_edge(
-            &binding_id,
-            &format!("container/{worker}"),
-            "injects_into",
-        ));
-    }
-}
-
-fn deploy_plan_node(id: &str, kind: &str, label: &str, action: &str) -> DeployPlanNode {
-    DeployPlanNode {
-        id: id.to_owned(),
-        kind: kind.to_owned(),
-        label: label.to_owned(),
-        action: action.to_owned(),
-    }
-}
-
-fn deploy_plan_edge(from: &str, to: &str, kind: &str) -> DeployPlanEdge {
-    DeployPlanEdge {
-        from: from.to_owned(),
-        to: to.to_owned(),
-        kind: kind.to_owned(),
-    }
-}
-
-fn topo_levels(nodes: &[DeployPlanNode], edges: &[DeployPlanEdge]) -> Vec<Vec<String>> {
-    let mut remaining = nodes
-        .iter()
-        .map(|node| node.id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut levels = Vec::new();
-    while !remaining.is_empty() {
-        let ready = remaining
-            .iter()
-            .filter(|id| {
-                !edges
-                    .iter()
-                    .any(|edge| edge.to == **id && remaining.contains(&edge.from))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if ready.is_empty() {
-            levels.push(remaining.iter().cloned().collect());
-            break;
-        }
-        for id in &ready {
-            remaining.remove(id);
-        }
-        levels.push(ready);
-    }
-    levels
 }
 
 async fn ensure_manifest_bindings(
@@ -914,22 +714,19 @@ async fn ensure_object_and_binding(
         .unwrap_or(&binding.name)
         .to_owned();
     progress(quiet, format!("ensuring {kind}/{object_name}"));
-    let client = reqwest::Client::new();
+    let client = ServerClient::new(&server.host);
     let _ = client
-        .post(format!("http://{}:7777/v0/objects", server.host))
-        .json(&ObjectRequest {
+        .create_object(&ObjectRequest {
             kind: kind.to_owned(),
             name: object_name.clone(),
             namespace: "root".to_owned(),
             root_domain: server.root_domain.clone(),
         })
-        .send()
         .await;
     if let Some(env) = &binding.binding {
         progress(quiet, format!("ensuring binding {worker}.{env}"));
         let _ = client
-            .post(format!("http://{}:7777/v0/bindings", server.host))
-            .json(&BindingRequest {
+            .bind_object(&BindingRequest {
                 object_kind: kind.to_owned(),
                 object_name,
                 worker: worker.to_owned(),
@@ -939,7 +736,6 @@ async fn ensure_object_and_binding(
                     .clone()
                     .unwrap_or_else(|| "read-write".to_owned()),
             })
-            .send()
             .await;
     }
     Ok(())
