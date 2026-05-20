@@ -17,8 +17,8 @@ use gumgum_api::{
 };
 use gumgum_core::{
     Capability, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport, ErrorCode,
-    GumgumError, ManifestKind, PlanGraph, Subsystem, WorkerManifest, load_worker_path,
-    load_workspace_path, not_configured_status, setup_actions, validate_path,
+    GumgumError, GumgumInstaller, ManifestKind, PlanGraph, SetupTarget, Subsystem, WorkerManifest,
+    load_worker_path, load_workspace_path, not_configured_status, setup_actions, validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -574,7 +574,14 @@ async fn deploy_one(
         .ensure_manifest_bindings(manifest)
         .await?;
     run_remote_deploy(&server, manifest, &report, quiet).await?;
-    configure_client_resolver(&server.test_domain, &server.host, quiet).await?;
+    progress(
+        quiet,
+        format!(
+            "configuring local resolver for {} -> {}",
+            server.test_domain, server.host
+        ),
+    );
+    GumgumInstaller::configure_client_resolver(&server.test_domain, &server.host, quiet).await?;
     report.ok = true;
     report.dry_run = false;
     report.message = format!("deployed {} to {}", report.worker, server.host);
@@ -1343,6 +1350,17 @@ struct ResolvedSetup {
     local: bool,
 }
 
+fn setup_target(setup: &ResolvedSetup) -> SetupTarget {
+    SetupTarget {
+        name: setup.name.clone(),
+        host: setup.host.clone(),
+        user: setup.user.clone(),
+        root_domain: setup.root_domain.clone(),
+        test_domain: setup.test_domain.clone(),
+        local: setup.local,
+    }
+}
+
 async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<ResolvedSetup> {
     let local = args.host.is_none();
     let host = args.host.unwrap_or_else(|| "127.0.0.1".to_owned());
@@ -1445,46 +1463,6 @@ fn ping_report_from_core(report: DaemonPingReport) -> PingReport {
     }
 }
 
-async fn configure_host_dns(test_domain: &str, quiet: bool) -> gumgum_core::Result<()> {
-    progress(quiet, format!("configuring host DNS for *.{test_domain}"));
-    let domain = shell_escape_plain(test_domain);
-    let script = format!(
-        "set -e; ip=$(hostname -I 2>/dev/null | awk '{{print $1}}'); [ -n \"$ip\" ] || ip=127.0.0.1; if [ -w $HOME/.gumgum/dnsmasq/dnsmasq.conf ]; then if ! grep -q '^address=/{domain}/' $HOME/.gumgum/dnsmasq/dnsmasq.conf; then printf '\n# GumGum.dev test domain\naddress=/{domain}/%s\n' \"$ip\" >> $HOME/.gumgum/dnsmasq/dnsmasq.conf; fi; if docker inspect gumgum-dnsmasq >/dev/null 2>&1; then docker restart gumgum-dnsmasq >/dev/null; fi; fi; if docker inspect dnsmasq >/dev/null 2>&1 && [ -w /apps/fleet/gateway/dnsmasq/dnsmasq.conf ]; then if ! grep -q '^address=/{domain}/' /apps/fleet/gateway/dnsmasq/dnsmasq.conf; then printf '\n# GumGum.dev test domain\naddress=/{domain}/%s\n' \"$ip\" >> /apps/fleet/gateway/dnsmasq/dnsmasq.conf; fi; docker restart dnsmasq >/dev/null; fi"
-    );
-    run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
-}
-
-async fn configure_client_resolver(
-    test_domain: &str,
-    host: &str,
-    quiet: bool,
-) -> gumgum_core::Result<()> {
-    match std::env::consts::OS {
-        "macos" => {
-            progress(
-                quiet,
-                format!("configuring local resolver for {test_domain} -> {host}"),
-            );
-            let script = format!(
-                "set -e; if [ ! -t 0 ] && ! sudo -n true 2>/dev/null; then echo 'warning: run this to enable browser DNS: sudo mkdir -p /etc/resolver && printf nameserver\\ {host}\\\\n | sudo tee /etc/resolver/{domain}' >&2; exit 0; fi; sudo mkdir -p /etc/resolver; printf 'nameserver {host}\n' | sudo tee /etc/resolver/{domain} >/dev/null; sudo dscacheutil -flushcache",
-                host = shell_escape_plain(host),
-                domain = shell_escape_plain(test_domain)
-            );
-            run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
-        }
-        _ => {
-            progress(
-                quiet,
-                format!(
-                    "skipping automatic resolver setup on {}; configure {test_domain} to use nameserver {host}",
-                    std::env::consts::OS
-                ),
-            );
-            Ok(())
-        }
-    }
-}
-
 async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
     Ok(ping_report_from_core(
         DaemonHealthClient::wait_for_ping(host).await?,
@@ -1498,12 +1476,16 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
             quiet,
             "installing local binary into ~/.gumgum/bin and daemon service into ~/.gumgum/daemon",
         );
-        install_local_user_service(quiet).await?;
-        configure_host_dns(&setup.test_domain, quiet).await?;
+        GumgumInstaller::install_local_user_service(quiet).await?;
+        progress(
+            quiet,
+            format!("configuring host DNS for *.{}", setup.test_domain),
+        );
+        GumgumInstaller::configure_host_dns(&setup.test_domain, quiet).await?;
     } else {
         let target = ssh_target(setup.user.as_deref(), &setup.host);
         progress(quiet, format!("running remote bootstrap on {target}"));
-        run_remote_setup(&target, &setup, quiet).await?;
+        GumgumInstaller::run_remote_setup(&target, &setup_target(&setup), quiet).await?;
     }
     progress(quiet, "checking gumgumd health");
     wait_for_ping(&setup.host).await?;
@@ -1516,7 +1498,14 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
         health_url: health_url.clone(),
     })?;
     if !setup.local {
-        configure_client_resolver(&setup.test_domain, &setup.host, quiet).await?;
+        progress(
+            quiet,
+            format!(
+                "configuring local resolver for {} -> {}",
+                setup.test_domain, setup.host
+            ),
+        );
+        GumgumInstaller::configure_client_resolver(&setup.test_domain, &setup.host, quiet).await?;
     }
     Ok(SetupReport {
         ok: true,
@@ -1528,132 +1517,6 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
         health_url,
         actions: setup_actions(setup.local),
     })
-}
-
-async fn install_local_user_service(quiet: bool) -> gumgum_core::Result<()> {
-    let gumgum = std::env::current_exe().map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "could not locate running gumgum binary",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    let home = std::env::var("HOME").map_err(|source| {
-        GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "could not read HOME")
-            .likely_cause(source.to_string())
-            .build()
-    })?;
-    fs::create_dir_all(format!("{home}/.gumgum/daemon")).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "could not create ~/.gumgum/daemon",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    fs::create_dir_all(format!("{home}/.gumgum/bin")).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "could not create ~/.gumgum/bin",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    let installed_gumgum = PathBuf::from(format!("{home}/.gumgum/bin/gumgum"));
-    if gumgum != installed_gumgum {
-        fs::copy(&gumgum, &installed_gumgum).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "could not install local gumgumd",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    }
-    run_command_streaming(
-        TokioCommand::new("chmod")
-            .arg("0755")
-            .arg(&installed_gumgum),
-        quiet,
-    )
-    .await?;
-    fs::create_dir_all(format!("{home}/.config/systemd/user")).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "could not create user systemd dir",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    fs::write(
-        format!("{home}/.gumgum/daemon/gumgumd.service"),
-        user_systemd_service(),
-    )
-    .map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "could not write local user service",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    run_command_streaming(
-        TokioCommand::new("ln")
-            .arg("-sf")
-            .arg(format!("{home}/.gumgum/daemon/gumgumd.service"))
-            .arg(format!("{home}/.config/systemd/user/gumgumd.service")),
-        quiet,
-    )
-    .await?;
-    run_command_streaming(
-        TokioCommand::new("systemctl")
-            .arg("--user")
-            .arg("daemon-reload"),
-        quiet,
-    )
-    .await?;
-    run_command_streaming(
-        TokioCommand::new("systemctl")
-            .arg("--user")
-            .arg("enable")
-            .arg("--now")
-            .arg("gumgumd"),
-        quiet,
-    )
-    .await?;
-    run_command_streaming(
-        TokioCommand::new("systemctl")
-            .arg("--user")
-            .arg("restart")
-            .arg("gumgumd"),
-        quiet,
-    )
-    .await
-}
-
-async fn run_remote_setup(
-    target: &str,
-    setup: &ResolvedSetup,
-    quiet: bool,
-) -> gumgum_core::Result<()> {
-    let remote_setup = format!(
-        "~/.gumgum/bin/gumgum setup --name {} --root-domain {} --test-domain {}{}",
-        shell_quote(&setup.name),
-        shell_quote(&setup.root_domain),
-        shell_quote(&setup.test_domain),
-        if quiet { " --json" } else { "" }
-    );
-    let script = format!(
-        "set -e; primary=https://get.gumgum.dev; fallback=https://get-gumgum-dev.abstractmachines.workers.dev; tmp=$(mktemp); trap 'rm -f $tmp' EXIT; if command -v curl >/dev/null 2>&1; then if curl -fsSL -o $tmp $primary; then GUMGUM_NO_PATH=1 sh $tmp; else echo 'primary installer URL failed; retrying workers.dev fallback' >&2; curl -fsSL -o $tmp $fallback; GUMGUM_BASE_URL=$fallback GUMGUM_NO_PATH=1 sh $tmp; fi; elif command -v wget >/dev/null 2>&1; then if wget -q -O $tmp $primary; then GUMGUM_NO_PATH=1 sh $tmp; else echo 'primary installer URL failed; retrying workers.dev fallback' >&2; wget -q -O $tmp $fallback; GUMGUM_BASE_URL=$fallback GUMGUM_NO_PATH=1 sh $tmp; fi; else echo 'curl or wget is required' >&2; exit 1; fi; {remote_setup}"
-    );
-    run_command_streaming(TokioCommand::new("ssh").arg(target).arg(script), quiet).await
 }
 
 fn gumgum_root() -> gumgum_core::Result<PathBuf> {
@@ -1846,32 +1709,6 @@ fn ssh_target(user: Option<&str>, host: &str) -> String {
         Some(user) => format!("{user}@{host}"),
         None => host.to_owned(),
     }
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn shell_escape_plain(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
-        .collect()
-}
-
-fn user_systemd_service() -> &'static str {
-    r#"[Unit]
-Description=GumGum.dev daemon
-After=default.target
-
-[Service]
-Type=simple
-ExecStart=%h/.gumgum/bin/gumgum daemon
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target"#
 }
 
 fn progress(quiet: bool, message: impl AsRef<str>) {

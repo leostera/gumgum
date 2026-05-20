@@ -4,6 +4,7 @@ pub mod graph_store;
 pub mod manifest;
 pub mod platform;
 pub mod setup;
+pub mod setup_installer;
 
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
@@ -18,6 +19,7 @@ pub use manifest::{
 };
 pub use platform::LocalPlatform;
 pub use setup::{not_configured_status, setup_actions};
+pub use setup_installer::{GumgumInstaller, SetupTarget};
 
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};

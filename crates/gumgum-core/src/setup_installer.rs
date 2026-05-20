@@ -1,0 +1,255 @@
+use crate::{ErrorCode, GumgumError, Subsystem};
+use serde::{Deserialize, Serialize};
+use std::{fs, path::PathBuf, process::Stdio};
+use tokio::process::Command as TokioCommand;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SetupTarget {
+    pub name: String,
+    pub host: String,
+    pub user: Option<String>,
+    pub root_domain: String,
+    pub test_domain: String,
+    pub local: bool,
+}
+
+pub struct GumgumInstaller;
+
+impl GumgumInstaller {
+    pub async fn install_local_user_service(quiet: bool) -> crate::Result<()> {
+        let gumgum = std::env::current_exe().map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "could not locate running gumgum binary",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        let home = std::env::var("HOME").map_err(|source| {
+            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "could not read HOME")
+                .likely_cause(source.to_string())
+                .build()
+        })?;
+        fs::create_dir_all(format!("{home}/.gumgum/daemon")).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "could not create ~/.gumgum/daemon",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        fs::create_dir_all(format!("{home}/.gumgum/bin")).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "could not create ~/.gumgum/bin",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        let installed_gumgum = PathBuf::from(format!("{home}/.gumgum/bin/gumgum"));
+        if gumgum != installed_gumgum {
+            fs::copy(&gumgum, &installed_gumgum).map_err(|source| {
+                GumgumError::structured(
+                    Subsystem::Setup,
+                    ErrorCode::Io,
+                    "could not install local gumgumd",
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })?;
+        }
+        run_command_streaming(
+            TokioCommand::new("chmod")
+                .arg("0755")
+                .arg(&installed_gumgum),
+            quiet,
+        )
+        .await?;
+        fs::create_dir_all(format!("{home}/.config/systemd/user")).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "could not create user systemd dir",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        fs::write(
+            format!("{home}/.gumgum/daemon/gumgumd.service"),
+            user_systemd_service(),
+        )
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "could not write local user service",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        run_command_streaming(
+            TokioCommand::new("ln")
+                .arg("-sf")
+                .arg(format!("{home}/.gumgum/daemon/gumgumd.service"))
+                .arg(format!("{home}/.config/systemd/user/gumgumd.service")),
+            quiet,
+        )
+        .await?;
+        run_command_streaming(
+            TokioCommand::new("systemctl")
+                .arg("--user")
+                .arg("daemon-reload"),
+            quiet,
+        )
+        .await?;
+        run_command_streaming(
+            TokioCommand::new("systemctl")
+                .arg("--user")
+                .arg("enable")
+                .arg("--now")
+                .arg("gumgumd"),
+            quiet,
+        )
+        .await?;
+        run_command_streaming(
+            TokioCommand::new("systemctl")
+                .arg("--user")
+                .arg("restart")
+                .arg("gumgumd"),
+            quiet,
+        )
+        .await
+    }
+
+    pub async fn configure_host_dns(test_domain: &str, quiet: bool) -> crate::Result<()> {
+        let domain = shell_escape_plain(test_domain);
+        let script = format!(
+            "set -e; ip=$(hostname -I 2>/dev/null | awk '{{print $1}}'); [ -n \"$ip\" ] || ip=127.0.0.1; if [ -w $HOME/.gumgum/dnsmasq/dnsmasq.conf ]; then if ! grep -q '^address=/{domain}/' $HOME/.gumgum/dnsmasq/dnsmasq.conf; then printf '\n# GumGum.dev test domain\naddress=/{domain}/%s\n' \"$ip\" >> $HOME/.gumgum/dnsmasq/dnsmasq.conf; fi; if docker inspect gumgum-dnsmasq >/dev/null 2>&1; then docker restart gumgum-dnsmasq >/dev/null; fi; fi; if docker inspect dnsmasq >/dev/null 2>&1 && [ -w /apps/fleet/gateway/dnsmasq/dnsmasq.conf ]; then if ! grep -q '^address=/{domain}/' /apps/fleet/gateway/dnsmasq/dnsmasq.conf; then printf '\n# GumGum.dev test domain\naddress=/{domain}/%s\n' \"$ip\" >> /apps/fleet/gateway/dnsmasq/dnsmasq.conf; fi; docker restart dnsmasq >/dev/null; fi"
+        );
+        run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
+    }
+
+    pub async fn configure_client_resolver(
+        test_domain: &str,
+        host: &str,
+        quiet: bool,
+    ) -> crate::Result<()> {
+        match std::env::consts::OS {
+            "macos" => {
+                let script = format!(
+                    "set -e; if [ ! -t 0 ] && ! sudo -n true 2>/dev/null; then echo 'warning: run this to enable browser DNS: sudo mkdir -p /etc/resolver && printf nameserver\\ {host}\\\\n | sudo tee /etc/resolver/{domain}' >&2; exit 0; fi; sudo mkdir -p /etc/resolver; printf 'nameserver {host}\n' | sudo tee /etc/resolver/{domain} >/dev/null; sudo dscacheutil -flushcache",
+                    host = shell_escape_plain(host),
+                    domain = shell_escape_plain(test_domain)
+                );
+                run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub async fn run_remote_setup(
+        target: &str,
+        setup: &SetupTarget,
+        quiet: bool,
+    ) -> crate::Result<()> {
+        let remote_setup = format!(
+            "~/.gumgum/bin/gumgum setup --name {} --root-domain {} --test-domain {}{}",
+            shell_quote(&setup.name),
+            shell_quote(&setup.root_domain),
+            shell_quote(&setup.test_domain),
+            if quiet { " --json" } else { "" }
+        );
+        let script = format!(
+            "set -e; primary=https://get.gumgum.dev; fallback=https://get-gumgum-dev.abstractmachines.workers.dev; tmp=$(mktemp); trap 'rm -f $tmp' EXIT; if command -v curl >/dev/null 2>&1; then if curl -fsSL -o $tmp $primary; then GUMGUM_NO_PATH=1 sh $tmp; else echo 'primary installer URL failed; retrying workers.dev fallback' >&2; curl -fsSL -o $tmp $fallback; GUMGUM_BASE_URL=$fallback GUMGUM_NO_PATH=1 sh $tmp; fi; elif command -v wget >/dev/null 2>&1; then if wget -q -O $tmp $primary; then GUMGUM_NO_PATH=1 sh $tmp; else echo 'primary installer URL failed; retrying workers.dev fallback' >&2; wget -q -O $tmp $fallback; GUMGUM_BASE_URL=$fallback GUMGUM_NO_PATH=1 sh $tmp; fi; else echo 'curl or wget is required' >&2; exit 1; fi; {remote_setup}"
+        );
+        run_command_streaming(TokioCommand::new("ssh").arg(target).arg(script), quiet).await
+    }
+}
+
+async fn run_command_streaming(cmd: &mut TokioCommand, quiet: bool) -> crate::Result<()> {
+    if quiet {
+        return run_command(cmd).await;
+    }
+    let status = cmd
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "failed to run setup command",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(
+            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "setup command failed")
+                .likely_cause(format!("exit status {status}"))
+                .next_command("gumgum setup <host> --root-domain <domain> --dry-run")
+                .build(),
+        )
+    }
+}
+
+async fn run_command(cmd: &mut TokioCommand) -> crate::Result<()> {
+    let output = cmd.output().await.map_err(|source| {
+        GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            "failed to run setup command",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    Err(
+        GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "setup command failed")
+            .likely_cause(if stderr.is_empty() {
+                format!("exit status {}", output.status)
+            } else {
+                stderr
+            })
+            .next_command("gumgum setup <host> --root-domain <domain> --dry-run")
+            .build(),
+    )
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_escape_plain(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
+        .collect()
+}
+
+fn user_systemd_service() -> &'static str {
+    r#"[Unit]
+Description=GumGum.dev daemon
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.gumgum/bin/gumgum daemon
+Restart=always
+RestartSec=2
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
+"#
+}
