@@ -407,3 +407,92 @@ fn core_deploy_request(value: &DeployRequest) -> CoreDeployRequest {
         health: value.health.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_graph_path(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("gumgum-daemon-{label}-{nanos}.sqlite"))
+    }
+
+    fn seed_revisions(path: &PathBuf) -> Vec<gumgum_core::DeploymentRevision> {
+        let store = GraphStore::new(path.clone());
+        let first = DesiredDeploy {
+            worker: "api".to_owned(),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            route: "api.example.test".to_owned(),
+            port: 3000,
+            health: "/healthz".to_owned(),
+        };
+        store.materialize_deploy(&first).unwrap();
+        let mut second = first.clone();
+        second.image = "registry/api:2".to_owned();
+        store.materialize_deploy(&second).unwrap();
+        let mut third = second.clone();
+        third.route = "api-v3.example.test".to_owned();
+        store.materialize_deploy(&third).unwrap();
+        store.deployment_revisions("api", 10).unwrap()
+    }
+
+    #[tokio::test]
+    async fn rollback_preview_can_select_specific_revision_without_reconcile() {
+        let path = temp_graph_path("specific-rollback-preview");
+        let revisions = seed_revisions(&path);
+        let selected = revisions[1].clone();
+        let state = DaemonState {
+            graph_path: Arc::new(path.clone()),
+        };
+
+        let Json(report) = daemon_rollback(
+            State(state),
+            Json(RollbackRequest {
+                worker: "api".to_owned(),
+                preview: true,
+                revision_id: Some(selected.id),
+            }),
+        )
+        .await;
+
+        assert!(report.ok);
+        assert_eq!(report.revision_id, Some(selected.id));
+        assert_eq!(report.image, Some(selected.deploy.image));
+        assert_eq!(report.route, Some(selected.deploy.route));
+        assert!(
+            report
+                .actions
+                .iter()
+                .any(|action| action == "preview only; no containers changed")
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn rollback_preview_defaults_to_latest_revision_id() {
+        let path = temp_graph_path("latest-rollback-preview");
+        let revisions = seed_revisions(&path);
+        let state = DaemonState {
+            graph_path: Arc::new(path.clone()),
+        };
+
+        let Json(report) = daemon_rollback(
+            State(state),
+            Json(RollbackRequest {
+                worker: "api".to_owned(),
+                preview: true,
+                revision_id: None,
+            }),
+        )
+        .await;
+
+        assert!(report.ok);
+        assert_eq!(report.revision_id, Some(revisions[0].id));
+        assert_eq!(report.image, Some(revisions[0].deploy.image.clone()));
+        let _ = std::fs::remove_file(path);
+    }
+}
