@@ -147,7 +147,7 @@ pub struct ValidationReport {
     pub message: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ManifestKind {
     Workspace,
@@ -289,4 +289,37 @@ fn validate_worker(manifest: &WorkerManifest) -> std::result::Result<(), Manifes
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_template_round_trips_through_validation() {
+        let raw = worker_manifest_template("api", "experiments", 8080, &["example.com".to_owned()]);
+        let report = validate_str(&raw, "gumgum.toml").expect("worker template validates");
+        assert!(report.ok);
+        assert_eq!(report.manifest_kind, ManifestKind::Worker);
+        let parsed: WorkerManifest = toml::from_str(&raw).expect("worker template parses");
+        assert_eq!(parsed.project.unwrap().namespace, "experiments");
+        assert_eq!(parsed.worker.name, "api");
+        assert_eq!(parsed.worker.port, Some(8080));
+        assert_eq!(parsed.zone[0].name, "example.com");
+    }
+
+    #[test]
+    fn workspace_template_round_trips_through_validation() {
+        let raw = workspace_manifest_template("peekaboo", Some("leostera.dev"));
+        let report = validate_str(&raw, "gumgum.toml").expect("workspace template validates");
+        assert!(report.ok);
+        assert_eq!(report.manifest_kind, ManifestKind::Workspace);
+        let parsed: WorkspaceManifest = toml::from_str(&raw).expect("workspace template parses");
+        assert_eq!(parsed.workspace.name, "peekaboo");
+        assert_eq!(
+            parsed.workspace.root_domain.as_deref(),
+            Some("leostera.dev")
+        );
+        assert_eq!(parsed.workspace.members, vec!["apps/*"]);
+    }
 }
