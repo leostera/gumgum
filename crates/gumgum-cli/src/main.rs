@@ -1,5 +1,6 @@
 mod deploy_executor;
 mod deploy_plan;
+mod graph_presenter;
 mod presentation;
 mod server_client;
 
@@ -12,6 +13,7 @@ use axum::{
 use clap::{Args, Parser, Subcommand};
 use deploy_executor::DeployExecutor;
 use deploy_plan::DeployPlanner;
+use graph_presenter::GraphPresenter;
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge,
     GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, PingReport, RollbackReport,
@@ -828,25 +830,12 @@ async fn graph_affected(server: &str, target: &str, json: bool) -> gumgum_core::
         print_value(true, &report);
     } else {
         println!("Affected by {}:", report.target);
+        let presenter = GraphPresenter::new();
         for node in report.nodes {
-            println!("  {}", describe_graph_node(&node));
+            println!("  {}", presenter.describe_node(&node));
         }
     }
     Ok(())
-}
-
-fn describe_graph_node(node: &GraphNode) -> String {
-    match node.kind.as_str() {
-        "image" => format!("image {}", node.label),
-        "container" => format!("container {}", node.label),
-        "network" => format!("network {}", node.label),
-        "route" => format!("route {}", node.label),
-        "binding" => format!("binding {}", node.label),
-        "global_object" => format!("object {}", node.label),
-        "worker" => format!("worker {}", node.label),
-        "provider" => format!("provider {}", node.label),
-        _ => format!("{} {}", node.kind, node.label),
-    }
 }
 
 async fn object_command(kind: &str, args: ObjectArgs, json: bool) -> gumgum_core::Result<()> {
@@ -1664,7 +1653,7 @@ async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {
                 Vec::new(),
             )
         });
-    let graph = render_mermaid(&nodes, &edges);
+    let graph = GraphPresenter::new().mermaid(&nodes, &edges);
     Json(GraphReport {
         ok: true,
         format: "mermaid".to_owned(),
@@ -2013,34 +2002,6 @@ fn graph_edge(from: &str, to: &str, kind: &str) -> GraphEdge {
         to: to.to_owned(),
         kind: kind.to_owned(),
     }
-}
-
-fn render_mermaid(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
-    let mut graph = "graph TD\n".to_owned();
-    for node in nodes {
-        graph.push_str(&format!(
-            "  {}[\"{}\"]\n",
-            mermaid_id(&node.id),
-            mermaid_label(&node.label)
-        ));
-    }
-    for edge in edges {
-        graph.push_str(&format!(
-            "  {} -->|{}| {}\n",
-            mermaid_id(&edge.from),
-            edge.kind,
-            mermaid_id(&edge.to)
-        ));
-    }
-    graph
-}
-
-fn mermaid_id(value: &str) -> String {
-    sanitize_name(value).replace('-', "_")
-}
-
-fn mermaid_label(value: &str) -> String {
-    value.replace('"', "\\\"")
 }
 
 async fn daemon_create_object(
