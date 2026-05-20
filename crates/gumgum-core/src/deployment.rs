@@ -1,4 +1,4 @@
-use crate::{PlanGraph, ServerRecord, WorkerManifest, sanitize_name};
+use crate::{PlanGraph, ServerRecord, WorkerManifest, default_project_name, sanitize_name};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -124,18 +124,6 @@ fn derived_routes(
     } else {
         vec![format!("{worker}.{project}.{}", server.test_domain)]
     }
-}
-
-fn default_project_name() -> String {
-    std::env::current_dir()
-        .ok()
-        .and_then(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().to_string())
-        })
-        .map(|name| sanitize_name(&name))
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "hello".to_owned())
 }
 
 fn dns_scope(root_domain: &str) -> String {

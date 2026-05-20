@@ -16,8 +16,8 @@ use gumgum_api::{
 use gumgum_core::{
     Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
     DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph,
-    ServerRecord, SetupTarget, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
-    not_configured_status, sanitize_name, setup_actions, validate_path,
+    ServerRecord, SetupTarget, Subsystem, WorkerManifest, default_project_name, load_worker_path,
+    load_workspace_path, not_configured_status, sanitize_name, setup_actions, validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -1151,18 +1151,6 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
             "created gumgum.toml".to_owned()
         },
     })
-}
-
-fn default_project_name() -> String {
-    std::env::current_dir()
-        .ok()
-        .and_then(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().to_string())
-        })
-        .map(|name| sanitize_name(&name))
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "hello".to_owned())
 }
 
 fn workspace_manifest(name: &str, root_domain: Option<&str>) -> String {

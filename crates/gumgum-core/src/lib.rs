@@ -31,6 +31,18 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, GumgumError>;
 
+pub fn default_project_name() -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .map(|name| sanitize_name(&name))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "hello".to_owned())
+}
+
 pub fn sanitize_name(value: &str) -> String {
     value
         .chars()
