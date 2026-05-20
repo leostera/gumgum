@@ -1,5 +1,5 @@
 use gumgum_core::Capability;
-pub use gumgum_core::{GraphEdge, GraphNode};
+pub use gumgum_core::{GraphEdge, GraphNode, ServerRecord};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -23,15 +23,6 @@ pub struct SetupReport {
     pub service: String,
     pub health_url: String,
     pub actions: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ServerRecord {
-    pub name: String,
-    pub host: String,
-    pub root_domain: String,
-    pub test_domain: String,
-    pub health_url: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

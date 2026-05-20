@@ -1,3 +1,4 @@
+pub mod config_store;
 pub mod container_reconciler;
 pub mod daemon_health;
 pub mod graph_store;
@@ -6,6 +7,7 @@ pub mod platform;
 pub mod setup;
 pub mod setup_installer;
 
+pub use config_store::{ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use graph_store::{

@@ -13,12 +13,13 @@ use deploy_plan::DeployPlanner;
 use graph_presenter::GraphPresenter;
 use gumgum_api::{
     BindingRequest, DeployApplyReport, DeployRequest, GraphEdge, GraphNode, ObjectReport,
-    ObjectRequest, PingReport, ServerListReport, ServerRecord, SetupPlan, SetupReport,
+    ObjectRequest, PingReport, ServerListReport, SetupPlan, SetupReport,
 };
 use gumgum_core::{
-    Capability, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport, ErrorCode,
-    GumgumError, GumgumInstaller, ManifestKind, PlanGraph, SetupTarget, Subsystem, WorkerManifest,
-    load_worker_path, load_workspace_path, not_configured_status, setup_actions, validate_path,
+    Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport,
+    ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph, ServerRecord, SetupTarget,
+    Subsystem, WorkerManifest, load_worker_path, load_workspace_path, not_configured_status,
+    setup_actions, validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -274,7 +275,7 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             if let Some(host) = args.host {
                 let report = ping_host(&host).await?;
                 print_value(cli.json, &report)
-            } else if let Some(server) = load_default_server()? {
+            } else if let Some(server) = ConfigStore::from_home_env()?.load_default_server()? {
                 let report = ping_host(&server.host).await?;
                 print_value(cli.json, &report)
             } else {
@@ -355,7 +356,7 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             ServerSubcommand::List => {
                 let report = ServerListReport {
                     ok: true,
-                    servers: load_servers()?,
+                    servers: ConfigStore::from_home_env()?.load_servers()?,
                 };
                 print_value(cli.json, &report)
             }
@@ -399,14 +400,15 @@ fn config_command(
     server_name: Option<String>,
     command: ConfigSubcommand,
 ) -> gumgum_core::Result<ConfigReport> {
-    let path = match &server_name {
-        Some(name) => server_config_path(name)?,
-        None => local_config_path()?,
-    };
+    let store = ConfigStore::from_home_env()?;
     let scope = server_name
+        .as_ref()
         .map(|name| format!("server:{name}"))
         .unwrap_or_else(|| "local".to_owned());
-    let mut values = load_config_map(&path)?;
+    let mut values = match &server_name {
+        Some(name) => store.load_server_config(name)?,
+        None => store.load_local_config()?,
+    };
     match command {
         ConfigSubcommand::List => Ok(ConfigReport {
             ok: true,
@@ -428,7 +430,10 @@ fn config_command(
         }
         ConfigSubcommand::Set { key, value } => {
             values.insert(key.clone(), serde_json::Value::String(value));
-            save_config_map(&path, &values)?;
+            match &server_name {
+                Some(name) => store.save_server_config(name, &values)?,
+                None => store.save_local_config(&values)?,
+            };
             let mut selected = serde_json::Map::new();
             selected.insert(key.clone(), values.get(&key).cloned().unwrap());
             Ok(ConfigReport {
@@ -487,7 +492,7 @@ async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Re
             test_domain: String::new(),
             health_url: format!("http://{host}:7777/healthz"),
         }),
-        None => load_default_server()?,
+        None => ConfigStore::from_home_env()?.load_default_server()?,
     };
     match kind {
         ManifestKind::Worker => {
@@ -743,7 +748,8 @@ async fn graph(args: GraphArgs, json: bool) -> gumgum_core::Result<()> {
     let server = match args.host {
         Some(host) => host,
         None => {
-            load_default_server()?
+            ConfigStore::from_home_env()?
+                .load_default_server()?
                 .ok_or_else(|| {
                     GumgumError::structured(
                         Subsystem::Config,
@@ -903,15 +909,17 @@ fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
             test_domain: String::new(),
             health_url: format!("http://{host}:7777/healthz"),
         }),
-        None => load_default_server()?.ok_or_else(|| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::InvalidArgs,
-                "no GumGum.dev server configured",
-            )
-            .next_command("gumgum setup <host> --root-domain <domain>")
-            .build()
-        }),
+        None => ConfigStore::from_home_env()?
+            .load_default_server()?
+            .ok_or_else(|| {
+                GumgumError::structured(
+                    Subsystem::Config,
+                    ErrorCode::InvalidArgs,
+                    "no GumGum.dev server configured",
+                )
+                .next_command("gumgum setup <host> --root-domain <domain>")
+                .build()
+            }),
     }
 }
 
@@ -920,7 +928,8 @@ async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
     let server = match args.host {
         Some(host) => host,
         None => {
-            load_default_server()?
+            ConfigStore::from_home_env()?
+                .load_default_server()?
                 .ok_or_else(|| {
                     GumgumError::structured(
                         Subsystem::Config,
@@ -1169,7 +1178,8 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
     let path = PathBuf::from("gumgum.toml");
     let name = args.name.unwrap_or_else(default_project_name);
     let root_domain = args.root_domain.or_else(|| {
-        load_default_server()
+        ConfigStore::from_home_env()
+            .and_then(|store| store.load_default_server())
             .ok()
             .flatten()
             .map(|server| server.root_domain)
@@ -1490,7 +1500,7 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
     progress(quiet, "checking gumgumd health");
     wait_for_ping(&setup.host).await?;
     let health_url = format!("http://{}:7777/healthz", setup.host);
-    save_server(ServerRecord {
+    ConfigStore::from_home_env()?.save_server(ServerRecord {
         name: setup.name.clone(),
         host: setup.host.clone(),
         root_domain: setup.root_domain.clone(),
@@ -1516,131 +1526,6 @@ async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Resu
         service: "gumgumd".to_owned(),
         health_url,
         actions: setup_actions(setup.local),
-    })
-}
-
-fn gumgum_root() -> gumgum_core::Result<PathBuf> {
-    let home = std::env::var("HOME").map_err(|source| {
-        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not read HOME")
-            .likely_cause(source.to_string())
-            .build()
-    })?;
-    Ok(PathBuf::from(home).join(".gumgum"))
-}
-
-fn config_path() -> gumgum_core::Result<PathBuf> {
-    Ok(gumgum_root()?.join("servers.json"))
-}
-
-fn local_config_path() -> gumgum_core::Result<PathBuf> {
-    Ok(gumgum_root()?.join("config.json"))
-}
-
-fn server_config_path(name: &str) -> gumgum_core::Result<PathBuf> {
-    Ok(gumgum_root()?
-        .join("servers")
-        .join(sanitize_name(name))
-        .join("config.json"))
-}
-
-fn load_config_map(
-    path: &PathBuf,
-) -> gumgum_core::Result<serde_json::Map<String, serde_json::Value>> {
-    if !path.exists() {
-        return Ok(serde_json::Map::new());
-    }
-    let raw = fs::read_to_string(path).map_err(|source| {
-        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not read config")
-            .likely_cause(source.to_string())
-            .build()
-    })?;
-    serde_json::from_str(&raw).map_err(|source| {
-        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not parse config")
-            .likely_cause(source.to_string())
-            .build()
-    })
-}
-
-fn save_config_map(
-    path: &PathBuf,
-    values: &serde_json::Map<String, serde_json::Value>,
-) -> gumgum_core::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not create config directory",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    }
-    fs::write(
-        path,
-        serde_json::to_string_pretty(values).expect("serialize config"),
-    )
-    .map_err(|source| {
-        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not write config")
-            .likely_cause(source.to_string())
-            .build()
-    })
-}
-
-fn load_servers() -> gumgum_core::Result<Vec<ServerRecord>> {
-    let path = config_path()?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let raw = fs::read_to_string(&path).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not read server list",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    serde_json::from_str(&raw).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not parse server list",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })
-}
-
-fn load_default_server() -> gumgum_core::Result<Option<ServerRecord>> {
-    Ok(load_servers()?.into_iter().next())
-}
-
-fn save_server(server: ServerRecord) -> gumgum_core::Result<()> {
-    let path = config_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not create config directory",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    }
-    let mut servers = load_servers()?;
-    servers.retain(|existing| existing.host != server.host);
-    servers.insert(0, server);
-    let raw = serde_json::to_string_pretty(&servers).expect("serialize servers");
-    fs::write(&path, raw).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not write server list",
-        )
-        .likely_cause(source.to_string())
-        .build()
     })
 }
 

@@ -1,4 +1,3 @@
-use crate::gumgum_root;
 use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
@@ -10,7 +9,7 @@ use gumgum_api::{
     RollbackRequest,
 };
 use gumgum_core::{
-    ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
+    ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
     GlobalObject, GraphStore, GumgumError, LocalPlatform, Subsystem, WorkerBinding,
     connection_examples, not_configured_status, object_dns, provider_for_object,
 };
@@ -31,7 +30,7 @@ impl DaemonApp {
 
     pub(crate) async fn run(self) -> gumgum_core::Result<()> {
         LocalPlatform::ensure(false).await?;
-        let graph_path = gumgum_root()?.join("graph.sqlite");
+        let graph_path = ConfigStore::from_home_env()?.root().join("graph.sqlite");
         GraphStore::new(graph_path.clone()).init()?;
         let app = self.router(DaemonState {
             graph_path: Arc::new(graph_path),
