@@ -31,6 +31,14 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, GumgumError>;
 
+pub fn derive_test_domain(root_domain: &str) -> String {
+    let root = root_domain.trim_end_matches('.');
+    match root.rsplit_once('.') {
+        Some((name, _)) => format!("{name}.test"),
+        None => format!("{root}.test"),
+    }
+}
+
 pub fn default_project_name() -> String {
     std::env::current_dir()
         .ok()

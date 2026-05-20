@@ -16,8 +16,9 @@ use gumgum_api::{
 use gumgum_core::{
     Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
     DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph,
-    ServerRecord, SetupTarget, Subsystem, WorkerManifest, default_project_name, load_worker_path,
-    load_workspace_path, not_configured_status, sanitize_name, setup_actions, validate_path,
+    ServerRecord, SetupTarget, Subsystem, WorkerManifest, default_project_name, derive_test_domain,
+    load_worker_path, load_workspace_path, not_configured_status, sanitize_name, setup_actions,
+    validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -1516,14 +1517,6 @@ fn print_error(err: GumgumError) {
         "{}",
         serde_json::to_string_pretty(&err.to_report()).expect("serialize error")
     );
-}
-
-fn derive_test_domain(root_domain: &str) -> String {
-    let root = root_domain.trim_end_matches('.');
-    match root.rsplit_once('.') {
-        Some((name, _)) => format!("{name}.test"),
-        None => format!("{root}.test"),
-    }
 }
 
 #[derive(Debug, Serialize)]
