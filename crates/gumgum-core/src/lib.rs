@@ -26,7 +26,7 @@ pub use manifest::{
 pub use platform::LocalPlatform;
 pub use process::{run_setup_command, run_setup_command_streaming};
 pub use providers::{
-    ObjectProviderPlan, ProviderReconciler, ProviderSpec, connection_examples,
+    ObjectProviderPlan, ProviderReconciler, ProviderSpec, ProviderStatus, connection_examples,
     object_provider_plan, provider_spec,
 };
 pub use setup::{not_configured_status, setup_actions};

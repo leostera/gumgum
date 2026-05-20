@@ -223,6 +223,7 @@ pub(crate) enum ServerSubcommand {
     List,
     Ping(PingArgs),
     Config(ServerConfigArgs),
+    Providers,
     Upgrade(ServerUpgradeArgs),
 }
 

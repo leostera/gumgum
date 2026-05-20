@@ -22,6 +22,16 @@ pub struct ObjectProviderPlan {
     pub connection_examples: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderStatus {
+    pub capability: Capability,
+    pub provider: String,
+    pub container: String,
+    pub image: String,
+    pub port: u16,
+    pub running: bool,
+}
+
 pub fn provider_spec(capability: Capability) -> ProviderSpec {
     match capability {
         Capability::Db => ProviderSpec {
@@ -97,6 +107,29 @@ impl ProviderReconciler {
             _ => Ok(plan.actions.clone()),
         }
     }
+
+    pub async fn statuses() -> Vec<ProviderStatus> {
+        let mut statuses = Vec::new();
+        for capability in [
+            Capability::Db,
+            Capability::Kv,
+            Capability::Blob,
+            Capability::Queue,
+            Capability::Observability,
+        ] {
+            let spec = provider_spec(capability);
+            let running = docker_running(&spec.container).await;
+            statuses.push(ProviderStatus {
+                capability,
+                provider: spec.provider,
+                container: spec.container,
+                image: spec.image,
+                port: spec.port,
+                running,
+            });
+        }
+        statuses
+    }
 }
 
 async fn ensure_redis(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
@@ -151,6 +184,20 @@ async fn docker_inspect(container: &str) -> bool {
         .output()
         .await
         .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+async fn docker_running(container: &str) -> bool {
+    TokioCommand::new("docker")
+        .arg("inspect")
+        .arg("-f")
+        .arg("{{.State.Running}}")
+        .arg(container)
+        .output()
+        .await
+        .map(|output| {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
         .unwrap_or(false)
 }
 
@@ -244,6 +291,23 @@ mod tests {
         let blob = provider_spec(Capability::Blob);
         assert_eq!(blob.provider, "minio.main");
         assert_eq!(blob.protocol, "s3");
+    }
+
+    #[tokio::test]
+    async fn provider_statuses_cover_inspectable_backends() {
+        let statuses = ProviderReconciler::statuses().await;
+
+        assert_eq!(statuses.len(), 5);
+        assert!(
+            statuses
+                .iter()
+                .any(|status| status.provider == "redis.main")
+        );
+        assert!(
+            statuses
+                .iter()
+                .any(|status| status.container == "gumgum-provider-postgres-main")
+        );
     }
 
     #[test]

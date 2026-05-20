@@ -1,8 +1,9 @@
+use crate::server_client::ServerClient;
 use crate::{
     SchemaCommand, SchemaSubcommand, ServerCommand, ServerSubcommand, ServerUpgradeArgs,
     StatusArgs, config_command, print_value, progress,
 };
-use gumgum_api::{PingReport, ServerListReport};
+use gumgum_api::{PingReport, ProviderStatusReport, ServerListReport};
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport, ErrorCode,
     GumgumError, GumgumInstaller, ServerRecord, SetupTarget, Subsystem, not_configured_status,
@@ -64,6 +65,16 @@ pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Re
             let name = required_server_name(server.name, "config")?;
             let report = config_command(Some(name), args.command)?;
             print_value(json, &report)
+        }
+        Some(ServerSubcommand::Providers) => {
+            let name = required_server_name(server.name, "providers")?;
+            let server = find_server(&name)?;
+            let report = ServerClient::new(server.host).providers().await?;
+            if json {
+                print_value(true, &report);
+            } else {
+                print_provider_status_report(&report);
+            }
         }
         Some(ServerSubcommand::Upgrade(args)) => {
             let name = required_server_name(server.name, "upgrade")?;
@@ -187,6 +198,21 @@ async fn upgrade_server(
         ],
         message: "server upgraded from published release".to_owned(),
     })
+}
+
+fn print_provider_status_report(report: &ProviderStatusReport) {
+    println!("Providers ({}):", report.providers.len());
+    for provider in &report.providers {
+        println!(
+            "{} {} container={} image={} port={} running={}",
+            provider.capability,
+            provider.provider,
+            provider.container,
+            provider.image,
+            provider.port,
+            provider.running
+        );
+    }
 }
 
 async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {

@@ -1,7 +1,7 @@
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest,
     DeploymentRevisionsReport, GraphReport, LogsReport, ObjectReport, ObjectRequest,
-    RollbackReport, RollbackRequest,
+    ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
 
@@ -56,6 +56,10 @@ impl ServerClient {
         request: &ObjectRequest,
     ) -> gumgum_core::Result<ObjectReport> {
         self.post_json("/v0/objects", request, "object").await
+    }
+
+    pub(crate) async fn providers(&self) -> gumgum_core::Result<ProviderStatusReport> {
+        self.get_json("/v0/providers", "providers").await
     }
 
     pub(crate) async fn bind_object(

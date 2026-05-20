@@ -6,7 +6,7 @@ use axum::{
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
     DeployRequest, DeploymentRevisionsReport, GraphNode, GraphReport, LogsReport, ObjectReport,
-    ObjectRequest, RollbackReport, RollbackRequest,
+    ObjectRequest, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
@@ -66,6 +66,7 @@ impl DaemonApp {
             .route("/v0/revisions/{worker}", get(daemon_revisions))
             .route("/v0/objects", post(daemon_create_object))
             .route("/v0/bindings", post(daemon_create_binding))
+            .route("/v0/providers", get(daemon_providers))
             .route("/v0/graph", get(daemon_graph))
             .route("/v0/graph/affected", get(daemon_graph_affected))
             .route("/v0/logs/{container}", get(daemon_logs))
@@ -201,6 +202,15 @@ async fn daemon_create_object(
         connection_examples: provider_plan.connection_examples,
         provider_actions,
         message: "global object materialized and provider reconciled".to_owned(),
+    })
+}
+
+async fn daemon_providers() -> Json<ProviderStatusReport> {
+    let providers = ProviderReconciler::statuses().await;
+    Json(ProviderStatusReport {
+        ok: true,
+        message: format!("{} provider(s)", providers.len()),
+        providers,
     })
 }
 

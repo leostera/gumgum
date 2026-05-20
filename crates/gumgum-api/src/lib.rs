@@ -1,5 +1,5 @@
 use gumgum_core::Capability;
-pub use gumgum_core::{DeploymentRevision, GraphEdge, GraphNode, ServerRecord};
+pub use gumgum_core::{DeploymentRevision, GraphEdge, GraphNode, ProviderStatus, ServerRecord};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -116,6 +116,13 @@ pub struct BindingReport {
     pub object: String,
     pub worker: String,
     pub binding: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProviderStatusReport {
+    pub ok: bool,
+    pub providers: Vec<ProviderStatus>,
     pub message: String,
 }
 
