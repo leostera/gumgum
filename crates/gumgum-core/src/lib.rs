@@ -12,7 +12,7 @@ pub use manifest::{
 };
 
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{fmt, str::FromStr};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, GumgumError>;
@@ -331,6 +331,62 @@ fn topological_levels(
     levels
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Capability {
+    Db,
+    Kv,
+    Blob,
+    Queue,
+    Telemetry,
+    Manual,
+}
+
+impl Capability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Db => "db",
+            Self::Kv => "kv",
+            Self::Blob => "blob",
+            Self::Queue => "queue",
+            Self::Telemetry => "telemetry",
+            Self::Manual => "manual",
+        }
+    }
+
+    pub fn provider(self) -> &'static str {
+        match self {
+            Self::Db => "postgres.main",
+            Self::Kv => "redis.main",
+            Self::Blob => "minio.main",
+            Self::Queue => "redpanda.main",
+            Self::Telemetry => "otel.platform",
+            Self::Manual => "manual.main",
+        }
+    }
+}
+
+impl fmt::Display for Capability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Capability {
+    type Err = ();
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match value {
+            "db" | "database" => Self::Db,
+            "kv" => Self::Kv,
+            "bucket" | "blob" => Self::Blob,
+            "queue" => Self::Queue,
+            "telemetry" => Self::Telemetry,
+            _ => Self::Manual,
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkerPlanInput {
     pub worker_name: String,
@@ -340,7 +396,7 @@ pub struct WorkerPlanInput {
 
 #[derive(Clone, Debug)]
 pub struct BindingPlanInput {
-    pub kind: String,
+    pub capability: Capability,
     pub name: String,
     pub binding: Option<String>,
 }
@@ -358,10 +414,20 @@ impl DeployPlanner {
         let worker = &self.input.worker_name;
         let mut graph = MutablePlanGraph::new(worker);
         for db in &self.input.databases {
-            graph.add_binding(worker, &db.kind, &db.name, db.binding.as_deref());
+            graph.add_binding(
+                worker,
+                db.capability.as_str(),
+                &db.name,
+                db.binding.as_deref(),
+            );
         }
         for kv in &self.input.kvs {
-            graph.add_binding(worker, &kv.kind, &kv.name, kv.binding.as_deref());
+            graph.add_binding(
+                worker,
+                kv.capability.as_str(),
+                &kv.name,
+                kv.binding.as_deref(),
+            );
         }
         graph.finish()
     }
@@ -457,8 +523,9 @@ impl MutablePlanGraph {
     }
 
     fn add_binding(&mut self, worker: &str, kind: &str, object: &str, binding: Option<&str>) {
-        let provider = provider_for_plan_object(kind);
-        let object_id = format!("{kind}/{object}");
+        let capability = Capability::from_str(kind).unwrap_or(Capability::Manual);
+        let provider = capability.provider();
+        let object_id = format!("{capability}/{object}");
         self.nodes.push(PlanNode::new(
             format!("provider/{provider}"),
             "provider",
@@ -501,15 +568,5 @@ impl MutablePlanGraph {
 
     fn finish(self) -> PlanGraph {
         PlanGraph::new(self.nodes, self.edges)
-    }
-}
-
-fn provider_for_plan_object(kind: &str) -> &'static str {
-    match kind {
-        "db" | "database" => "postgres.main",
-        "kv" => "redis.main",
-        "bucket" | "blob" => "minio.main",
-        "queue" => "redpanda.main",
-        _ => "manual.main",
     }
 }

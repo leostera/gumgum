@@ -1,5 +1,5 @@
 use gumgum_core::{
-    BindingPlanInput, DeployPlanner as CoreDeployPlanner, PlanGraph, WorkerManifest,
+    BindingPlanInput, Capability, DeployPlanner as CoreDeployPlanner, PlanGraph, WorkerManifest,
     WorkerPlanInput,
 };
 
@@ -28,7 +28,7 @@ impl<'a> DeployPlanner<'a> {
                 .database
                 .iter()
                 .map(|binding| BindingPlanInput {
-                    kind: "db".to_owned(),
+                    capability: Capability::Db,
                     name: binding.name.clone(),
                     binding: binding.binding.clone(),
                 })
@@ -38,7 +38,7 @@ impl<'a> DeployPlanner<'a> {
                 .kv
                 .iter()
                 .map(|binding| BindingPlanInput {
-                    kind: "kv".to_owned(),
+                    capability: Capability::Kv,
                     name: binding.name.clone(),
                     binding: binding.binding.clone(),
                 })

@@ -1,6 +1,7 @@
-use crate::{ErrorCode, GraphEdge, GraphNode, GumgumError, Result, Subsystem};
+use crate::{Capability, ErrorCode, GraphEdge, GraphNode, GumgumError, Result, Subsystem};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::{fs, path::PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -437,13 +438,9 @@ pub fn connection_examples(kind: &str, name: &str, dns: &str) -> Vec<String> {
 }
 
 pub fn provider_for_object(kind: &str) -> &'static str {
-    match kind {
-        "db" | "database" => "postgres.main",
-        "kv" => "redis.main",
-        "bucket" | "blob" => "minio.main",
-        "queue" => "redpanda.main",
-        _ => "manual.main",
-    }
+    Capability::from_str(kind)
+        .unwrap_or(Capability::Manual)
+        .provider()
 }
 
 fn sql_decode_error(source: rusqlite::Error) -> GumgumError {
@@ -457,12 +454,12 @@ fn sql_decode_error(source: rusqlite::Error) -> GumgumError {
 }
 
 fn binding_value(kind: &str, name: &str, dns: &str) -> String {
-    match kind {
-        "db" | "database" => format!("postgres://{name}:gumgum@{dns}:5432/{name}"),
-        "kv" => format!("redis://{dns}:6379/0"),
-        "bucket" | "blob" => format!("s3://{dns}/{name}"),
-        "queue" => format!("kafka://{dns}/{name}"),
-        _ => dns.to_owned(),
+    match Capability::from_str(kind).unwrap_or(Capability::Manual) {
+        Capability::Db => format!("postgres://{name}:gumgum@{dns}:5432/{name}"),
+        Capability::Kv => format!("redis://{dns}:6379/0"),
+        Capability::Blob => format!("s3://{dns}/{name}"),
+        Capability::Queue => format!("kafka://{dns}/{name}"),
+        Capability::Telemetry | Capability::Manual => dns.to_owned(),
     }
 }
 
