@@ -238,7 +238,7 @@ pub(crate) enum ServerSubcommand {
     BootProviders,
     Config(ServerConfigArgs),
     Credentials(ServerCredentialsArgs),
-    Providers,
+    Providers(ServerProvidersArgs),
     Upgrade(ServerUpgradeArgs),
 }
 
@@ -257,6 +257,18 @@ pub(crate) struct ServerCredentialsArgs {
 #[derive(Debug, Subcommand)]
 pub(crate) enum ServerCredentialsSubcommand {
     Init,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ServerProvidersArgs {
+    #[command(subcommand)]
+    pub(crate) command: Option<ServerProvidersSubcommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ServerProvidersSubcommand {
+    Boot,
+    Status,
 }
 
 #[derive(Debug, Args)]

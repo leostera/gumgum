@@ -1,7 +1,8 @@
 use crate::server_client::ServerClient;
 use crate::{
-    SchemaCommand, SchemaSubcommand, ServerCommand, ServerCredentialsSubcommand, ServerSubcommand,
-    ServerUpgradeArgs, StatusArgs, config_command, print_value, progress,
+    SchemaCommand, SchemaSubcommand, ServerCommand, ServerCredentialsSubcommand,
+    ServerProvidersSubcommand, ServerSubcommand, ServerUpgradeArgs, StatusArgs, config_command,
+    print_value, progress,
 };
 use gumgum_api::{PingReport, ProviderStatusReport, ServerListReport};
 use gumgum_core::{
@@ -86,14 +87,24 @@ pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Re
                 }
             }
         }
-        Some(ServerSubcommand::Providers) => {
+        Some(ServerSubcommand::Providers(args)) => {
             let name = required_server_name(server.name, "providers")?;
             let server = find_server(&name)?;
-            let report = ServerClient::new(server.host).providers().await?;
-            if json {
-                print_value(true, &report);
-            } else {
-                print_provider_status_report(&report);
+            match args.command.unwrap_or(ServerProvidersSubcommand::Status) {
+                ServerProvidersSubcommand::Status => {
+                    let report = ServerClient::new(server.host).providers().await?;
+                    if json {
+                        print_value(true, &report);
+                    } else {
+                        print_provider_status_report(&report);
+                    }
+                }
+                ServerProvidersSubcommand::Boot => {
+                    let report = ServerClient::new(server.host)
+                        .boot_default_providers()
+                        .await?;
+                    print_value(json, &report);
+                }
             }
         }
         Some(ServerSubcommand::Upgrade(args)) => {
