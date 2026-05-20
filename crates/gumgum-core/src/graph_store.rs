@@ -539,6 +539,19 @@ pub fn provider_for_object(kind: &str) -> &'static str {
 
 fn binding_values(kind: &str, binding: &str, name: &str, dns: &str) -> Vec<(String, String)> {
     match Capability::from_str(kind).unwrap_or(Capability::Manual) {
+        Capability::Db => {
+            let credentials = provider_credentials("postgres.main")
+                .unwrap_or_else(crate::ProviderCredentials::postgres_local_dev);
+            vec![(
+                binding.to_owned(),
+                format!(
+                    "postgres://{}:{}@{dns}:5432/{}",
+                    credentials.username,
+                    credentials.password,
+                    crate::sanitize_name(name)
+                ),
+            )]
+        }
         Capability::Kv => {
             let credentials = provider_credentials("redis.main")
                 .unwrap_or_else(crate::ProviderCredentials::redis_local_dev);
@@ -572,7 +585,16 @@ fn provider_credentials(provider: &str) -> Option<crate::ProviderCredentials> {
 
 fn binding_value(kind: &str, name: &str, dns: &str) -> String {
     match Capability::from_str(kind).unwrap_or(Capability::Manual) {
-        Capability::Db => format!("postgres://{name}:gumgum@{dns}:5432/{name}"),
+        Capability::Db => {
+            let credentials = provider_credentials("postgres.main")
+                .unwrap_or_else(crate::ProviderCredentials::postgres_local_dev);
+            format!(
+                "postgres://{}:{}@{dns}:5432/{}",
+                credentials.username,
+                credentials.password,
+                crate::sanitize_name(name)
+            )
+        }
         Capability::Kv => format!("redis://{dns}:6379/0"),
         Capability::Blob => format!("s3://{dns}/{name}"),
         Capability::Queue => format!("kafka://{dns}/{name}"),
@@ -677,6 +699,23 @@ mod tests {
         let store = temp_store("env-revisions");
         store
             .materialize_object(&GlobalObject {
+                capability: Capability::Db,
+                name: "main".to_owned(),
+                namespace: "peekaboo".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_binding(&WorkerBinding {
+                capability: Capability::Db,
+                object_name: "main".to_owned(),
+                worker: "api".to_owned(),
+                binding: "DATABASE_URL".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_object(&GlobalObject {
                 capability: Capability::Kv,
                 name: "sessions".to_owned(),
                 namespace: "peekaboo".to_owned(),
@@ -692,13 +731,15 @@ mod tests {
                 access: "read-write".to_owned(),
             })
             .unwrap();
-        assert_eq!(
-            store.binding_env("api").unwrap(),
-            vec![(
-                "SESSIONS".to_owned(),
-                "redis://:gumgum-local-dev@sessions.kv.leostera.dev:6379/0".to_owned()
-            )]
-        );
+        let env = store.binding_env("api").unwrap();
+        assert!(env.contains(&(
+            "DATABASE_URL".to_owned(),
+            "postgres://gumgum:gumgum-local-dev@main.db.leostera.dev:5432/main".to_owned()
+        )));
+        assert!(env.contains(&(
+            "SESSIONS".to_owned(),
+            "redis://:gumgum-local-dev@sessions.kv.leostera.dev:6379/0".to_owned()
+        )));
         store
             .materialize_object(&GlobalObject {
                 capability: Capability::Blob,

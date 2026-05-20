@@ -46,6 +46,16 @@ impl ProviderCredentials {
         Self::generated("MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "gumgum")
     }
 
+    pub fn postgres_local_dev() -> Self {
+        Self {
+            username_env: "POSTGRES_USER".to_owned(),
+            password_env: "POSTGRES_PASSWORD".to_owned(),
+            username: std::env::var("GUMGUM_POSTGRES_USER").unwrap_or_else(|_| "gumgum".to_owned()),
+            password: std::env::var("GUMGUM_POSTGRES_PASSWORD")
+                .unwrap_or_else(|_| "gumgum-local-dev".to_owned()),
+        }
+    }
+
     pub fn postgres_generated() -> Self {
         Self::generated("POSTGRES_USER", "POSTGRES_PASSWORD", "gumgum")
     }

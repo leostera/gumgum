@@ -232,6 +232,7 @@ fn required_provider_credentials(
     capability: gumgum_core::Capability,
 ) -> Result<Option<gumgum_core::ProviderCredentials>, ()> {
     let provider = match capability {
+        gumgum_core::Capability::Db => "postgres.main",
         gumgum_core::Capability::Kv => "redis.main",
         gumgum_core::Capability::Blob => "minio.main",
         _ => return Ok(None),
