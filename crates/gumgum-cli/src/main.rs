@@ -14,9 +14,9 @@ use gumgum_api::{
     ObjectRequest, PingReport, ServerListReport, SetupPlan, SetupReport,
 };
 use gumgum_core::{
-    Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeployPlanner, DoctorCheck,
-    DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph, ServerRecord,
-    SetupTarget, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
+    Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
+    DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph,
+    ServerRecord, SetupTarget, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
     not_configured_status, setup_actions, validate_path,
 };
 use serde::Serialize;
@@ -598,73 +598,21 @@ fn deploy_report(
     dry_run: bool,
     prod: bool,
 ) -> DeployReport {
-    let worker = manifest.worker.name.clone();
-    let namespace = manifest
-        .project
-        .as_ref()
-        .map(|project| project.namespace.as_str())
-        .unwrap_or("root");
-    let domain_scope = server
-        .map(|server| dns_scope(&server.root_domain))
-        .unwrap_or_else(|| "local".to_owned());
-    let revision = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
-    let image = format!("127.0.0.1:55000/{domain_scope}/{namespace}/{worker}:{revision}");
-    let container = format!(
-        "gumgum-{}",
-        sanitize_name(&format!("{domain_scope}-{namespace}-{worker}"))
-    );
-    let routes = derived_routes(manifest, server, prod);
-    let health_url = derived_routes(manifest, server, false)
-        .first()
-        .map(|route| {
-            let display_route = server
-                .map(|server| {
-                    let root_suffix = format!(".{}", server.root_domain);
-                    if route.ends_with(&root_suffix) {
-                        format!(
-                            "{}.{test_domain}",
-                            route.trim_end_matches(&root_suffix),
-                            test_domain = server.test_domain
-                        )
-                    } else {
-                        route.clone()
-                    }
-                })
-                .unwrap_or_else(|| route.clone());
-            format!(
-                "http://{display_route}{}",
-                manifest.worker.health.as_deref().unwrap_or("/healthz")
-            )
-        });
-    let build_context = manifest.worker.build_context.as_ref().map(|context| {
-        let context_path = PathBuf::from(context);
-        if context_path.is_absolute() {
-            context_path.display().to_string()
-        } else {
-            path.parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .join(context_path)
-                .display()
-                .to_string()
-        }
-    });
+    let descriptor = DeploymentDescriptor::from_manifest(&path, manifest, server, prod);
     DeployReport {
         ok: true,
         dry_run,
         path: path.display().to_string(),
-        worker,
+        worker: descriptor.worker,
         host: server.map(|server| server.host.clone()),
-        build_context,
-        image,
-        container,
-        port: manifest.worker.port.unwrap_or(3000),
-        routes,
-        health_url,
-        plan: DeployPlanner::from_manifest(manifest).plan_lines(),
-        plan_graph: DeployPlanner::from_manifest(manifest).graph(),
+        build_context: descriptor.build_context,
+        image: descriptor.image,
+        container: descriptor.container,
+        port: descriptor.port,
+        routes: descriptor.routes,
+        health_url: descriptor.health_url,
+        plan: descriptor.plan,
+        plan_graph: descriptor.plan_graph,
         message: if dry_run {
             format!(
                 "validated worker manifest for {} deploy; no containers changed",
@@ -1086,39 +1034,6 @@ fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> String {
         .first()
         .cloned()
         .unwrap_or_else(|| format!("{}.local", report.worker))
-}
-
-fn derived_routes(
-    manifest: &WorkerManifest,
-    server: Option<&ServerRecord>,
-    prod: bool,
-) -> Vec<String> {
-    let worker = sanitize_name(&manifest.worker.name);
-    let project = manifest
-        .project
-        .as_ref()
-        .map(|project| sanitize_name(&project.namespace))
-        .unwrap_or_else(default_project_name);
-    let Some(server) = server else {
-        return manifest
-            .ingress
-            .iter()
-            .map(|ingress| ingress.local_domain.clone())
-            .collect();
-    };
-
-    if prod {
-        let mut routes = vec![format!("{worker}.{project}.{}", server.root_domain)];
-        routes.extend(
-            manifest
-                .zone
-                .iter()
-                .map(|zone| format!("{worker}.{}", zone.name.trim_start_matches("*."))),
-        );
-        routes
-    } else {
-        vec![format!("{worker}.{project}.{}", server.test_domain)]
-    }
 }
 
 async fn verify_route(
@@ -1627,15 +1542,6 @@ fn print_error(err: GumgumError) {
         "{}",
         serde_json::to_string_pretty(&err.to_report()).expect("serialize error")
     );
-}
-
-fn dns_scope(root_domain: &str) -> String {
-    root_domain
-        .trim_end_matches('.')
-        .split('.')
-        .rev()
-        .collect::<Vec<_>>()
-        .join(".")
 }
 
 fn derive_test_domain(root_domain: &str) -> String {

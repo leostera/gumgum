@@ -1,6 +1,7 @@
 pub mod config_store;
 pub mod container_reconciler;
 pub mod daemon_health;
+pub mod deployment;
 pub mod graph_store;
 pub mod manifest;
 pub mod platform;
@@ -10,6 +11,7 @@ pub mod setup_installer;
 pub use config_store::{ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
+pub use deployment::DeploymentDescriptor;
 pub use graph_store::{
     DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, connection_examples, object_dns,
     provider_for_object,
