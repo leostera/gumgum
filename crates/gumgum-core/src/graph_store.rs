@@ -539,17 +539,17 @@ pub fn provider_for_object(kind: &str) -> &'static str {
 
 fn binding_values(kind: &str, binding: &str, name: &str, dns: &str) -> Vec<(String, String)> {
     match Capability::from_str(kind).unwrap_or(Capability::Manual) {
-        Capability::Blob => vec![
-            (binding.to_owned(), format!("s3://{dns}/{name}")),
-            (format!("{binding}_ENDPOINT"), format!("http://{dns}:9000")),
-            (format!("{binding}_BUCKET"), crate::sanitize_name(name)),
-            (format!("{binding}_ACCESS_KEY_ID"), "gumgum".to_owned()),
-            (
-                format!("{binding}_SECRET_ACCESS_KEY"),
-                "gumgum-local-dev".to_owned(),
-            ),
-            (format!("{binding}_FORCE_PATH_STYLE"), "true".to_owned()),
-        ],
+        Capability::Blob => {
+            let credentials = crate::ProviderCredentials::minio_local_dev();
+            vec![
+                (binding.to_owned(), format!("s3://{dns}/{name}")),
+                (format!("{binding}_ENDPOINT"), format!("http://{dns}:9000")),
+                (format!("{binding}_BUCKET"), crate::sanitize_name(name)),
+                (format!("{binding}_ACCESS_KEY_ID"), credentials.username),
+                (format!("{binding}_SECRET_ACCESS_KEY"), credentials.password),
+                (format!("{binding}_FORCE_PATH_STYLE"), "true".to_owned()),
+            ]
+        }
         _ => vec![(binding.to_owned(), binding_value(kind, name, dns))],
     }
 }
@@ -706,6 +706,11 @@ mod tests {
             "http://user-uploads.blob.leostera.dev:9000".to_owned()
         )));
         assert!(env.contains(&("UPLOADS_BUCKET".to_owned(), "user-uploads".to_owned())));
+        assert!(env.contains(&("UPLOADS_ACCESS_KEY_ID".to_owned(), "gumgum".to_owned())));
+        assert!(env.contains(&(
+            "UPLOADS_SECRET_ACCESS_KEY".to_owned(),
+            "gumgum-local-dev".to_owned()
+        )));
         assert!(env.contains(&("UPLOADS_FORCE_PATH_STYLE".to_owned(), "true".to_owned())));
 
         let first = DesiredDeploy {
