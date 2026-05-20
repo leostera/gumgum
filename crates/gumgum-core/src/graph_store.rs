@@ -598,6 +598,7 @@ fn binding_value(kind: &str, name: &str, dns: &str) -> String {
         Capability::Kv => format!("redis://{dns}:6379/0"),
         Capability::Blob => format!("s3://{dns}/{name}"),
         Capability::Queue => format!("kafka://{dns}/{name}"),
+        Capability::Secret => format!("onepassword://gumgum/{name}"),
         Capability::Observability | Capability::Manual => dns.to_owned(),
     }
 }

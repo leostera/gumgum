@@ -31,6 +31,7 @@ pub(crate) enum Command {
     Kv(ObjectArgs),
     Bucket(ObjectArgs),
     Queue(ObjectArgs),
+    Secret(ObjectArgs),
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),

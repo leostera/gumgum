@@ -566,6 +566,7 @@ pub enum Capability {
     Kv,
     Blob,
     Queue,
+    Secret,
     Observability,
     Manual,
 }
@@ -577,6 +578,7 @@ impl Capability {
             Self::Kv => "kv",
             Self::Blob => "blob",
             Self::Queue => "queue",
+            Self::Secret => "secret",
             Self::Observability => "observability",
             Self::Manual => "manual",
         }
@@ -588,6 +590,7 @@ impl Capability {
             Self::Kv => "redis.main",
             Self::Blob => "minio.main",
             Self::Queue => "redpanda.main",
+            Self::Secret => "onepassword.main",
             Self::Observability => "otel.platform",
             Self::Manual => "manual.main",
         }
@@ -609,6 +612,7 @@ impl FromStr for Capability {
             "kv" => Self::Kv,
             "bucket" | "blob" => Self::Blob,
             "queue" => Self::Queue,
+            "secret" | "secrets" => Self::Secret,
             "telemetry" | "observability" => Self::Observability,
             _ => Self::Manual,
         })

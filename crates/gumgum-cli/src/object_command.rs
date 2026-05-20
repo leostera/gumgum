@@ -25,6 +25,7 @@ fn capability_from_cli_kind(kind: &str) -> Capability {
         "kv" => Capability::Kv,
         "bucket" | "blob" => Capability::Blob,
         "queue" => Capability::Queue,
+        "secret" | "secrets" => Capability::Secret,
         _ => Capability::Manual,
     }
 }
@@ -39,6 +40,7 @@ mod tests {
         assert_eq!(capability_from_cli_kind("kv"), Capability::Kv);
         assert_eq!(capability_from_cli_kind("bucket"), Capability::Blob);
         assert_eq!(capability_from_cli_kind("queue"), Capability::Queue);
+        assert_eq!(capability_from_cli_kind("secret"), Capability::Secret);
     }
 }
 

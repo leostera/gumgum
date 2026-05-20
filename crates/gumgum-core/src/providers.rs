@@ -146,6 +146,14 @@ pub fn provider_spec(capability: Capability) -> ProviderSpec {
             port: 9092,
             protocol: "kafka".to_owned(),
         },
+        Capability::Secret => ProviderSpec {
+            capability,
+            provider: capability.provider().to_owned(),
+            container: "gumgum-provider-onepassword-main".to_owned(),
+            image: "1password/connect-api:latest".to_owned(),
+            port: 8080,
+            protocol: "onepassword-connect".to_owned(),
+        },
         Capability::Observability => ProviderSpec {
             capability,
             provider: capability.provider().to_owned(),
@@ -198,6 +206,7 @@ impl ProviderReconciler {
                 )
                 .await
             }
+            Capability::Secret => Ok(secret_provider_actions(plan)),
             _ => Ok(plan.actions.clone()),
         }
     }
@@ -237,6 +246,7 @@ impl ProviderReconciler {
             Capability::Kv,
             Capability::Blob,
             Capability::Queue,
+            Capability::Secret,
             Capability::Observability,
         ] {
             let spec = provider_spec(capability);
@@ -315,6 +325,18 @@ async fn ensure_postgres(
     )
     .await?;
     Ok(created_provider_actions(provider))
+}
+
+fn secret_provider_actions(plan: &ObjectProviderPlan) -> Vec<String> {
+    vec![
+        "secret provider is external; no secret value stored in GumGum graph".to_owned(),
+        format!(
+            "mapped secret {} through {}",
+            sanitize_name(&plan.name),
+            plan.provider.provider
+        ),
+        "configure 1Password Connect credentials before runtime resolution".to_owned(),
+    ]
 }
 
 async fn ensure_redis(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
@@ -550,6 +572,10 @@ pub fn connection_examples(capability: Capability, name: &str, dns: &str) -> Vec
             format!("kcat -b {dns}:9092 -t {name}"),
             format!("KAFKA_BROKERS={dns}:9092 KAFKA_TOPIC={name}"),
         ],
+        Capability::Secret => vec![
+            format!("op item get {name} --vault gumgum"),
+            format!("onepassword://gumgum/{name}"),
+        ],
         Capability::Observability => vec![format!("OTEL_EXPORTER_OTLP_ENDPOINT=http://{dns}:4317")],
         Capability::Manual => Vec::new(),
     }
@@ -576,6 +602,11 @@ fn provider_actions(capability: Capability, safe_name: &str, dns: &str) -> Vec<S
             "ensure redpanda.main provider is running".to_owned(),
             format!("ensure topic {safe_name} exists"),
             format!("publish DNS {dns} to redpanda.main"),
+        ],
+        Capability::Secret => vec![
+            "configure onepassword.main provider credentials".to_owned(),
+            format!("map secret {safe_name} from 1Password item"),
+            "do not materialize secret values in the graph".to_owned(),
         ],
         Capability::Observability => vec![
             "ensure otel.platform provider is running".to_owned(),
@@ -605,13 +636,17 @@ mod tests {
         let blob = provider_spec(Capability::Blob);
         assert_eq!(blob.provider, "minio.main");
         assert_eq!(blob.protocol, "s3");
+
+        let secret = provider_spec(Capability::Secret);
+        assert_eq!(secret.provider, "onepassword.main");
+        assert_eq!(secret.protocol, "onepassword-connect");
     }
 
     #[tokio::test]
     async fn provider_statuses_cover_inspectable_backends() {
         let statuses = ProviderReconciler::statuses().await;
 
-        assert_eq!(statuses.len(), 5);
+        assert_eq!(statuses.len(), 6);
         assert!(
             statuses
                 .iter()
@@ -636,6 +671,24 @@ mod tests {
                 .iter()
                 .any(|action| action == "ensure redis.main provider is running")
         );
+    }
+
+    #[test]
+    fn secret_provider_plan_never_contains_secret_values() {
+        let plan = object_provider_plan(
+            Capability::Secret,
+            "stripe-api-key",
+            "stripe.secret.example.test",
+        );
+        let actions = secret_provider_actions(&plan);
+
+        assert_eq!(plan.provider.provider, "onepassword.main");
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.contains("no secret value stored"))
+        );
+        assert!(!actions.iter().any(|action| action.contains("sk_live")));
     }
 
     #[test]

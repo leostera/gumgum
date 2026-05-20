@@ -96,6 +96,9 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Queue(args) => {
             object_command("queue", args, cli.json).await?;
         }
+        Command::Secret(args) => {
+            object_command("secret", args, cli.json).await?;
+        }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
             if cli.dry_run {
