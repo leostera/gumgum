@@ -1,3 +1,11 @@
+pub mod manifest;
+
+pub use manifest::{
+    Ingress, Limits, ManifestKind, ObjectBinding, Observability, Project, ValidationReport, Worker,
+    WorkerManifest, Workspace, WorkspaceManifest, Zone, load_worker_path, load_workspace_path,
+    validate_path, validate_str,
+};
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;

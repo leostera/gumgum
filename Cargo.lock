@@ -426,7 +426,6 @@ dependencies = [
  "clap",
  "gumgum-api",
  "gumgum-core",
- "gumgum-manifest",
  "reqwest",
  "rusqlite",
  "serde",
@@ -442,6 +441,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

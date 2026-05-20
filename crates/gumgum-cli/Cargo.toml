@@ -16,7 +16,6 @@ axum.workspace = true
 clap.workspace = true
 gumgum-api = { path = "../gumgum-api" }
 gumgum-core = { path = "../gumgum-core" }
-gumgum-manifest = { path = "../gumgum-manifest" }
 reqwest.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

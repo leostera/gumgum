@@ -1,6 +1,6 @@
 use crate::{progress, server_client::ServerClient};
 use gumgum_api::{BindingRequest, ObjectRequest, ServerRecord};
-use gumgum_manifest::{ObjectBinding, WorkerManifest};
+use gumgum_core::{ObjectBinding, WorkerManifest};
 
 pub(crate) struct DeployExecutor<'a> {
     server: &'a ServerRecord,

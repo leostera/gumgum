@@ -1,7 +1,7 @@
 use gumgum_core::{
-    BindingPlanInput, DeployPlanner as CoreDeployPlanner, PlanGraph, WorkerPlanInput,
+    BindingPlanInput, DeployPlanner as CoreDeployPlanner, PlanGraph, WorkerManifest,
+    WorkerPlanInput,
 };
-use gumgum_manifest::WorkerManifest;
 
 pub(crate) struct DeployPlanner<'a> {
     manifest: &'a WorkerManifest,

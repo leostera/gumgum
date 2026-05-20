@@ -20,9 +20,9 @@ use gumgum_api::{
     RollbackRequest, ServerListReport, ServerRecord, SetupPlan, SetupReport, not_configured_status,
     setup_actions,
 };
-use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, PlanGraph, Subsystem};
-use gumgum_manifest::{
-    ManifestKind, WorkerManifest, load_worker_path, load_workspace_path, validate_path,
+use gumgum_core::{
+    DoctorCheck, DoctorReport, ErrorCode, GumgumError, ManifestKind, PlanGraph, Subsystem,
+    WorkerManifest, load_worker_path, load_workspace_path, validate_path,
 };
 use rusqlite::{Connection, params};
 use serde::Serialize;
