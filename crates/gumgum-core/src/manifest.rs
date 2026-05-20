@@ -190,6 +190,56 @@ pub fn load_workspace_path(path: &Path) -> Result<WorkspaceManifest> {
     Ok(manifest)
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ScaffoldFile {
+    pub path: &'static str,
+    pub contents: &'static str,
+}
+
+pub fn worker_scaffold_files() -> Vec<ScaffoldFile> {
+    vec![
+        ScaffoldFile {
+            path: "Dockerfile",
+            contents: r#"FROM python:3.12-alpine
+WORKDIR /app
+COPY server.py .
+ENV PORT=3000
+EXPOSE 3000
+CMD ["python", "server.py"]
+"#,
+        },
+        ScaffoldFile {
+            path: "server.py",
+            contents: r#"from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import os
+
+PORT = int(os.environ.get("PORT", "3000"))
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/healthz":
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
+
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        body = {"ok": True, "message": "Hello from GumGum.dev"}
+        self.wfile.write(json.dumps(body).encode())
+
+    def log_message(self, format, *args):
+        print("%s - %s" % (self.address_string(), format % args), flush=True)
+
+HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+"#,
+        },
+    ]
+}
+
 pub fn workspace_manifest_template(name: &str, root_domain: Option<&str>) -> String {
     let mut raw = format!("[workspace]\nname = \"{name}\"\nmembers = [\"apps/*\"]\n");
     if let Some(root_domain) = root_domain {

@@ -17,9 +17,10 @@ pub use graph_store::{
     provider_for_object,
 };
 pub use manifest::{
-    Ingress, Limits, ManifestKind, ObjectBinding, Observability, Project, ValidationReport, Worker,
-    WorkerManifest, Workspace, WorkspaceManifest, Zone, load_worker_path, load_workspace_path,
-    validate_path, validate_str, worker_manifest_template, workspace_manifest_template,
+    Ingress, Limits, ManifestKind, ObjectBinding, Observability, Project, ScaffoldFile,
+    ValidationReport, Worker, WorkerManifest, Workspace, WorkspaceManifest, Zone, load_worker_path,
+    load_workspace_path, validate_path, validate_str, worker_manifest_template,
+    worker_scaffold_files, workspace_manifest_template,
 };
 pub use platform::LocalPlatform;
 pub use setup::{not_configured_status, setup_actions};

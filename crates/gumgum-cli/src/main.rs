@@ -18,7 +18,7 @@ use gumgum_core::{
     DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph,
     ServerRecord, SetupOptions, SetupTarget, Subsystem, WorkerManifest, default_project_name,
     load_worker_path, load_workspace_path, not_configured_status, sanitize_name, setup_actions,
-    validate_path, worker_manifest_template, workspace_manifest_template,
+    validate_path, worker_manifest_template, worker_scaffold_files, workspace_manifest_template,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -1155,51 +1155,16 @@ fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitRepor
 }
 
 fn scaffold_example_files(dry_run: bool) -> gumgum_core::Result<Vec<String>> {
-    let files = vec!["Dockerfile".to_owned(), "server.py".to_owned()];
+    let files = worker_scaffold_files();
+    let paths = files.iter().map(|file| file.path.to_owned()).collect();
     if dry_run {
-        return Ok(files);
+        return Ok(paths);
     }
 
-    write_if_missing(
-        "Dockerfile",
-        r#"FROM python:3.12-alpine
-WORKDIR /app
-COPY server.py .
-ENV PORT=3000
-EXPOSE 3000
-CMD ["python", "server.py"]
-"#,
-    )?;
-    write_if_missing(
-        "server.py",
-        r#"from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
-import os
-
-PORT = int(os.environ.get("PORT", "3000"))
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/healthz":
-            self.send_response(200)
-            self.send_header("content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.end_headers()
-        body = {"ok": True, "message": "Hello from GumGum.dev"}
-        self.wfile.write(json.dumps(body).encode())
-
-    def log_message(self, format, *args):
-        print("%s - %s" % (self.address_string(), format % args), flush=True)
-
-HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
-"#,
-    )?;
-    Ok(files)
+    for file in files {
+        write_if_missing(file.path, file.contents)?;
+    }
+    Ok(paths)
 }
 
 fn write_if_missing(path: &str, contents: &str) -> gumgum_core::Result<()> {
