@@ -136,6 +136,14 @@ pub struct RollbackReport {
     pub ok: bool,
     pub worker: String,
     pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<String>,
     pub actions: Vec<String>,
     pub message: String,
 }

@@ -239,6 +239,10 @@ async fn daemon_rollback(
             .flatten();
     if let Some(deploy) = rollback_request {
         let image = deploy.image.clone();
+        let container = deploy.container.clone();
+        let route = deploy.route.clone();
+        let port = deploy.port;
+        let health = deploy.health.clone();
         let store = GraphStore::new((*state.graph_path).clone());
         let deploy_for_db = deploy.clone();
         let _ = tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db)).await;
@@ -260,6 +264,10 @@ async fn daemon_rollback(
             ok: true,
             worker: request.worker,
             image: Some(image),
+            container: Some(container),
+            route: Some(route),
+            port: Some(port),
+            health: Some(health),
             actions,
             message: "rollback applied".to_owned(),
         })
@@ -268,6 +276,10 @@ async fn daemon_rollback(
             ok: false,
             worker: request.worker,
             image: None,
+            container: None,
+            route: None,
+            port: None,
+            health: None,
             actions: vec!["no previous image recorded".to_owned()],
             message: "no previous deployment image recorded".to_owned(),
         })
