@@ -422,6 +422,30 @@ impl DeployPlanner {
         Self { input }
     }
 
+    pub fn from_manifest(manifest: &WorkerManifest) -> Self {
+        Self::new(WorkerPlanInput {
+            worker_name: manifest.worker.name.clone(),
+            databases: manifest
+                .database
+                .iter()
+                .map(|binding| BindingPlanInput {
+                    capability: Capability::Db,
+                    name: binding.name.clone(),
+                    binding: binding.binding.clone(),
+                })
+                .collect(),
+            kvs: manifest
+                .kv
+                .iter()
+                .map(|binding| BindingPlanInput {
+                    capability: Capability::Kv,
+                    name: binding.name.clone(),
+                    binding: binding.binding.clone(),
+                })
+                .collect(),
+        })
+    }
+
     pub fn graph(&self) -> PlanGraph {
         let worker = &self.input.worker_name;
         let mut graph = MutablePlanGraph::new(worker);

@@ -1,6 +1,5 @@
 mod daemon_app;
 mod deploy_executor;
-mod deploy_plan;
 mod graph_presenter;
 mod presentation;
 mod server_client;
@@ -9,17 +8,16 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use daemon_app::DaemonApp;
 use deploy_executor::DeployExecutor;
-use deploy_plan::DeployPlanner;
 use graph_presenter::GraphPresenter;
 use gumgum_api::{
     BindingRequest, DeployApplyReport, DeployRequest, GraphEdge, GraphNode, ObjectReport,
     ObjectRequest, PingReport, ServerListReport, SetupPlan, SetupReport,
 };
 use gumgum_core::{
-    Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport,
-    ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph, ServerRecord, SetupTarget,
-    Subsystem, WorkerManifest, load_worker_path, load_workspace_path, not_configured_status,
-    setup_actions, validate_path,
+    Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeployPlanner, DoctorCheck,
+    DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph, ServerRecord,
+    SetupTarget, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
+    not_configured_status, setup_actions, validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -665,8 +663,8 @@ fn deploy_report(
         port: manifest.worker.port.unwrap_or(3000),
         routes,
         health_url,
-        plan: DeployPlanner::new(manifest).plan_lines(),
-        plan_graph: DeployPlanner::new(manifest).graph(),
+        plan: DeployPlanner::from_manifest(manifest).plan_lines(),
+        plan_graph: DeployPlanner::from_manifest(manifest).graph(),
         message: if dry_run {
             format!(
                 "validated worker manifest for {} deploy; no containers changed",
