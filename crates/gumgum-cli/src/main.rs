@@ -1,3 +1,4 @@
+mod deploy_executor;
 mod deploy_plan;
 mod presentation;
 mod server_client;
@@ -9,6 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use clap::{Args, Parser, Subcommand};
+use deploy_executor::DeployExecutor;
 use deploy_plan::DeployPlanner;
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge,
@@ -592,7 +594,9 @@ async fn deploy_one(
         .next_command("gumgum setup <host> --root-domain <domain>")
         .build()
     })?;
-    ensure_manifest_bindings(&server, manifest, quiet).await?;
+    DeployExecutor::new(&server, quiet)
+        .ensure_manifest_bindings(manifest)
+        .await?;
     run_remote_deploy(&server, manifest, &report, quiet).await?;
     configure_client_resolver(&server.test_domain, &server.host, quiet).await?;
     report.ok = true;
@@ -684,61 +688,6 @@ fn deploy_report(
             "deployment pending".to_owned()
         },
     }
-}
-
-async fn ensure_manifest_bindings(
-    server: &ServerRecord,
-    manifest: &WorkerManifest,
-    quiet: bool,
-) -> gumgum_core::Result<()> {
-    for db in &manifest.database {
-        ensure_object_and_binding(server, "db", db, &manifest.worker.name, quiet).await?;
-    }
-    for kv in &manifest.kv {
-        ensure_object_and_binding(server, "kv", kv, &manifest.worker.name, quiet).await?;
-    }
-    Ok(())
-}
-
-async fn ensure_object_and_binding(
-    server: &ServerRecord,
-    kind: &str,
-    binding: &gumgum_manifest::ObjectBinding,
-    worker: &str,
-    quiet: bool,
-) -> gumgum_core::Result<()> {
-    let object_name = binding
-        .dns
-        .as_deref()
-        .and_then(|dns| dns.split('.').next())
-        .unwrap_or(&binding.name)
-        .to_owned();
-    progress(quiet, format!("ensuring {kind}/{object_name}"));
-    let client = ServerClient::new(&server.host);
-    let _ = client
-        .create_object(&ObjectRequest {
-            kind: kind.to_owned(),
-            name: object_name.clone(),
-            namespace: "root".to_owned(),
-            root_domain: server.root_domain.clone(),
-        })
-        .await;
-    if let Some(env) = &binding.binding {
-        progress(quiet, format!("ensuring binding {worker}.{env}"));
-        let _ = client
-            .bind_object(&BindingRequest {
-                object_kind: kind.to_owned(),
-                object_name,
-                worker: worker.to_owned(),
-                binding: env.clone(),
-                access: binding
-                    .access
-                    .clone()
-                    .unwrap_or_else(|| "read-write".to_owned()),
-            })
-            .await;
-    }
-    Ok(())
 }
 
 #[derive(Debug, Serialize)]
