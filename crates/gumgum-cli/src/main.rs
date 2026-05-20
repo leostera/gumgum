@@ -9,6 +9,7 @@ mod object_command;
 mod presentation;
 mod project_command;
 mod server_client;
+mod setup_command;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -16,15 +17,13 @@ use config_command::config_command;
 use daemon_app::DaemonApp;
 use deploy_executor::DeployExecutor;
 use graph_command::graph;
-use gumgum_api::{
-    DeployApplyReport, DeployRequest, PingReport, ServerListReport, SetupPlan, SetupReport,
-};
+use gumgum_api::{DeployApplyReport, DeployRequest, PingReport, ServerListReport, SetupPlan};
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor, DoctorCheck,
     DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph, ServerRecord,
-    SetupOptions, SetupTarget, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
-    not_configured_status, run_setup_command_streaming as run_command_streaming, sanitize_name,
-    setup_actions, validate_path,
+    Subsystem, WorkerManifest, load_worker_path, load_workspace_path, not_configured_status,
+    run_setup_command_streaming as run_command_streaming, sanitize_name, setup_actions,
+    validate_path,
 };
 use init_command::init_manifest;
 use logs_command::logs;
@@ -32,6 +31,7 @@ use object_command::object_command;
 use project_command::{info, rollback};
 use serde::Serialize;
 use server_client::ServerClient;
+use setup_command::{install_gumgumd, resolve_setup};
 use std::{path::PathBuf, process::Stdio, time::Duration};
 use tokio::process::Command as TokioCommand;
 
@@ -766,17 +766,6 @@ fn version_report() -> VersionReport {
     }
 }
 
-async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<SetupTarget> {
-    GumgumInstaller::resolve_target(SetupOptions {
-        host: args.host,
-        name: args.name,
-        user: args.user,
-        root_domain: args.root_domain,
-        test_domain: args.test_domain,
-    })
-    .await
-}
-
 async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
     Ok(ping_report_from_core(DaemonHealthClient::ping(host).await?))
 }
@@ -789,62 +778,6 @@ fn ping_report_from_core(report: DaemonPingReport) -> PingReport {
         service_active: report.service_active,
         health: report.health,
     }
-}
-
-async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
-    Ok(ping_report_from_core(
-        DaemonHealthClient::wait_for_ping(host).await?,
-    ))
-}
-
-async fn install_gumgumd(setup: SetupTarget, quiet: bool) -> gumgum_core::Result<SetupReport> {
-    progress(quiet, "resolving setup target");
-    if setup.local {
-        progress(
-            quiet,
-            "installing local binary into ~/.gumgum/bin and daemon service into ~/.gumgum/daemon",
-        );
-        GumgumInstaller::install_local_user_service(quiet).await?;
-        progress(
-            quiet,
-            format!("configuring host DNS for *.{}", setup.test_domain),
-        );
-        GumgumInstaller::configure_host_dns(&setup.test_domain, quiet).await?;
-    } else {
-        let target = setup.ssh_target();
-        progress(quiet, format!("running remote bootstrap on {target}"));
-        GumgumInstaller::run_remote_setup(&target, &setup, quiet).await?;
-    }
-    progress(quiet, "checking gumgumd health");
-    wait_for_ping(&setup.host).await?;
-    let health_url = format!("http://{}:7777/healthz", setup.host);
-    ConfigStore::from_home_env()?.save_server(ServerRecord {
-        name: setup.name.clone(),
-        host: setup.host.clone(),
-        root_domain: setup.root_domain.clone(),
-        test_domain: setup.test_domain.clone(),
-        health_url: health_url.clone(),
-    })?;
-    if !setup.local {
-        progress(
-            quiet,
-            format!(
-                "configuring local resolver for {} -> {}",
-                setup.test_domain, setup.host
-            ),
-        );
-        GumgumInstaller::configure_client_resolver(&setup.test_domain, &setup.host, quiet).await?;
-    }
-    Ok(SetupReport {
-        ok: true,
-        name: setup.name,
-        host: setup.host,
-        root_domain: setup.root_domain,
-        test_domain: setup.test_domain,
-        service: "gumgumd".to_owned(),
-        health_url,
-        actions: setup_actions(setup.local),
-    })
 }
 
 fn progress(quiet: bool, message: impl AsRef<str>) {
