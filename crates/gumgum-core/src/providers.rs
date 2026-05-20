@@ -23,6 +23,27 @@ pub struct ObjectProviderPlan {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderCredentials {
+    pub username_env: String,
+    pub password_env: String,
+    pub username: String,
+    pub password: String,
+}
+
+impl ProviderCredentials {
+    pub fn minio_local_dev() -> Self {
+        Self {
+            username_env: "MINIO_ROOT_USER".to_owned(),
+            password_env: "MINIO_ROOT_PASSWORD".to_owned(),
+            username: std::env::var("GUMGUM_MINIO_ROOT_USER")
+                .unwrap_or_else(|_| "gumgum".to_owned()),
+            password: std::env::var("GUMGUM_MINIO_ROOT_PASSWORD")
+                .unwrap_or_else(|_| "gumgum-local-dev".to_owned()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProviderStatus {
     pub capability: Capability,
     pub provider: String,
@@ -104,7 +125,7 @@ impl ProviderReconciler {
     pub async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
         match plan.capability {
             Capability::Kv => ensure_redis(&plan.provider).await,
-            Capability::Blob => ensure_minio(plan).await,
+            Capability::Blob => ensure_minio(plan, ProviderCredentials::minio_local_dev()).await,
             _ => Ok(plan.actions.clone()),
         }
     }
@@ -165,7 +186,10 @@ async fn ensure_redis(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
     Ok(created_provider_actions(provider))
 }
 
-async fn ensure_minio(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+async fn ensure_minio(
+    plan: &ObjectProviderPlan,
+    credentials: ProviderCredentials,
+) -> crate::Result<Vec<String>> {
     let provider = &plan.provider;
     ensure_network().await?;
     let mut actions = if docker_inspect(&provider.container).await {
@@ -189,9 +213,15 @@ async fn ensure_minio(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
                 .arg("--network")
                 .arg("gumgum-network")
                 .arg("-e")
-                .arg("MINIO_ROOT_USER=gumgum")
+                .arg(format!(
+                    "{}={}",
+                    credentials.username_env, credentials.username
+                ))
                 .arg("-e")
-                .arg("MINIO_ROOT_PASSWORD=gumgum-local-dev")
+                .arg(format!(
+                    "{}={}",
+                    credentials.password_env, credentials.password
+                ))
                 .arg(&provider.image)
                 .arg("server")
                 .arg("/data")
@@ -372,6 +402,16 @@ mod tests {
                 .iter()
                 .any(|action| action == "ensure redis.main provider is running")
         );
+    }
+
+    #[test]
+    fn minio_credentials_have_named_env_keys() {
+        let credentials = ProviderCredentials::minio_local_dev();
+
+        assert_eq!(credentials.username_env, "MINIO_ROOT_USER");
+        assert_eq!(credentials.password_env, "MINIO_ROOT_PASSWORD");
+        assert!(!credentials.username.is_empty());
+        assert!(!credentials.password.is_empty());
     }
 
     #[test]
