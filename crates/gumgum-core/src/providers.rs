@@ -104,7 +104,7 @@ impl ProviderReconciler {
     pub async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
         match plan.capability {
             Capability::Kv => ensure_redis(&plan.provider).await,
-            Capability::Blob => ensure_minio(&plan.provider).await,
+            Capability::Blob => ensure_minio(plan).await,
             _ => Ok(plan.actions.clone()),
         }
     }
@@ -165,9 +165,10 @@ async fn ensure_redis(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
     Ok(created_provider_actions(provider))
 }
 
-async fn ensure_minio(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
+async fn ensure_minio(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+    let provider = &plan.provider;
     ensure_network().await?;
-    if docker_inspect(&provider.container).await {
+    let mut actions = if docker_inspect(&provider.container).await {
         run_provider_command(
             TokioCommand::new("docker")
                 .arg("start")
@@ -175,34 +176,38 @@ async fn ensure_minio(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
             "could not start minio provider",
         )
         .await?;
-        return Ok(vec![format!(
-            "started existing {} provider",
-            provider.provider
-        )]);
-    }
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("run")
-            .arg("-d")
-            .arg("--name")
-            .arg(&provider.container)
-            .arg("--restart")
-            .arg("unless-stopped")
-            .arg("--network")
-            .arg("gumgum-network")
-            .arg("-e")
-            .arg("MINIO_ROOT_USER=gumgum")
-            .arg("-e")
-            .arg("MINIO_ROOT_PASSWORD=gumgum-local-dev")
-            .arg(&provider.image)
-            .arg("server")
-            .arg("/data")
-            .arg("--console-address")
-            .arg(":9001"),
-        "could not create minio provider",
-    )
-    .await?;
-    Ok(created_provider_actions(provider))
+        vec![format!("started existing {} provider", provider.provider)]
+    } else {
+        run_provider_command(
+            TokioCommand::new("docker")
+                .arg("run")
+                .arg("-d")
+                .arg("--name")
+                .arg(&provider.container)
+                .arg("--restart")
+                .arg("unless-stopped")
+                .arg("--network")
+                .arg("gumgum-network")
+                .arg("-e")
+                .arg("MINIO_ROOT_USER=gumgum")
+                .arg("-e")
+                .arg("MINIO_ROOT_PASSWORD=gumgum-local-dev")
+                .arg(&provider.image)
+                .arg("server")
+                .arg("/data")
+                .arg("--console-address")
+                .arg(":9001"),
+            "could not create minio provider",
+        )
+        .await?;
+        created_provider_actions(provider)
+    };
+    actions.push(format!(
+        "bucket {} planned on {}",
+        sanitize_name(&plan.name),
+        provider.provider
+    ));
+    Ok(actions)
 }
 
 fn created_provider_actions(provider: &ProviderSpec) -> Vec<String> {
@@ -379,6 +384,11 @@ mod tests {
         assert_eq!(
             created_provider_actions(&plan.provider),
             vec!["created minio.main provider container gumgum-provider-minio-main"]
+        );
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| action == "ensure bucket uploads exists")
         );
     }
 
