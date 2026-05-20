@@ -127,6 +127,20 @@ pub struct ProviderStatusReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EnvReport {
+    pub ok: bool,
+    pub worker: String,
+    pub vars: Vec<EnvVar>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AffectedReport {
     pub ok: bool,
     pub target: String,

@@ -22,6 +22,7 @@ pub(crate) enum Command {
     Config(ConfigArgs),
     Init(InitArgs),
     Deploy(DeployArgs),
+    Env(EnvArgs),
     Info(InfoArgs),
     Rollback(RollbackArgs),
     Logs(LogsArgs),
@@ -72,6 +73,16 @@ pub(crate) struct DeployArgs {
     pub(crate) host: Option<String>,
     #[arg(long)]
     pub(crate) prod: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct EnvArgs {
+    #[arg(default_value = "gumgum.toml")]
+    pub(crate) path: PathBuf,
+    #[arg(long)]
+    pub(crate) host: Option<String>,
+    #[arg(long)]
+    pub(crate) worker: Option<String>,
 }
 
 #[derive(Debug, Args)]

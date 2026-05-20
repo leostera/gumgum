@@ -5,8 +5,8 @@ use axum::{
 };
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
-    DeployRequest, DeploymentRevisionsReport, GraphNode, GraphReport, LogsReport, ObjectReport,
-    ObjectRequest, ProviderStatusReport, RollbackReport, RollbackRequest,
+    DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, GraphNode, GraphReport,
+    LogsReport, ObjectReport, ObjectRequest, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
@@ -67,6 +67,7 @@ impl DaemonApp {
             .route("/v0/objects", post(daemon_create_object))
             .route("/v0/bindings", post(daemon_create_binding))
             .route("/v0/providers", get(daemon_providers))
+            .route("/v0/env/{worker}", get(daemon_env))
             .route("/v0/graph", get(daemon_graph))
             .route("/v0/graph/affected", get(daemon_graph_affected))
             .route("/v0/logs/{container}", get(daemon_logs))
@@ -211,6 +212,29 @@ async fn daemon_providers() -> Json<ProviderStatusReport> {
         ok: true,
         message: format!("{} provider(s)", providers.len()),
         providers,
+    })
+}
+
+async fn daemon_env(
+    State(state): State<DaemonState>,
+    AxumPath(worker): AxumPath<String>,
+) -> Json<EnvReport> {
+    let path = (*state.graph_path).clone();
+    let worker_for_task = worker.clone();
+    let vars =
+        tokio::task::spawn_blocking(move || GraphStore::new(path).binding_env(&worker_for_task))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, value)| EnvVar { name, value })
+            .collect::<Vec<_>>();
+    Json(EnvReport {
+        ok: true,
+        worker,
+        message: format!("{} environment variable(s)", vars.len()),
+        vars,
     })
 }
 

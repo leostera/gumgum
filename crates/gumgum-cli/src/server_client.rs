@@ -1,6 +1,6 @@
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest,
-    DeploymentRevisionsReport, GraphReport, LogsReport, ObjectReport, ObjectRequest,
+    DeploymentRevisionsReport, EnvReport, GraphReport, LogsReport, ObjectReport, ObjectRequest,
     ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
@@ -67,6 +67,10 @@ impl ServerClient {
         request: &BindingRequest,
     ) -> gumgum_core::Result<BindingReport> {
         self.post_json("/v0/bindings", request, "binding").await
+    }
+
+    pub(crate) async fn env(&self, worker: &str) -> gumgum_core::Result<EnvReport> {
+        self.get_json(&format!("/v0/env/{worker}"), "env").await
     }
 
     pub(crate) async fn deploy(
