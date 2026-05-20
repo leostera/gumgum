@@ -212,8 +212,10 @@ pub(crate) struct SetupArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct ServerCommand {
+    #[arg(value_name = "NAME")]
+    pub(crate) name: Option<String>,
     #[command(subcommand)]
-    pub(crate) command: ServerSubcommand,
+    pub(crate) command: Option<ServerSubcommand>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -221,13 +223,19 @@ pub(crate) enum ServerSubcommand {
     List,
     Ping(PingArgs),
     Config(ServerConfigArgs),
+    Upgrade(ServerUpgradeArgs),
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct ServerConfigArgs {
-    pub(crate) name: String,
     #[command(subcommand)]
     pub(crate) command: ConfigSubcommand,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ServerUpgradeArgs {
+    #[arg(long)]
+    pub(crate) user: Option<String>,
 }
 
 #[derive(Debug, Args)]

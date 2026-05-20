@@ -1,11 +1,12 @@
 use crate::{
-    SchemaCommand, SchemaSubcommand, ServerCommand, ServerSubcommand, StatusArgs, config_command,
-    print_value,
+    SchemaCommand, SchemaSubcommand, ServerCommand, ServerSubcommand, ServerUpgradeArgs,
+    StatusArgs, config_command, print_value, progress,
 };
 use gumgum_api::{PingReport, ServerListReport};
 use gumgum_core::{
-    ConfigStore, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport,
-    not_configured_status, validate_path,
+    ConfigStore, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport, ErrorCode,
+    GumgumError, GumgumInstaller, ServerRecord, SetupTarget, Subsystem, not_configured_status,
+    validate_path,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -48,20 +49,43 @@ pub(crate) fn version(json: bool) {
 
 pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Result<()> {
     match server.command {
-        ServerSubcommand::List => {
+        Some(ServerSubcommand::List) => {
             let report = ServerListReport {
                 ok: true,
                 servers: ConfigStore::from_home_env()?.load_servers()?,
             };
             print_value(json, &report)
         }
-        ServerSubcommand::Ping(args) => {
+        Some(ServerSubcommand::Ping(args)) => {
             let report = ping_host(&args.host).await?;
             print_value(json, &report)
         }
-        ServerSubcommand::Config(args) => {
-            let report = config_command(Some(args.name), args.command)?;
+        Some(ServerSubcommand::Config(args)) => {
+            let name = required_server_name(server.name, "config")?;
+            let report = config_command(Some(name), args.command)?;
             print_value(json, &report)
+        }
+        Some(ServerSubcommand::Upgrade(args)) => {
+            let name = required_server_name(server.name, "upgrade")?;
+            let report = upgrade_server(&name, args, json).await?;
+            print_value(json, &report)
+        }
+        None if server.name.as_deref() == Some("list") => {
+            let report = ServerListReport {
+                ok: true,
+                servers: ConfigStore::from_home_env()?.load_servers()?,
+            };
+            print_value(json, &report)
+        }
+        None => {
+            return Err(GumgumError::structured(
+                Subsystem::Cli,
+                ErrorCode::InvalidArgs,
+                "server command is required",
+            )
+            .next_command("gumgum server list")
+            .next_command("gumgum server <name> upgrade")
+            .build());
         }
     }
     Ok(())
@@ -84,6 +108,85 @@ pub(crate) fn schema(schema: SchemaCommand, json: bool) -> gumgum_core::Result<(
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct ServerUpgradeReport {
+    ok: bool,
+    name: String,
+    host: String,
+    root_domain: String,
+    test_domain: String,
+    health_url: String,
+    actions: Vec<String>,
+    message: String,
+}
+
+fn required_server_name(name: Option<String>, command: &str) -> gumgum_core::Result<String> {
+    name.ok_or_else(|| {
+        GumgumError::structured(
+            Subsystem::Cli,
+            ErrorCode::InvalidArgs,
+            format!("server name is required for {command}"),
+        )
+        .next_command(format!("gumgum server <name> {command}"))
+        .build()
+    })
+}
+
+fn find_server(name: &str) -> gumgum_core::Result<ServerRecord> {
+    ConfigStore::from_home_env()?
+        .load_servers()?
+        .into_iter()
+        .find(|server| server.name == name || server.host == name)
+        .ok_or_else(|| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::InvalidArgs,
+                format!("unknown GumGum.dev server {name}"),
+            )
+            .next_command("gumgum server list")
+            .build()
+        })
+}
+
+async fn upgrade_server(
+    name: &str,
+    args: ServerUpgradeArgs,
+    quiet: bool,
+) -> gumgum_core::Result<ServerUpgradeReport> {
+    let server = find_server(name)?;
+    let setup = SetupTarget {
+        name: server.name.clone(),
+        host: server.host.clone(),
+        user: args.user,
+        root_domain: server.root_domain.clone(),
+        test_domain: server.test_domain.clone(),
+        local: false,
+    };
+    let target = setup.ssh_target();
+    progress(
+        quiet,
+        format!("upgrading gumgum on {target} from published release"),
+    );
+    GumgumInstaller::run_remote_setup(&target, &setup, quiet).await?;
+    progress(quiet, "checking upgraded gumgumd health");
+    DaemonHealthClient::wait_for_ping(&setup.host).await?;
+    Ok(ServerUpgradeReport {
+        ok: true,
+        name: server.name,
+        host: server.host,
+        root_domain: server.root_domain,
+        test_domain: server.test_domain,
+        health_url: server.health_url,
+        actions: vec![
+            "ssh into server".to_owned(),
+            "run published GumGum.dev installer".to_owned(),
+            "restart gumgumd via remote setup".to_owned(),
+            "check gumgumd health".to_owned(),
+        ],
+        message: "server upgraded from published release".to_owned(),
+    })
 }
 
 async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
