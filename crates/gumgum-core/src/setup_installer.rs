@@ -194,23 +194,68 @@ impl GumgumInstaller {
         }
     }
 
+    pub async fn run_remote_setup_with_binary(
+        target: &str,
+        setup: &SetupTarget,
+        binary: &PathBuf,
+        quiet: bool,
+    ) -> crate::Result<()> {
+        if !binary.is_file() {
+            return Err(GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::InvalidArgs,
+                "local gumgum binary does not exist",
+            )
+            .likely_cause(binary.display().to_string())
+            .next_command("cargo build --release -p gumgum-cli")
+            .build());
+        }
+        let remote_binary = "~/.gumgum/bin/gumgum";
+        run_setup_command_streaming(
+            TokioCommand::new("ssh")
+                .arg(target)
+                .arg("mkdir -p ~/.gumgum/bin"),
+            quiet,
+        )
+        .await?;
+        run_setup_command_streaming(
+            TokioCommand::new("scp")
+                .arg(binary)
+                .arg(format!("{target}:{remote_binary}")),
+            quiet,
+        )
+        .await?;
+        run_setup_command_streaming(
+            TokioCommand::new("ssh").arg(target).arg(format!(
+                "chmod 0755 {remote_binary}; {}",
+                remote_setup_command(setup, quiet)
+            )),
+            quiet,
+        )
+        .await
+    }
+
     pub async fn run_remote_setup(
         target: &str,
         setup: &SetupTarget,
         quiet: bool,
     ) -> crate::Result<()> {
-        let remote_setup = format!(
-            "~/.gumgum/bin/gumgum setup --name {} --root-domain {} --test-domain {}{}",
-            shell_quote(&setup.name),
-            shell_quote(&setup.root_domain),
-            shell_quote(&setup.test_domain),
-            if quiet { " --json" } else { "" }
-        );
+        let remote_setup = remote_setup_command(setup, quiet);
         let script = format!(
             "set -e; primary=https://get.gumgum.dev; fallback=https://get-gumgum-dev.abstractmachines.workers.dev; tmp=$(mktemp); trap 'rm -f $tmp' EXIT; if command -v curl >/dev/null 2>&1; then if curl -fsSL -o $tmp $primary; then GUMGUM_NO_PATH=1 sh $tmp; else echo 'primary installer URL failed; retrying workers.dev fallback' >&2; curl -fsSL -o $tmp $fallback; GUMGUM_BASE_URL=$fallback GUMGUM_NO_PATH=1 sh $tmp; fi; elif command -v wget >/dev/null 2>&1; then if wget -q -O $tmp $primary; then GUMGUM_NO_PATH=1 sh $tmp; else echo 'primary installer URL failed; retrying workers.dev fallback' >&2; wget -q -O $tmp $fallback; GUMGUM_BASE_URL=$fallback GUMGUM_NO_PATH=1 sh $tmp; fi; else echo 'curl or wget is required' >&2; exit 1; fi; {remote_setup}"
         );
         run_setup_command_streaming(TokioCommand::new("ssh").arg(target).arg(script), quiet).await
     }
+}
+
+fn remote_setup_command(setup: &SetupTarget, quiet: bool) -> String {
+    format!(
+        "~/.gumgum/bin/gumgum setup --name {} --root-domain {} --test-domain {}{}",
+        shell_quote(&setup.name),
+        shell_quote(&setup.root_domain),
+        shell_quote(&setup.test_domain),
+        if quiet { " --json" } else { "" }
+    )
 }
 
 async fn local_hostname() -> crate::Result<String> {

@@ -86,6 +86,7 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             object_command("kv", args, cli.json).await?;
         }
         Command::Setup(args) => {
+            let binary = args.binary.clone();
             let resolved = resolve_setup(args).await?;
             if cli.dry_run {
                 let plan = SetupPlan {
@@ -99,7 +100,7 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
                 };
                 print_value(cli.json, &plan)
             } else {
-                let report = install_gumgumd(resolved, cli.json).await?;
+                let report = install_gumgumd(resolved, binary, cli.json).await?;
                 print_value(cli.json, &report)
             }
         }

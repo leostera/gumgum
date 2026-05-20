@@ -208,6 +208,12 @@ pub(crate) struct SetupArgs {
     pub(crate) root_domain: Option<String>,
     #[arg(long)]
     pub(crate) test_domain: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Install this local gumgum binary on the remote host instead of downloading latest release"
+    )]
+    pub(crate) binary: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
