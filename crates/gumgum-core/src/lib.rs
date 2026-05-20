@@ -317,3 +317,186 @@ fn topological_levels(
     }
     levels
 }
+
+#[derive(Clone, Debug)]
+pub struct WorkerPlanInput {
+    pub worker_name: String,
+    pub databases: Vec<BindingPlanInput>,
+    pub kvs: Vec<BindingPlanInput>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BindingPlanInput {
+    pub kind: String,
+    pub name: String,
+    pub binding: Option<String>,
+}
+
+pub struct DeployPlanner {
+    input: WorkerPlanInput,
+}
+
+impl DeployPlanner {
+    pub fn new(input: WorkerPlanInput) -> Self {
+        Self { input }
+    }
+
+    pub fn graph(&self) -> PlanGraph {
+        let worker = &self.input.worker_name;
+        let mut graph = MutablePlanGraph::new(worker);
+        for db in &self.input.databases {
+            graph.add_binding(worker, &db.kind, &db.name, db.binding.as_deref());
+        }
+        for kv in &self.input.kvs {
+            graph.add_binding(worker, &kv.kind, &kv.name, kv.binding.as_deref());
+        }
+        graph.finish()
+    }
+
+    pub fn plan_lines(&self) -> Vec<String> {
+        self.graph()
+            .execution_levels
+            .iter()
+            .enumerate()
+            .flat_map(|(index, level)| {
+                level
+                    .iter()
+                    .map(move |node| format!("level {}: {node}", index + 1))
+            })
+            .collect()
+    }
+}
+
+struct MutablePlanGraph {
+    nodes: Vec<PlanNode>,
+    edges: Vec<PlanEdge>,
+}
+
+impl MutablePlanGraph {
+    fn new(worker: &str) -> Self {
+        Self {
+            nodes: vec![
+                PlanNode::new(
+                    "source/manifests",
+                    "source",
+                    "gumgum.toml files",
+                    "collect manifest desired state",
+                ),
+                PlanNode::new(
+                    "actual/containers",
+                    "source",
+                    "docker state",
+                    "collect actual container state",
+                ),
+                PlanNode::new(
+                    "provider/registry.platform",
+                    "provider",
+                    "registry.platform",
+                    "ensure local registry provider is running",
+                ),
+                PlanNode::new(
+                    format!("image/{worker}"),
+                    "image",
+                    worker,
+                    "build and push worker image",
+                ),
+                PlanNode::new(
+                    format!("container/{worker}"),
+                    "container",
+                    worker,
+                    "reconcile worker container",
+                ),
+                PlanNode::new(
+                    format!("health/{worker}"),
+                    "health_check",
+                    worker,
+                    "verify health check and routes",
+                ),
+            ],
+            edges: vec![
+                PlanEdge::new(
+                    "source/manifests",
+                    format!("image/{worker}"),
+                    "desired_state",
+                ),
+                PlanEdge::new(
+                    "actual/containers",
+                    format!("container/{worker}"),
+                    "actual_state",
+                ),
+                PlanEdge::new(
+                    "provider/registry.platform",
+                    format!("image/{worker}"),
+                    "backs",
+                ),
+                PlanEdge::new(
+                    format!("image/{worker}"),
+                    format!("container/{worker}"),
+                    "created_from",
+                ),
+                PlanEdge::new(
+                    format!("container/{worker}"),
+                    format!("health/{worker}"),
+                    "has_health_check",
+                ),
+            ],
+        }
+    }
+
+    fn add_binding(&mut self, worker: &str, kind: &str, object: &str, binding: Option<&str>) {
+        let provider = provider_for_object(kind);
+        let object_id = format!("{kind}/{object}");
+        self.nodes.push(PlanNode::new(
+            format!("provider/{provider}"),
+            "provider",
+            provider,
+            "ensure provider is running",
+        ));
+        self.nodes.push(PlanNode::new(
+            &object_id,
+            "global_object",
+            object,
+            "ensure global object exists",
+        ));
+        self.edges.push(PlanEdge::new(
+            "source/manifests",
+            &object_id,
+            "desired_state",
+        ));
+        self.edges.push(PlanEdge::new(
+            format!("provider/{provider}"),
+            &object_id,
+            "backs",
+        ));
+        if let Some(binding) = binding {
+            let binding_id = format!("binding/{worker}/{binding}");
+            self.nodes.push(PlanNode::new(
+                &binding_id,
+                "binding",
+                binding,
+                "ensure worker-local binding exists",
+            ));
+            self.edges
+                .push(PlanEdge::new(&object_id, &binding_id, "projects_as"));
+            self.edges.push(PlanEdge::new(
+                &binding_id,
+                format!("container/{worker}"),
+                "injects_into",
+            ));
+        }
+    }
+
+    fn finish(self) -> PlanGraph {
+        PlanGraph::new(self.nodes, self.edges)
+    }
+}
+
+fn provider_for_object(kind: &str) -> &'static str {
+    match kind {
+        "db" | "database" => "postgres.main",
+        "kv" => "redis.main",
+        "bucket" | "blob" => "minio.main",
+        "queue" => "redpanda.main",
+        _ => "manual.main",
+    }
+}
