@@ -6,6 +6,7 @@ pub mod graph_store;
 pub mod manifest;
 pub mod platform;
 pub mod process;
+pub mod providers;
 pub mod setup;
 pub mod setup_installer;
 
@@ -14,8 +15,7 @@ pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
 pub use graph_store::{
-    DeploymentRevision, DesiredDeploy, GlobalObject, GraphStore, WorkerBinding,
-    connection_examples, object_dns, provider_for_object,
+    DeploymentRevision, DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, object_dns,
 };
 pub use manifest::{
     Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,
@@ -25,6 +25,9 @@ pub use manifest::{
 };
 pub use platform::LocalPlatform;
 pub use process::{run_setup_command, run_setup_command_streaming};
+pub use providers::{
+    ObjectProviderPlan, ProviderSpec, connection_examples, object_provider_plan, provider_spec,
+};
 pub use setup::{not_configured_status, setup_actions};
 pub use setup_installer::{GumgumInstaller, SetupOptions, SetupTarget};
 

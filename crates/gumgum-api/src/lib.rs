@@ -96,6 +96,8 @@ pub struct ObjectReport {
     pub provider: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connection_examples: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_actions: Vec<String>,
     pub message: String,
 }
 

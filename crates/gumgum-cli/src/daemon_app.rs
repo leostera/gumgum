@@ -11,7 +11,7 @@ use gumgum_api::{
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
     GlobalObject, GraphStore, GumgumError, LocalPlatform, Subsystem, WorkerBinding,
-    affected_subgraph, connection_examples, not_configured_status, object_dns, provider_for_object,
+    affected_subgraph, not_configured_status, object_dns, object_provider_plan,
     render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -174,23 +174,25 @@ async fn daemon_create_object(
         namespace: request.namespace.clone(),
         root_domain: request.root_domain.clone(),
     };
-    let capability_name = request.capability.to_string();
-    let provider = provider_for_object(&capability_name).to_owned();
+    let capability = request.capability;
+    let capability_name = capability.to_string();
     let dns = object_dns(&capability_name, &request.name, &request.root_domain);
+    let provider_plan = object_provider_plan(capability, &request.name, &dns);
+    let provider = provider_plan.provider.provider.clone();
     let ok = tokio::task::spawn_blocking(move || store.materialize_object(&request_for_db))
         .await
         .ok()
         .and_then(Result::ok)
         .unwrap_or(false);
-    let connection_examples = connection_examples(&capability_name, &request.name, &dns);
     Json(ObjectReport {
         ok,
         kind: capability_name,
         name: request.name,
         dns,
         provider,
-        connection_examples,
-        message: "global object materialized in graph".to_owned(),
+        connection_examples: provider_plan.connection_examples,
+        provider_actions: provider_plan.actions,
+        message: "global object materialized in graph with provider plan".to_owned(),
     })
 }
 
