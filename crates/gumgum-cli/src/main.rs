@@ -2,6 +2,7 @@ mod config_command;
 mod daemon_app;
 mod deploy_executor;
 mod graph_presenter;
+mod logs_command;
 mod object_command;
 mod presentation;
 mod server_client;
@@ -24,6 +25,7 @@ use gumgum_core::{
     run_setup_command_streaming as run_command_streaming, sanitize_name, setup_actions,
     validate_path,
 };
+use logs_command::logs;
 use object_command::object_command;
 use serde::Serialize;
 use server_client::ServerClient;
@@ -740,65 +742,6 @@ fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
                 .build()
             }),
     }
-}
-
-async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
-    let manifest = load_worker_path(&args.path)?;
-    let server = match args.host {
-        Some(host) => host,
-        None => {
-            ConfigStore::from_home_env()?
-                .load_default_server()?
-                .ok_or_else(|| {
-                    GumgumError::structured(
-                        Subsystem::Config,
-                        ErrorCode::InvalidArgs,
-                        "no GumGum.dev server configured",
-                    )
-                    .next_command("gumgum setup <host> --root-domain <domain>")
-                    .build()
-                })?
-                .host
-        }
-    };
-    let container = format!("gumgum-{}", sanitize_name(&manifest.worker.name));
-    if args.follow && quiet {
-        return Err(GumgumError::structured(
-            Subsystem::Api,
-            ErrorCode::InvalidArgs,
-            "gumgum logs -f does not support --json yet",
-        )
-        .next_command("gumgum logs --json")
-        .build());
-    }
-    if args.follow {
-        let mut seen = String::new();
-        loop {
-            let report = ServerClient::new(&server)
-                .logs(&container, args.tail)
-                .await?;
-            if let Some(delta) = report.logs.strip_prefix(&seen) {
-                print!("{delta}");
-            } else {
-                print!("{}", report.logs);
-            }
-            seen = report.logs;
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => break,
-                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-            }
-        }
-        return Ok(());
-    }
-    let report = ServerClient::new(&server)
-        .logs(&container, args.tail)
-        .await?;
-    if quiet {
-        print_value(true, &report);
-    } else {
-        print!("{}", report.logs);
-    }
-    Ok(())
 }
 
 async fn run_remote_deploy(
