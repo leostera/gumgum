@@ -12,7 +12,9 @@ use gumgum_api::{
     setup_actions,
 };
 use gumgum_core::{DoctorCheck, DoctorReport, ErrorCode, GumgumError, Subsystem};
-use gumgum_manifest::{WorkerManifest, load_worker_path, validate_path};
+use gumgum_manifest::{
+    ManifestKind, WorkerManifest, load_worker_path, load_workspace_path, validate_path,
+};
 use rusqlite::{Connection, params};
 use serde::Serialize;
 use std::{fs, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
@@ -452,12 +454,54 @@ struct DeployReport {
     port: u16,
     routes: Vec<String>,
     health_url: Option<String>,
+    plan: Vec<String>,
+    plan_graph: DeployPlanGraph,
     message: String,
 }
 
-async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Result<DeployReport> {
-    let manifest = load_worker_path(&args.path)?;
-    let server = match args.host {
+#[derive(Clone, Debug, Serialize)]
+struct DeployPlanGraph {
+    nodes: Vec<DeployPlanNode>,
+    edges: Vec<DeployPlanEdge>,
+    execution_levels: Vec<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DeployPlanNode {
+    id: String,
+    kind: String,
+    label: String,
+    action: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DeployPlanEdge {
+    from: String,
+    to: String,
+    kind: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceDeployReport {
+    ok: bool,
+    dry_run: bool,
+    path: String,
+    workspace: String,
+    workers: Vec<DeployReport>,
+    plan: Vec<String>,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum DeployOutput {
+    Worker(DeployReport),
+    Workspace(WorkspaceDeployReport),
+}
+
+async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Result<DeployOutput> {
+    let kind = validate_path(&args.path)?.manifest_kind;
+    let server = match args.host.clone() {
         Some(host) => Some(ServerRecord {
             name: sanitize_name(&host),
             host: host.clone(),
@@ -467,8 +511,75 @@ async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Re
         }),
         None => load_default_server()?,
     };
-    let prod = args.prod;
-    let report = deploy_report(args.path.clone(), &manifest, server.as_ref(), dry_run, prod);
+    match kind {
+        ManifestKind::Worker => {
+            let manifest = load_worker_path(&args.path)?;
+            let report = deploy_one(
+                args.path.clone(),
+                &manifest,
+                server,
+                dry_run,
+                args.prod,
+                quiet,
+            )
+            .await?;
+            Ok(DeployOutput::Worker(report))
+        }
+        ManifestKind::Workspace => {
+            let workspace = load_workspace_path(&args.path)?;
+            let root = args
+                .path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let mut workers = Vec::new();
+            let mut plan = vec![format!("workspace {}", workspace.workspace.name)];
+            for member in &workspace.workspace.members {
+                let member_path = root.join(member).join("gumgum.toml");
+                let manifest = load_worker_path(&member_path)?;
+                let report = deploy_one(
+                    member_path,
+                    &manifest,
+                    server.clone(),
+                    dry_run,
+                    args.prod,
+                    quiet,
+                )
+                .await?;
+                plan.extend(
+                    report
+                        .plan
+                        .iter()
+                        .map(|step| format!("{}: {step}", report.worker)),
+                );
+                workers.push(report);
+            }
+            Ok(DeployOutput::Workspace(WorkspaceDeployReport {
+                ok: true,
+                dry_run,
+                path: args.path.display().to_string(),
+                workspace: workspace.workspace.name,
+                workers,
+                plan,
+                message: if dry_run {
+                    "workspace deploy plan"
+                } else {
+                    "workspace deployed"
+                }
+                .to_owned(),
+            }))
+        }
+    }
+}
+
+async fn deploy_one(
+    path: PathBuf,
+    manifest: &WorkerManifest,
+    server: Option<ServerRecord>,
+    dry_run: bool,
+    prod: bool,
+    quiet: bool,
+) -> gumgum_core::Result<DeployReport> {
+    let mut report = deploy_report(path, manifest, server.as_ref(), dry_run, prod);
     if dry_run {
         return Ok(report);
     }
@@ -481,14 +592,13 @@ async fn deploy(args: DeployArgs, dry_run: bool, quiet: bool) -> gumgum_core::Re
         .next_command("gumgum setup <host> --root-domain <domain>")
         .build()
     })?;
-    run_remote_deploy(&server, &manifest, &report, quiet).await?;
+    ensure_manifest_bindings(&server, manifest, quiet).await?;
+    run_remote_deploy(&server, manifest, &report, quiet).await?;
     configure_client_resolver(&server.test_domain, &server.host, quiet).await?;
-    Ok(DeployReport {
-        ok: true,
-        dry_run: false,
-        message: format!("deployed {} to {}", report.worker, server.host),
-        ..report
-    })
+    report.ok = true;
+    report.dry_run = false;
+    report.message = format!("deployed {} to {}", report.worker, server.host);
+    Ok(report)
 }
 
 fn deploy_report(
@@ -524,18 +634,32 @@ fn deploy_report(
                 manifest.worker.health.as_deref().unwrap_or("/healthz")
             )
         });
+    let build_context = manifest.worker.build_context.as_ref().map(|context| {
+        let context_path = PathBuf::from(context);
+        if context_path.is_absolute() {
+            context_path.display().to_string()
+        } else {
+            path.parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(context_path)
+                .display()
+                .to_string()
+        }
+    });
     DeployReport {
         ok: true,
         dry_run,
         path: path.display().to_string(),
         worker,
         host: server.map(|server| server.host.clone()),
-        build_context: manifest.worker.build_context.clone(),
+        build_context,
         image,
         container,
         port: manifest.worker.port.unwrap_or(3000),
         routes,
         health_url,
+        plan: deploy_plan(manifest),
+        plan_graph: deploy_plan_graph(manifest),
         message: if dry_run {
             format!(
                 "validated worker manifest for {} deploy; no containers changed",
@@ -545,6 +669,267 @@ fn deploy_report(
             "deployment pending".to_owned()
         },
     }
+}
+
+fn deploy_plan(manifest: &WorkerManifest) -> Vec<String> {
+    deploy_plan_graph(manifest)
+        .execution_levels
+        .iter()
+        .enumerate()
+        .flat_map(|(index, level)| {
+            level
+                .iter()
+                .map(move |node| format!("level {}: {node}", index + 1))
+        })
+        .collect()
+}
+
+fn deploy_plan_graph(manifest: &WorkerManifest) -> DeployPlanGraph {
+    let worker = &manifest.worker.name;
+    let mut nodes = vec![
+        deploy_plan_node(
+            "source/manifests",
+            "source",
+            "gumgum.toml files",
+            "collect manifest desired state",
+        ),
+        deploy_plan_node(
+            "actual/containers",
+            "source",
+            "docker state",
+            "collect actual container state",
+        ),
+        deploy_plan_node(
+            "provider/registry.platform",
+            "provider",
+            "registry.platform",
+            "ensure local registry provider is running",
+        ),
+        deploy_plan_node(
+            &format!("image/{worker}"),
+            "image",
+            worker,
+            "build and push worker image",
+        ),
+        deploy_plan_node(
+            &format!("container/{worker}"),
+            "container",
+            worker,
+            "reconcile worker container",
+        ),
+        deploy_plan_node(
+            &format!("health/{worker}"),
+            "health_check",
+            worker,
+            "verify health check and routes",
+        ),
+    ];
+    let mut edges = vec![
+        deploy_plan_edge(
+            "source/manifests",
+            &format!("image/{worker}"),
+            "desired_state",
+        ),
+        deploy_plan_edge(
+            "actual/containers",
+            &format!("container/{worker}"),
+            "actual_state",
+        ),
+        deploy_plan_edge(
+            "provider/registry.platform",
+            &format!("image/{worker}"),
+            "backs",
+        ),
+        deploy_plan_edge(
+            &format!("image/{worker}"),
+            &format!("container/{worker}"),
+            "created_from",
+        ),
+        deploy_plan_edge(
+            &format!("container/{worker}"),
+            &format!("health/{worker}"),
+            "has_health_check",
+        ),
+    ];
+    for db in &manifest.database {
+        add_binding_plan(
+            &mut nodes,
+            &mut edges,
+            worker,
+            "db",
+            &db.name,
+            db.binding.as_deref(),
+        );
+    }
+    for kv in &manifest.kv {
+        add_binding_plan(
+            &mut nodes,
+            &mut edges,
+            worker,
+            "kv",
+            &kv.name,
+            kv.binding.as_deref(),
+        );
+    }
+    let execution_levels = topo_levels(&nodes, &edges);
+    DeployPlanGraph {
+        nodes,
+        edges,
+        execution_levels,
+    }
+}
+
+fn add_binding_plan(
+    nodes: &mut Vec<DeployPlanNode>,
+    edges: &mut Vec<DeployPlanEdge>,
+    worker: &str,
+    kind: &str,
+    object: &str,
+    binding: Option<&str>,
+) {
+    let provider = provider_for_object(kind);
+    let object_id = format!("{kind}/{object}");
+    nodes.push(deploy_plan_node(
+        &format!("provider/{provider}"),
+        "provider",
+        provider,
+        "ensure provider is running",
+    ));
+    nodes.push(deploy_plan_node(
+        &object_id,
+        "global_object",
+        object,
+        "ensure global object exists",
+    ));
+    edges.push(deploy_plan_edge(
+        "source/manifests",
+        &object_id,
+        "desired_state",
+    ));
+    edges.push(deploy_plan_edge(
+        &format!("provider/{provider}"),
+        &object_id,
+        "backs",
+    ));
+    if let Some(binding) = binding {
+        let binding_id = format!("binding/{worker}/{binding}");
+        nodes.push(deploy_plan_node(
+            &binding_id,
+            "binding",
+            binding,
+            "ensure worker-local binding exists",
+        ));
+        edges.push(deploy_plan_edge(&object_id, &binding_id, "projects_as"));
+        edges.push(deploy_plan_edge(
+            &binding_id,
+            &format!("container/{worker}"),
+            "injects_into",
+        ));
+    }
+}
+
+fn deploy_plan_node(id: &str, kind: &str, label: &str, action: &str) -> DeployPlanNode {
+    DeployPlanNode {
+        id: id.to_owned(),
+        kind: kind.to_owned(),
+        label: label.to_owned(),
+        action: action.to_owned(),
+    }
+}
+
+fn deploy_plan_edge(from: &str, to: &str, kind: &str) -> DeployPlanEdge {
+    DeployPlanEdge {
+        from: from.to_owned(),
+        to: to.to_owned(),
+        kind: kind.to_owned(),
+    }
+}
+
+fn topo_levels(nodes: &[DeployPlanNode], edges: &[DeployPlanEdge]) -> Vec<Vec<String>> {
+    let mut remaining = nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut levels = Vec::new();
+    while !remaining.is_empty() {
+        let ready = remaining
+            .iter()
+            .filter(|id| {
+                !edges
+                    .iter()
+                    .any(|edge| edge.to == **id && remaining.contains(&edge.from))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if ready.is_empty() {
+            levels.push(remaining.iter().cloned().collect());
+            break;
+        }
+        for id in &ready {
+            remaining.remove(id);
+        }
+        levels.push(ready);
+    }
+    levels
+}
+
+async fn ensure_manifest_bindings(
+    server: &ServerRecord,
+    manifest: &WorkerManifest,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    for db in &manifest.database {
+        ensure_object_and_binding(server, "db", db, &manifest.worker.name, quiet).await?;
+    }
+    for kv in &manifest.kv {
+        ensure_object_and_binding(server, "kv", kv, &manifest.worker.name, quiet).await?;
+    }
+    Ok(())
+}
+
+async fn ensure_object_and_binding(
+    server: &ServerRecord,
+    kind: &str,
+    binding: &gumgum_manifest::ObjectBinding,
+    worker: &str,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    let object_name = binding
+        .dns
+        .as_deref()
+        .and_then(|dns| dns.split('.').next())
+        .unwrap_or(&binding.name)
+        .to_owned();
+    progress(quiet, format!("ensuring {kind}/{object_name}"));
+    let client = reqwest::Client::new();
+    let _ = client
+        .post(format!("http://{}:7777/v0/objects", server.host))
+        .json(&ObjectRequest {
+            kind: kind.to_owned(),
+            name: object_name.clone(),
+            namespace: "root".to_owned(),
+            root_domain: server.root_domain.clone(),
+        })
+        .send()
+        .await;
+    if let Some(env) = &binding.binding {
+        progress(quiet, format!("ensuring binding {worker}.{env}"));
+        let _ = client
+            .post(format!("http://{}:7777/v0/bindings", server.host))
+            .json(&BindingRequest {
+                object_kind: kind.to_owned(),
+                object_name,
+                worker: worker.to_owned(),
+                binding: env.clone(),
+                access: binding
+                    .access
+                    .clone()
+                    .unwrap_or_else(|| "read-write".to_owned()),
+            })
+            .send()
+            .await;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
