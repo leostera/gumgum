@@ -23,7 +23,22 @@ fn capability_from_cli_kind(kind: &str) -> Capability {
     match kind {
         "db" => Capability::Db,
         "kv" => Capability::Kv,
+        "bucket" | "blob" => Capability::Blob,
+        "queue" => Capability::Queue,
         _ => Capability::Manual,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_commands_map_to_provider_capabilities() {
+        assert_eq!(capability_from_cli_kind("db"), Capability::Db);
+        assert_eq!(capability_from_cli_kind("kv"), Capability::Kv);
+        assert_eq!(capability_from_cli_kind("bucket"), Capability::Blob);
+        assert_eq!(capability_from_cli_kind("queue"), Capability::Queue);
     }
 }
 

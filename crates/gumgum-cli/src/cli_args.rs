@@ -28,6 +28,8 @@ pub(crate) enum Command {
     Graph(GraphArgs),
     Db(ObjectArgs),
     Kv(ObjectArgs),
+    Bucket(ObjectArgs),
+    Queue(ObjectArgs),
     Setup(SetupArgs),
     Server(ServerCommand),
     Schema(SchemaCommand),

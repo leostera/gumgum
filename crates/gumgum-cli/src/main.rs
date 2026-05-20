@@ -85,6 +85,12 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Kv(args) => {
             object_command("kv", args, cli.json).await?;
         }
+        Command::Bucket(args) => {
+            object_command("bucket", args, cli.json).await?;
+        }
+        Command::Queue(args) => {
+            object_command("queue", args, cli.json).await?;
+        }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
             if cli.dry_run {
