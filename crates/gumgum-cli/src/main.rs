@@ -2,6 +2,7 @@ mod config_command;
 mod daemon_app;
 mod deploy_executor;
 mod graph_presenter;
+mod object_command;
 mod presentation;
 mod server_client;
 
@@ -12,18 +13,18 @@ use daemon_app::DaemonApp;
 use deploy_executor::DeployExecutor;
 use graph_presenter::GraphPresenter;
 use gumgum_api::{
-    BindingRequest, DeployApplyReport, DeployRequest, GraphEdge, GraphNode, ObjectReport,
-    ObjectRequest, PingReport, ServerListReport, SetupPlan, SetupReport,
+    DeployApplyReport, DeployRequest, GraphEdge, GraphNode, PingReport, ServerListReport,
+    SetupPlan, SetupReport,
 };
 use gumgum_core::{
-    Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
-    DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller,
-    InitManifestKind as CoreInitKind, ManifestKind, PlanGraph, ServerRecord, SetupOptions,
-    SetupTarget, Subsystem, WorkerManifest, default_project_name, init_plan, load_worker_path,
-    load_workspace_path, not_configured_status,
+    ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor, DoctorCheck,
+    DoctorReport, ErrorCode, GumgumError, GumgumInstaller, InitManifestKind as CoreInitKind,
+    ManifestKind, PlanGraph, ServerRecord, SetupOptions, SetupTarget, Subsystem, WorkerManifest,
+    default_project_name, init_plan, load_worker_path, load_workspace_path, not_configured_status,
     run_setup_command_streaming as run_command_streaming, sanitize_name, setup_actions,
     validate_path,
 };
+use object_command::object_command;
 use serde::Serialize;
 use server_client::ServerClient;
 use std::{fs, path::PathBuf, process::Stdio, time::Duration};
@@ -714,81 +715,6 @@ async fn graph_affected(server: &str, target: &str, json: bool) -> gumgum_core::
         for node in report.nodes {
             println!("  {}", presenter.describe_node(&node));
         }
-    }
-    Ok(())
-}
-
-async fn object_command(kind: &str, args: ObjectArgs, json: bool) -> gumgum_core::Result<()> {
-    let capability = capability_from_cli_kind(kind);
-    match args.command {
-        ObjectCommand::Create(args) => create_object(capability, args, json).await,
-        ObjectCommand::Bind(args) => bind_object(capability, args, json).await,
-    }
-}
-
-fn capability_from_cli_kind(kind: &str) -> Capability {
-    match kind {
-        "db" => Capability::Db,
-        "kv" => Capability::Kv,
-        _ => Capability::Manual,
-    }
-}
-
-async fn create_object(
-    capability: Capability,
-    args: CreateObjectArgs,
-    json: bool,
-) -> gumgum_core::Result<()> {
-    let server = resolve_server(args.host)?;
-    let root_domain = args
-        .root_domain
-        .unwrap_or_else(|| server.root_domain.clone());
-    let request = ObjectRequest {
-        capability,
-        name: args.name,
-        namespace: args.namespace,
-        root_domain,
-    };
-    let report: ObjectReport = ServerClient::new(server.host)
-        .create_object(&request)
-        .await?;
-    if json {
-        print_value(true, &report);
-    } else {
-        print_object_report(&report);
-    }
-    Ok(())
-}
-
-fn print_object_report(report: &ObjectReport) {
-    presentation::Presenter::new().object_report(report);
-}
-
-async fn bind_object(
-    capability: Capability,
-    args: BindObjectArgs,
-    json: bool,
-) -> gumgum_core::Result<()> {
-    let server = resolve_server(args.host)?;
-    let worker = match args.to {
-        Some(worker) => worker,
-        None => load_worker_path(&PathBuf::from("gumgum.toml"))?.worker.name,
-    };
-    let request = BindingRequest {
-        capability,
-        object_name: args.name,
-        worker,
-        binding: args.binding,
-        access: args.access,
-    };
-    let report = ServerClient::new(server.host).bind_object(&request).await?;
-    if json {
-        print_value(true, &report);
-    } else {
-        println!(
-            "bound {} to {} as {}",
-            report.object, report.worker, report.binding
-        );
     }
     Ok(())
 }
