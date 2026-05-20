@@ -1,4 +1,5 @@
 mod presentation;
+mod server_client;
 
 use anyhow::Result;
 use axum::{
@@ -19,6 +20,7 @@ use gumgum_manifest::{
 };
 use rusqlite::{Connection, params};
 use serde::Serialize;
+use server_client::ServerClient;
 use std::{fs, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 use tokio::process::Command as TokioCommand;
 
@@ -962,49 +964,7 @@ async fn info(args: InfoArgs, json: bool) -> gumgum_core::Result<()> {
     });
     let server = resolve_server(args.host)?;
     let target = format!("worker/{worker}");
-    let url = reqwest::Url::parse_with_params(
-        &format!("http://{}:7777/v0/graph/affected", server.host),
-        &[("target", target.as_str())],
-    )
-    .map_err(|source| {
-        GumgumError::structured(Subsystem::Api, ErrorCode::InvalidArgs, "invalid info URL")
-            .likely_cause(source.to_string())
-            .build()
-    })?;
-    let affected: AffectedReport = reqwest::Client::new()
-        .get(url)
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to call gumgumd info API",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .error_for_status()
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd info API returned an error",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .json()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd info API returned invalid JSON",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+    let affected = ServerClient::new(server.host).affected(&target).await?;
     let urls = affected
         .nodes
         .iter()
@@ -1046,41 +1006,7 @@ async fn rollback(args: RollbackArgs, json: bool) -> gumgum_core::Result<()> {
             .unwrap_or_else(|_| "unknown".to_owned())
     });
     let server = resolve_server(args.host)?;
-    let report: RollbackReport = reqwest::Client::new()
-        .post(format!("http://{}:7777/v0/rollback", server.host))
-        .json(&RollbackRequest { worker })
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to call gumgumd rollback API",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .error_for_status()
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd rollback API returned an error",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .json()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd rollback API returned invalid JSON",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+    let report = ServerClient::new(server.host).rollback(worker).await?;
     print_value(json, &report);
     Ok(())
 }
@@ -1142,41 +1068,7 @@ fn normalize_graph_target(target: &str) -> String {
 }
 
 async fn graph_show(server: &str, json: bool) -> gumgum_core::Result<()> {
-    let url = format!("http://{server}:7777/v0/graph");
-    let report: GraphReport = reqwest::Client::new()
-        .get(&url)
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to call gumgumd graph API",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .error_for_status()
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd graph API returned an error",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .json()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd graph API returned invalid JSON",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+    let report = ServerClient::new(server).graph().await?;
     if json {
         print_value(true, &report);
     } else {
@@ -1186,53 +1078,7 @@ async fn graph_show(server: &str, json: bool) -> gumgum_core::Result<()> {
 }
 
 async fn graph_affected(server: &str, target: &str, json: bool) -> gumgum_core::Result<()> {
-    let url = reqwest::Url::parse_with_params(
-        &format!("http://{server}:7777/v0/graph/affected"),
-        &[("target", target)],
-    )
-    .map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Api,
-            ErrorCode::InvalidArgs,
-            "invalid graph affected URL",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    let report: AffectedReport = reqwest::Client::new()
-        .get(url)
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to call gumgumd graph affected API",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .error_for_status()
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd graph affected API returned an error",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .json()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd graph affected API returned invalid JSON",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+    let report = ServerClient::new(server).affected(target).await?;
     if json {
         print_value(true, &report);
     } else {
@@ -1270,48 +1116,15 @@ async fn create_object(kind: &str, args: CreateObjectArgs, json: bool) -> gumgum
     let root_domain = args
         .root_domain
         .unwrap_or_else(|| server.root_domain.clone());
-    let url = format!("http://{}:7777/v0/objects", server.host);
     let request = ObjectRequest {
         kind: kind.to_owned(),
         name: args.name,
         namespace: args.namespace,
         root_domain,
     };
-    let report: ObjectReport = reqwest::Client::new()
-        .post(&url)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to call gumgumd object API",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .error_for_status()
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd object API returned an error",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .json()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd object API returned invalid JSON",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+    let report: ObjectReport = ServerClient::new(server.host)
+        .create_object(&request)
+        .await?;
     if json {
         print_value(true, &report);
     } else {
@@ -1330,7 +1143,6 @@ async fn bind_object(kind: &str, args: BindObjectArgs, json: bool) -> gumgum_cor
         Some(worker) => worker,
         None => load_worker_path(&PathBuf::from("gumgum.toml"))?.worker.name,
     };
-    let url = format!("http://{}:7777/v0/bindings", server.host);
     let request = BindingRequest {
         object_kind: kind.to_owned(),
         object_name: args.name,
@@ -1338,41 +1150,7 @@ async fn bind_object(kind: &str, args: BindObjectArgs, json: bool) -> gumgum_cor
         binding: args.binding,
         access: args.access,
     };
-    let report: BindingReport = reqwest::Client::new()
-        .post(&url)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to call gumgumd binding API",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .error_for_status()
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd binding API returned an error",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .json()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd binding API returned invalid JSON",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+    let report = ServerClient::new(server.host).bind_object(&request).await?;
     if json {
         print_value(true, &report);
     } else {
@@ -1436,7 +1214,9 @@ async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
     if args.follow {
         let mut seen = String::new();
         loop {
-            let report = fetch_logs(&server, &container, args.tail).await?;
+            let report = ServerClient::new(&server)
+                .logs(&container, args.tail)
+                .await?;
             if let Some(delta) = report.logs.strip_prefix(&seen) {
                 print!("{delta}");
             } else {
@@ -1450,7 +1230,9 @@ async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
         }
         return Ok(());
     }
-    let report = fetch_logs(&server, &container, args.tail).await?;
+    let report = ServerClient::new(&server)
+        .logs(&container, args.tail)
+        .await?;
     if quiet {
         print_value(true, &report);
     } else {
@@ -1459,51 +1241,16 @@ async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()> {
     Ok(())
 }
 
-async fn fetch_logs(server: &str, container: &str, tail: u32) -> gumgum_core::Result<LogsReport> {
-    let url = format!("http://{server}:7777/v0/logs/{container}?tail={tail}");
-    reqwest::Client::new()
-        .get(&url)
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to call gumgumd logs API",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .error_for_status()
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd logs API returned an error",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?
-        .json()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd logs API returned invalid JSON",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
-}
-
 async fn run_remote_deploy(
     server: &ServerRecord,
     manifest: &WorkerManifest,
     report: &DeployReport,
     quiet: bool,
 ) -> gumgum_core::Result<()> {
-    let context = manifest.worker.build_context.as_deref().unwrap_or(".");
+    let context = report
+        .build_context
+        .as_deref()
+        .unwrap_or_else(|| manifest.worker.build_context.as_deref().unwrap_or("."));
     let host = &server.host;
     let local_image = report.image.replacen("127.0.0.1", "localhost", 1);
     let route = deploy_route(report, server);
@@ -1582,39 +1329,7 @@ async fn apply_deploy_via_daemon(
     host: &str,
     request: &DeployRequest,
 ) -> gumgum_core::Result<DeployApplyReport> {
-    let url = format!("http://{host}:7777/v0/deploy");
-    let response = reqwest::Client::new()
-        .post(&url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to call gumgumd deploy API",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    if !response.status().is_success() {
-        return Err(GumgumError::structured(
-            Subsystem::Api,
-            ErrorCode::Io,
-            "gumgumd deploy API returned an error",
-        )
-        .likely_cause(response.status().to_string())
-        .build());
-    }
-    response.json().await.map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Api,
-            ErrorCode::Io,
-            "gumgumd deploy API returned invalid JSON",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })
+    ServerClient::new(host).deploy(request).await
 }
 
 async fn ensure_local_platform(quiet: bool) -> gumgum_core::Result<()> {
