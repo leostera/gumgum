@@ -1,4 +1,4 @@
-use gumgum_core::{DaemonStatus, StatusReport};
+use gumgum_core::{Capability, DaemonStatus, StatusReport};
 pub use gumgum_core::{GraphEdge, GraphNode};
 use serde::{Deserialize, Serialize};
 
@@ -133,7 +133,7 @@ pub struct GraphReport {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObjectRequest {
-    pub kind: String,
+    pub capability: Capability,
     pub name: String,
     pub namespace: String,
     pub root_domain: String,
@@ -153,7 +153,7 @@ pub struct ObjectReport {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BindingRequest {
-    pub object_kind: String,
+    pub capability: Capability,
     pub object_name: String,
     pub worker: String,
     pub binding: String,

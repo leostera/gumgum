@@ -21,9 +21,10 @@ use gumgum_api::{
     setup_actions,
 };
 use gumgum_core::{
-    DesiredDeploy, DoctorCheck, DoctorReport, ErrorCode, GlobalObject, GraphStore, GumgumError,
-    ManifestKind, PlanGraph, Subsystem, WorkerBinding, WorkerManifest, connection_examples,
-    load_worker_path, load_workspace_path, object_dns, provider_for_object, validate_path,
+    Capability, DesiredDeploy, DoctorCheck, DoctorReport, ErrorCode, GlobalObject, GraphStore,
+    GumgumError, ManifestKind, PlanGraph, Subsystem, WorkerBinding, WorkerManifest,
+    connection_examples, load_worker_path, load_workspace_path, object_dns, provider_for_object,
+    validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -817,19 +818,32 @@ async fn graph_affected(server: &str, target: &str, json: bool) -> gumgum_core::
 }
 
 async fn object_command(kind: &str, args: ObjectArgs, json: bool) -> gumgum_core::Result<()> {
+    let capability = capability_from_cli_kind(kind);
     match args.command {
-        ObjectCommand::Create(args) => create_object(kind, args, json).await,
-        ObjectCommand::Bind(args) => bind_object(kind, args, json).await,
+        ObjectCommand::Create(args) => create_object(capability, args, json).await,
+        ObjectCommand::Bind(args) => bind_object(capability, args, json).await,
     }
 }
 
-async fn create_object(kind: &str, args: CreateObjectArgs, json: bool) -> gumgum_core::Result<()> {
+fn capability_from_cli_kind(kind: &str) -> Capability {
+    match kind {
+        "db" => Capability::Db,
+        "kv" => Capability::Kv,
+        _ => Capability::Manual,
+    }
+}
+
+async fn create_object(
+    capability: Capability,
+    args: CreateObjectArgs,
+    json: bool,
+) -> gumgum_core::Result<()> {
     let server = resolve_server(args.host)?;
     let root_domain = args
         .root_domain
         .unwrap_or_else(|| server.root_domain.clone());
     let request = ObjectRequest {
-        kind: kind.to_owned(),
+        capability,
         name: args.name,
         namespace: args.namespace,
         root_domain,
@@ -849,14 +863,18 @@ fn print_object_report(report: &ObjectReport) {
     presentation::Presenter::new().object_report(report);
 }
 
-async fn bind_object(kind: &str, args: BindObjectArgs, json: bool) -> gumgum_core::Result<()> {
+async fn bind_object(
+    capability: Capability,
+    args: BindObjectArgs,
+    json: bool,
+) -> gumgum_core::Result<()> {
     let server = resolve_server(args.host)?;
     let worker = match args.to {
         Some(worker) => worker,
         None => load_worker_path(&PathBuf::from("gumgum.toml"))?.worker.name,
     };
     let request = BindingRequest {
-        object_kind: kind.to_owned(),
+        capability,
         object_name: args.name,
         worker,
         binding: args.binding,
@@ -1751,22 +1769,23 @@ async fn daemon_create_object(
 ) -> Json<ObjectReport> {
     let store = GraphStore::new((*state.graph_path).clone());
     let request_for_db = GlobalObject {
-        kind: request.kind.clone(),
+        kind: request.capability.to_string(),
         name: request.name.clone(),
         namespace: request.namespace.clone(),
         root_domain: request.root_domain.clone(),
     };
-    let provider = provider_for_object(&request.kind).to_owned();
-    let dns = object_dns(&request.kind, &request.name, &request.root_domain);
+    let capability_name = request.capability.to_string();
+    let provider = provider_for_object(&capability_name).to_owned();
+    let dns = object_dns(&capability_name, &request.name, &request.root_domain);
     let ok = tokio::task::spawn_blocking(move || store.materialize_object(&request_for_db))
         .await
         .ok()
         .and_then(Result::ok)
         .unwrap_or(false);
-    let connection_examples = connection_examples(&request.kind, &request.name, &dns);
+    let connection_examples = connection_examples(&capability_name, &request.name, &dns);
     Json(ObjectReport {
         ok,
-        kind: request.kind,
+        kind: capability_name,
         name: request.name,
         dns,
         provider,
@@ -1781,7 +1800,7 @@ async fn daemon_create_binding(
 ) -> Json<BindingReport> {
     let store = GraphStore::new((*state.graph_path).clone());
     let request_for_db = WorkerBinding {
-        object_kind: request.object_kind.clone(),
+        object_kind: request.capability.to_string(),
         object_name: request.object_name.clone(),
         worker: request.worker.clone(),
         binding: request.binding.clone(),
@@ -1794,7 +1813,7 @@ async fn daemon_create_binding(
         .unwrap_or(false);
     Json(BindingReport {
         ok,
-        object: format!("{}/{}", request.object_kind, request.object_name),
+        object: format!("{}/{}", request.capability, request.object_name),
         worker: request.worker,
         binding: request.binding,
         message: "binding materialized in graph".to_owned(),

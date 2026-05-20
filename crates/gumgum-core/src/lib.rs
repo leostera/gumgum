@@ -338,7 +338,7 @@ pub enum Capability {
     Kv,
     Blob,
     Queue,
-    Telemetry,
+    Observability,
     Manual,
 }
 
@@ -349,7 +349,7 @@ impl Capability {
             Self::Kv => "kv",
             Self::Blob => "blob",
             Self::Queue => "queue",
-            Self::Telemetry => "telemetry",
+            Self::Observability => "observability",
             Self::Manual => "manual",
         }
     }
@@ -360,7 +360,7 @@ impl Capability {
             Self::Kv => "redis.main",
             Self::Blob => "minio.main",
             Self::Queue => "redpanda.main",
-            Self::Telemetry => "otel.platform",
+            Self::Observability => "otel.platform",
             Self::Manual => "manual.main",
         }
     }
@@ -381,7 +381,7 @@ impl FromStr for Capability {
             "kv" => Self::Kv,
             "bucket" | "blob" => Self::Blob,
             "queue" => Self::Queue,
-            "telemetry" => Self::Telemetry,
+            "telemetry" | "observability" => Self::Observability,
             _ => Self::Manual,
         })
     }
