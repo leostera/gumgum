@@ -108,6 +108,14 @@ fn revision_lines(report: &DeploymentRevisionsReport) -> Vec<String> {
             revision.deploy.port,
             revision.deploy.health
         ));
+        lines.push(format!(
+            "  preview: gumgum rollback --worker {} --revision-id {} --preview",
+            report.worker, revision.id
+        ));
+        lines.push(format!(
+            "  apply:   gumgum rollback --worker {} --revision-id {}",
+            report.worker, revision.id
+        ));
     }
     lines
 }
@@ -209,6 +217,8 @@ mod tests {
             vec![
                 "Deployment revisions for api (1):",
                 "#42 2026-05-20 12:00:00 image=registry/api:1 route=api.example.test container=gumgum-api port=3000 health=/healthz",
+                "  preview: gumgum rollback --worker api --revision-id 42 --preview",
+                "  apply:   gumgum rollback --worker api --revision-id 42",
             ]
         );
     }
