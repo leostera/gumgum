@@ -1,6 +1,7 @@
 pub mod container_reconciler;
 pub mod graph_store;
 pub mod manifest;
+pub mod platform;
 pub mod setup;
 
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
@@ -13,6 +14,7 @@ pub use manifest::{
     WorkerManifest, Workspace, WorkspaceManifest, Zone, load_worker_path, load_workspace_path,
     validate_path, validate_str,
 };
+pub use platform::LocalPlatform;
 pub use setup::{not_configured_status, setup_actions};
 
 use serde::{Deserialize, Serialize};

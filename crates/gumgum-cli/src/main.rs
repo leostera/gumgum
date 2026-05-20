@@ -1057,40 +1057,6 @@ async fn apply_deploy_via_daemon(
     ServerClient::new(host).deploy(request).await
 }
 
-async fn ensure_local_platform(quiet: bool) -> gumgum_core::Result<()> {
-    progress(quiet, "ensuring GumGum.dev Docker network");
-    run_command_streaming(
-        TokioCommand::new("sh").arg("-c").arg("docker network inspect gumgum-network >/dev/null 2>&1 || docker network create gumgum-network >/dev/null"),
-        quiet,
-    )
-    .await?;
-
-    ensure_local_registry(quiet).await?;
-    ensure_local_dnsmasq(quiet).await?;
-    ensure_local_caddy(quiet).await
-}
-
-async fn ensure_local_registry(quiet: bool) -> gumgum_core::Result<()> {
-    progress(quiet, "ensuring GumGum.dev registry container");
-    run_command_streaming(
-        TokioCommand::new("sh").arg("-c").arg("docker inspect gumgum-registry >/dev/null 2>&1 && docker start gumgum-registry >/dev/null || docker run -d --name gumgum-registry --restart unless-stopped --network gumgum-network -p 127.0.0.1:55000:5000 registry:2 >/dev/null"),
-        quiet,
-    )
-    .await
-}
-
-async fn ensure_local_dnsmasq(quiet: bool) -> gumgum_core::Result<()> {
-    progress(quiet, "ensuring GumGum.dev dnsmasq container");
-    let script = "set -e; mkdir -p ~/.gumgum/dnsmasq; upstream=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}'); if [ -z \"$upstream\" ]; then upstream=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null || true); fi; [ -n \"$upstream\" ] || upstream=1.1.1.1; tmp=$(mktemp); { printf 'listen-address=0.0.0.0\nbind-interfaces\nno-resolv\nserver=%s\ncache-size=10000\n' \"$upstream\"; if [ -f ~/.gumgum/dnsmasq/dnsmasq.conf ]; then grep '^address=/' ~/.gumgum/dnsmasq/dnsmasq.conf || true; fi; } > $tmp; mv $tmp ~/.gumgum/dnsmasq/dnsmasq.conf; if docker inspect gumgum-dnsmasq >/dev/null 2>&1; then docker start gumgum-dnsmasq >/dev/null; docker restart gumgum-dnsmasq >/dev/null; elif docker ps --format '{{.Ports}}' | grep -qE '(^|, )0\\.0\\.0\\.0:53->|(^|, )[^ ]*:53->|:53->'; then echo 'warning: port 53 is already in use; gumgum-dnsmasq not started' >&2; else docker run -d --name gumgum-dnsmasq --restart unless-stopped --network gumgum-network -p 53:53/tcp -p 53:53/udp -v $HOME/.gumgum/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro jpillora/dnsmasq:latest >/dev/null; fi";
-    run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
-}
-
-async fn ensure_local_caddy(quiet: bool) -> gumgum_core::Result<()> {
-    progress(quiet, "ensuring GumGum.dev Caddy container");
-    let script = "set -e; if docker inspect gumgum-caddy >/dev/null 2>&1; then docker start gumgum-caddy >/dev/null; elif docker ps --format '{{.Ports}}' | grep -qE '(^|, )0\\.0\\.0\\.0:(80|443)->|(^|, )[^ ]*:(80|443)->'; then echo 'warning: ports 80/443 are already in use; gumgum-caddy not started' >&2; else docker run -d --name gumgum-caddy --restart unless-stopped --network gumgum-network -p 80:80 -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock:ro lucaslorentz/caddy-docker-proxy:2.9-alpine >/dev/null; fi";
-    run_command_streaming(TokioCommand::new("sh").arg("-c").arg(script), quiet).await
-}
-
 async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Result<()> {
     progress(
         quiet,

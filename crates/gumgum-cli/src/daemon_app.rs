@@ -1,4 +1,4 @@
-use crate::{ensure_local_platform, gumgum_root};
+use crate::gumgum_root;
 use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
@@ -11,8 +11,8 @@ use gumgum_api::{
 };
 use gumgum_core::{
     ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
-    GlobalObject, GraphStore, GumgumError, Subsystem, WorkerBinding, connection_examples,
-    not_configured_status, object_dns, provider_for_object,
+    GlobalObject, GraphStore, GumgumError, LocalPlatform, Subsystem, WorkerBinding,
+    connection_examples, not_configured_status, object_dns, provider_for_object,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -30,7 +30,7 @@ impl DaemonApp {
     }
 
     pub(crate) async fn run(self) -> gumgum_core::Result<()> {
-        ensure_local_platform(false).await?;
+        LocalPlatform::ensure(false).await?;
         let graph_path = gumgum_root()?.join("graph.sqlite");
         GraphStore::new(graph_path.clone()).init()?;
         let app = self.router(DaemonState {
