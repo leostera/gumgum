@@ -4,14 +4,13 @@ use axum::{
     routing::{get, post},
 };
 use gumgum_api::{
-    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge,
-    GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, RollbackReport,
-    RollbackRequest,
+    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphNode,
+    GraphReport, LogsReport, ObjectReport, ObjectRequest, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
     GlobalObject, GraphStore, GumgumError, LocalPlatform, Subsystem, WorkerBinding,
-    connection_examples, not_configured_status, object_dns, provider_for_object,
+    affected_subgraph, connection_examples, not_configured_status, object_dns, provider_for_object,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -132,80 +131,6 @@ async fn daemon_graph_affected(
         edges,
         message,
     })
-}
-
-fn affected_subgraph(
-    nodes: &[GraphNode],
-    edges: &[GraphEdge],
-    target: &str,
-) -> (Vec<GraphNode>, Vec<GraphEdge>) {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut edge_seen = std::collections::BTreeSet::new();
-    seen.insert(target.to_owned());
-
-    let mut add_edge = |edge: &GraphEdge, seen: &mut std::collections::BTreeSet<String>| {
-        edge_seen.insert((edge.from.clone(), edge.to.clone(), edge.kind.clone()));
-        seen.insert(edge.from.clone());
-        seen.insert(edge.to.clone());
-    };
-
-    for edge in edges {
-        if edge.to == target || edge.from == target {
-            add_edge(edge, &mut seen);
-        }
-    }
-
-    let bindings = seen
-        .iter()
-        .filter(|id| id.starts_with("binding/"))
-        .cloned()
-        .collect::<Vec<_>>();
-    for binding in bindings {
-        for edge in edges {
-            if edge.to == binding || edge.from == binding {
-                add_edge(edge, &mut seen);
-            }
-        }
-    }
-
-    let workers = seen
-        .iter()
-        .filter(|id| id.starts_with("worker/"))
-        .cloned()
-        .collect::<Vec<_>>();
-    for worker in workers {
-        for edge in edges {
-            if edge.from == worker && matches!(edge.kind.as_str(), "runs" | "owns" | "created_from")
-            {
-                add_edge(edge, &mut seen);
-            }
-        }
-    }
-
-    let routes = seen
-        .iter()
-        .filter(|id| id.starts_with("route/"))
-        .cloned()
-        .collect::<Vec<_>>();
-    for route in routes {
-        for edge in edges {
-            if edge.from == route && edge.kind == "routes_to" {
-                add_edge(edge, &mut seen);
-            }
-        }
-    }
-
-    let affected_nodes = nodes
-        .iter()
-        .filter(|node| seen.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
-    let affected_edges = edges
-        .iter()
-        .filter(|edge| edge_seen.contains(&(edge.from.clone(), edge.to.clone(), edge.kind.clone())))
-        .cloned()
-        .collect::<Vec<_>>();
-    (affected_nodes, affected_edges)
 }
 
 async fn daemon_create_object(
