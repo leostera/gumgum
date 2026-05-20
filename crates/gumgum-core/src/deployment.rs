@@ -160,3 +160,113 @@ fn sanitize_name(value: &str) -> String {
         .collect::<Vec<_>>()
         .join("-")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Ingress, Project, Worker, WorkerManifest, Zone};
+
+    fn manifest() -> WorkerManifest {
+        WorkerManifest {
+            project: Some(Project {
+                namespace: "experiments".to_owned(),
+            }),
+            worker: Worker {
+                name: "Hello World".to_owned(),
+                image: None,
+                build_context: Some("api".to_owned()),
+                command: None,
+                port: Some(8080),
+                health: Some("/ready".to_owned()),
+            },
+            zone: vec![Zone {
+                name: "*.example.com".to_owned(),
+            }],
+            ingress: vec![Ingress {
+                name: "local".to_owned(),
+                protocol: "http".to_owned(),
+                local_domain: "hello.local".to_owned(),
+                public_domain: None,
+                publish: false,
+            }],
+            database: Vec::new(),
+            kv: Vec::new(),
+            bucket: Vec::new(),
+            observability: None,
+            limits: None,
+        }
+    }
+
+    #[test]
+    fn derives_test_descriptor_from_server() {
+        let server = ServerRecord {
+            name: "starbase".to_owned(),
+            host: "192.168.0.3".to_owned(),
+            root_domain: "leostera.dev".to_owned(),
+            test_domain: "leostera.test".to_owned(),
+            health_url: "http://192.168.0.3:7777/healthz".to_owned(),
+        };
+        let descriptor = DeploymentDescriptor::from_manifest(
+            Path::new("apps/api/gumgum.toml"),
+            &manifest(),
+            Some(&server),
+            false,
+        );
+        assert_eq!(descriptor.worker, "Hello World");
+        assert_eq!(
+            descriptor.container,
+            "gumgum-dev-leostera-experiments-hello-world"
+        );
+        assert_eq!(descriptor.port, 8080);
+        assert_eq!(
+            descriptor.routes,
+            vec!["hello-world.experiments.leostera.test"]
+        );
+        assert_eq!(
+            descriptor.health_url.as_deref(),
+            Some("http://hello-world.experiments.leostera.test/ready")
+        );
+        assert_eq!(descriptor.build_context.as_deref(), Some("apps/api/api"));
+        assert!(
+            descriptor
+                .image
+                .starts_with("127.0.0.1:55000/dev.leostera/experiments/Hello World:")
+        );
+    }
+
+    #[test]
+    fn derives_prod_routes_from_project_and_zones() {
+        let server = ServerRecord {
+            name: "starbase".to_owned(),
+            host: "192.168.0.3".to_owned(),
+            root_domain: "leostera.dev".to_owned(),
+            test_domain: "leostera.test".to_owned(),
+            health_url: "http://192.168.0.3:7777/healthz".to_owned(),
+        };
+        let descriptor = DeploymentDescriptor::from_manifest(
+            Path::new("gumgum.toml"),
+            &manifest(),
+            Some(&server),
+            true,
+        );
+        assert_eq!(
+            descriptor.routes,
+            vec![
+                "hello-world.experiments.leostera.dev".to_owned(),
+                "hello-world.example.com".to_owned(),
+            ]
+        );
+        assert_eq!(
+            descriptor.health_url.as_deref(),
+            Some("http://hello-world.experiments.leostera.test/ready")
+        );
+    }
+
+    #[test]
+    fn preserves_local_ingress_without_server() {
+        let descriptor =
+            DeploymentDescriptor::from_manifest(Path::new("gumgum.toml"), &manifest(), None, false);
+        assert_eq!(descriptor.routes, vec!["hello.local"]);
+        assert_eq!(descriptor.container, "gumgum-local-experiments-hello-world");
+    }
+}
