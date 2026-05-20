@@ -109,8 +109,8 @@ impl ConfigStore {
         Ok(self.load_servers()?.into_iter().next())
     }
 
-    pub fn load_minio_credentials(&self) -> Result<Option<ProviderCredentials>> {
-        let path = self.provider_credentials_path("minio.main");
+    pub fn load_provider_credentials(&self, provider: &str) -> Result<Option<ProviderCredentials>> {
+        let path = self.provider_credentials_path(provider);
         if !path.exists() {
             return Ok(None);
         }
@@ -134,8 +134,12 @@ impl ConfigStore {
         })
     }
 
-    pub fn save_minio_credentials(&self, credentials: &ProviderCredentials) -> Result<()> {
-        let path = self.provider_credentials_path("minio.main");
+    pub fn save_provider_credentials(
+        &self,
+        provider: &str,
+        credentials: &ProviderCredentials,
+    ) -> Result<()> {
+        let path = self.provider_credentials_path(provider);
         self.ensure_parent(&path)?;
         fs::write(
             &path,
@@ -152,13 +156,54 @@ impl ConfigStore {
         })
     }
 
-    pub fn load_or_init_minio_credentials(&self) -> Result<ProviderCredentials> {
-        if let Some(credentials) = self.load_minio_credentials()? {
+    pub fn load_or_init_provider_credentials(
+        &self,
+        provider: &str,
+        generate: impl FnOnce() -> ProviderCredentials,
+    ) -> Result<ProviderCredentials> {
+        if let Some(credentials) = self.load_provider_credentials(provider)? {
             return Ok(credentials);
         }
-        let credentials = ProviderCredentials::minio_generated();
-        self.save_minio_credentials(&credentials)?;
+        let credentials = generate();
+        self.save_provider_credentials(provider, &credentials)?;
         Ok(credentials)
+    }
+
+    pub fn load_minio_credentials(&self) -> Result<Option<ProviderCredentials>> {
+        self.load_provider_credentials("minio.main")
+    }
+
+    pub fn save_minio_credentials(&self, credentials: &ProviderCredentials) -> Result<()> {
+        self.save_provider_credentials("minio.main", credentials)
+    }
+
+    pub fn load_or_init_minio_credentials(&self) -> Result<ProviderCredentials> {
+        self.load_or_init_provider_credentials("minio.main", ProviderCredentials::minio_generated)
+    }
+
+    pub fn load_or_init_default_provider_credentials(
+        &self,
+    ) -> Result<Vec<(String, ProviderCredentials)>> {
+        Ok(vec![
+            (
+                "postgres.main".to_owned(),
+                self.load_or_init_provider_credentials(
+                    "postgres.main",
+                    ProviderCredentials::postgres_generated,
+                )?,
+            ),
+            (
+                "redis.main".to_owned(),
+                self.load_or_init_provider_credentials(
+                    "redis.main",
+                    ProviderCredentials::redis_generated,
+                )?,
+            ),
+            (
+                "minio.main".to_owned(),
+                self.load_or_init_minio_credentials()?,
+            ),
+        ])
     }
 
     pub fn save_server(&self, server: ServerRecord) -> Result<()> {
@@ -315,6 +360,42 @@ mod tests {
             store
                 .root()
                 .join("providers/minio-main/credentials.json")
+                .exists()
+        );
+        let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn initializes_default_provider_credentials() {
+        let store = temp_store("default-provider-credentials");
+        let credentials = store.load_or_init_default_provider_credentials().unwrap();
+
+        assert_eq!(credentials.len(), 3);
+        assert!(
+            credentials
+                .iter()
+                .any(|(provider, _)| provider == "postgres.main")
+        );
+        assert!(
+            credentials
+                .iter()
+                .any(|(provider, _)| provider == "redis.main")
+        );
+        assert!(
+            credentials
+                .iter()
+                .any(|(provider, _)| provider == "minio.main")
+        );
+        assert!(
+            store
+                .root()
+                .join("providers/postgres-main/credentials.json")
+                .exists()
+        );
+        assert!(
+            store
+                .root()
+                .join("providers/redis-main/credentials.json")
                 .exists()
         );
         let _ = fs::remove_dir_all(store.root());

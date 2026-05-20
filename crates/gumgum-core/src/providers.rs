@@ -43,10 +43,22 @@ impl ProviderCredentials {
     }
 
     pub fn minio_generated() -> Self {
+        Self::generated("MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "gumgum")
+    }
+
+    pub fn postgres_generated() -> Self {
+        Self::generated("POSTGRES_USER", "POSTGRES_PASSWORD", "gumgum")
+    }
+
+    pub fn redis_generated() -> Self {
+        Self::generated("REDIS_USER", "REDIS_PASSWORD", "gumgum")
+    }
+
+    pub fn generated(username_env: &str, password_env: &str, username: &str) -> Self {
         Self {
-            username_env: "MINIO_ROOT_USER".to_owned(),
-            password_env: "MINIO_ROOT_PASSWORD".to_owned(),
-            username: "gumgum".to_owned(),
+            username_env: username_env.to_owned(),
+            password_env: password_env.to_owned(),
+            username: username.to_owned(),
             password: generate_secret(),
         }
     }

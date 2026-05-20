@@ -6,8 +6,8 @@ use axum::{
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
     DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, GraphNode, GraphReport,
-    LogsReport, ObjectReport, ObjectRequest, ProviderCredentialsReport, ProviderStatusReport,
-    RollbackReport, RollbackRequest,
+    LogsReport, ObjectReport, ObjectRequest, ProviderCredentialsInitReport,
+    ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
@@ -259,28 +259,38 @@ async fn daemon_providers() -> Json<ProviderStatusReport> {
     })
 }
 
-async fn daemon_init_minio_credentials() -> Json<ProviderCredentialsReport> {
-    let credentials =
-        ConfigStore::from_home_env().and_then(|store| store.load_or_init_minio_credentials());
+async fn daemon_init_minio_credentials() -> Json<ProviderCredentialsInitReport> {
+    let credentials = ConfigStore::from_home_env()
+        .and_then(|store| store.load_or_init_default_provider_credentials());
     match credentials {
-        Ok(credentials) => Json(ProviderCredentialsReport {
+        Ok(credentials) => Json(ProviderCredentialsInitReport {
             ok: true,
-            provider: "minio.main".to_owned(),
-            username_env: credentials.username_env,
-            password_env: credentials.password_env,
-            username: credentials.username,
-            configured: true,
-            message: "minio provider credentials configured".to_owned(),
+            message: "default provider credentials configured".to_owned(),
+            providers: credentials
+                .into_iter()
+                .map(|(provider, credentials)| provider_credentials_report(provider, credentials))
+                .collect(),
         }),
-        Err(error) => Json(ProviderCredentialsReport {
+        Err(error) => Json(ProviderCredentialsInitReport {
             ok: false,
-            provider: "minio.main".to_owned(),
-            username_env: "MINIO_ROOT_USER".to_owned(),
-            password_env: "MINIO_ROOT_PASSWORD".to_owned(),
-            username: String::new(),
-            configured: false,
             message: error.to_report().message,
+            providers: Vec::new(),
         }),
+    }
+}
+
+fn provider_credentials_report(
+    provider: String,
+    credentials: gumgum_core::ProviderCredentials,
+) -> ProviderCredentialsReport {
+    ProviderCredentialsReport {
+        ok: true,
+        provider,
+        username_env: credentials.username_env,
+        password_env: credentials.password_env,
+        username: credentials.username,
+        configured: true,
+        message: "provider credentials configured".to_owned(),
     }
 }
 

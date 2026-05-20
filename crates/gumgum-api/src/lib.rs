@@ -138,6 +138,13 @@ pub struct ProviderCredentialsReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProviderCredentialsInitReport {
+    pub ok: bool,
+    pub providers: Vec<ProviderCredentialsReport>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct EnvReport {
     pub ok: bool,
     pub worker: String,
