@@ -231,23 +231,34 @@ mod tests {
     }
 
     #[test]
+    fn config_scope_labels_are_stable() {
+        assert_eq!(ConfigScope::Local.label(), "local");
+        assert_eq!(
+            ConfigScope::Server("starbase".to_owned()).label(),
+            "server:starbase"
+        );
+    }
+
+    #[test]
     fn stores_local_and_server_config_maps_separately() {
         let store = temp_store("config");
         let mut local = Map::new();
         local.insert("format".to_owned(), Value::String("json".to_owned()));
-        store.save_local_config(&local).unwrap();
+        store.save_config(&ConfigScope::Local, &local).unwrap();
         let mut server = Map::new();
         server.insert(
             "registry_port".to_owned(),
             Value::String("55000".to_owned()),
         );
-        store
-            .save_server_config("Starbase 2.local", &server)
-            .unwrap();
+        let server_scope = ConfigScope::Server("Starbase 2.local".to_owned());
+        store.save_config(&server_scope, &server).unwrap();
 
-        assert_eq!(store.load_local_config().unwrap()["format"], "json");
         assert_eq!(
-            store.load_server_config("Starbase 2.local").unwrap()["registry_port"],
+            store.load_config(&ConfigScope::Local).unwrap()["format"],
+            "json"
+        );
+        assert_eq!(
+            store.load_config(&server_scope).unwrap()["registry_port"],
             "55000"
         );
         assert!(
