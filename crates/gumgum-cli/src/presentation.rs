@@ -1,4 +1,4 @@
-use crate::{DeployOutput, DeployReport, WorkspaceDeployReport};
+use crate::deploy_command::{DeployOutput, DeployReport, WorkspaceDeployReport};
 use gumgum_api::ObjectReport;
 
 pub(crate) struct Presenter;
