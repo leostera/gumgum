@@ -372,4 +372,23 @@ mod tests {
         );
         assert_eq!(parsed.workspace.members, vec!["apps/*"]);
     }
+
+    #[test]
+    fn worker_scaffold_contains_health_checked_python_server() {
+        let files = worker_scaffold_files();
+        assert_eq!(
+            files.iter().map(|file| file.path).collect::<Vec<_>>(),
+            vec!["Dockerfile", "server.py"]
+        );
+        let dockerfile = files.iter().find(|file| file.path == "Dockerfile").unwrap();
+        assert!(dockerfile.contents.contains("FROM python:3.12-alpine"));
+        assert!(
+            dockerfile
+                .contents
+                .contains("CMD [\"python\", \"server.py\"]")
+        );
+        let server = files.iter().find(|file| file.path == "server.py").unwrap();
+        assert!(server.contents.contains("/healthz"));
+        assert!(server.contents.contains("Hello from GumGum.dev"));
+    }
 }
