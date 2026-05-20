@@ -11,6 +11,7 @@ mod presentation;
 mod project_command;
 mod server_client;
 mod setup_command;
+mod system_command;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -18,11 +19,9 @@ use config_command::config_command;
 use daemon_app::DaemonApp;
 use deploy_command::{deploy, print_deploy_output};
 use graph_command::graph;
-use gumgum_api::{PingReport, ServerListReport, SetupPlan};
+use gumgum_api::SetupPlan;
 use gumgum_core::{
-    ConfigStore, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport, ErrorCode,
-    GumgumError, ServerRecord, Subsystem, not_configured_status, sanitize_name, setup_actions,
-    validate_path,
+    ConfigStore, ErrorCode, GumgumError, ServerRecord, Subsystem, sanitize_name, setup_actions,
 };
 use init_command::init_manifest;
 use logs_command::logs;
@@ -31,6 +30,7 @@ use project_command::{info, rollback};
 use serde::Serialize;
 use setup_command::{install_gumgumd, resolve_setup};
 use std::path::PathBuf;
+use system_command::{doctor, schema, server, status, version};
 
 #[derive(Debug, Parser)]
 #[command(name = "gumgum")]
@@ -66,7 +66,7 @@ enum Command {
 }
 
 #[derive(Debug, Args)]
-struct StatusArgs {
+pub(crate) struct StatusArgs {
     #[arg(long)]
     host: Option<String>,
     #[arg(long)]
@@ -74,7 +74,7 @@ struct StatusArgs {
 }
 
 #[derive(Debug, Args)]
-struct PingArgs {
+pub(crate) struct PingArgs {
     host: String,
     #[arg(long)]
     user: Option<String>,
@@ -228,33 +228,33 @@ struct SetupArgs {
 }
 
 #[derive(Debug, Args)]
-struct ServerCommand {
+pub(crate) struct ServerCommand {
     #[command(subcommand)]
     command: ServerSubcommand,
 }
 
 #[derive(Debug, Subcommand)]
-enum ServerSubcommand {
+pub(crate) enum ServerSubcommand {
     List,
     Ping(PingArgs),
     Config(ServerConfigArgs),
 }
 
 #[derive(Debug, Args)]
-struct ServerConfigArgs {
+pub(crate) struct ServerConfigArgs {
     name: String,
     #[command(subcommand)]
     command: ConfigSubcommand,
 }
 
 #[derive(Debug, Args)]
-struct SchemaCommand {
+pub(crate) struct SchemaCommand {
     #[command(subcommand)]
     command: SchemaSubcommand,
 }
 
 #[derive(Debug, Subcommand)]
-enum SchemaSubcommand {
+pub(crate) enum SchemaSubcommand {
     Validate { path: Option<PathBuf> },
     Explain,
 }
@@ -277,38 +277,9 @@ async fn main() -> Result<()> {
 
 async fn run(cli: Cli) -> gumgum_core::Result<()> {
     match cli.command {
-        Command::Status(args) => {
-            if let Some(host) = args.host {
-                let report = ping_host(&host).await?;
-                print_value(cli.json, &report)
-            } else if let Some(server) = ConfigStore::from_home_env()?.load_default_server()? {
-                let report = ping_host(&server.host).await?;
-                print_value(cli.json, &report)
-            } else {
-                print_value(cli.json, &not_configured_status())
-            }
-        }
-        Command::Doctor => {
-            let report = DoctorReport {
-                ok: true,
-                checks: vec![
-                    DoctorCheck {
-                        name: "cli".to_owned(),
-                        ok: true,
-                        message: "gumgum CLI is installed".to_owned(),
-                    },
-                    DoctorCheck {
-                        name: "daemon".to_owned(),
-                        ok: true,
-                        message: "daemon check skipped until setup is implemented".to_owned(),
-                    },
-                ],
-            };
-            print_value(cli.json, &report)
-        }
-        Command::Version => {
-            print_value(cli.json, &version_report());
-        }
+        Command::Status(args) => status(args, cli.json).await?,
+        Command::Doctor => doctor(cli.json),
+        Command::Version => version(cli.json),
         Command::Config(args) => {
             let report = config_command(None, args.command)?;
             print_value(cli.json, &report);
@@ -358,38 +329,8 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             }
         }
         Command::Daemon => DaemonApp::new().run().await?,
-        Command::Server(server) => match server.command {
-            ServerSubcommand::List => {
-                let report = ServerListReport {
-                    ok: true,
-                    servers: ConfigStore::from_home_env()?.load_servers()?,
-                };
-                print_value(cli.json, &report)
-            }
-            ServerSubcommand::Ping(args) => {
-                let report = ping_host(&args.host).await?;
-                print_value(cli.json, &report)
-            }
-            ServerSubcommand::Config(args) => {
-                let report = config_command(Some(args.name), args.command)?;
-                print_value(cli.json, &report)
-            }
-        },
-        Command::Schema(schema) => match schema.command {
-            SchemaSubcommand::Validate { path } => {
-                let path = path.unwrap_or_else(|| PathBuf::from("gumgum.toml"));
-                let report = validate_path(&path)?;
-                print_value(cli.json, &report)
-            }
-            SchemaSubcommand::Explain => {
-                let explanation = SchemaExplanation {
-                    ok: true,
-                    schemas: vec!["workspace", "worker"],
-                    message: "v0 supports [workspace] and [worker] manifests".to_owned(),
-                };
-                print_value(cli.json, &explanation)
-            }
-        },
+        Command::Server(args) => server(args, cli.json).await?,
+        Command::Schema(args) => schema(args, cli.json)?,
     }
     Ok(())
 }
@@ -414,37 +355,6 @@ fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
                 .next_command("gumgum setup <host> --root-domain <domain>")
                 .build()
             }),
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct VersionReport {
-    ok: bool,
-    version: &'static str,
-    git_sha: &'static str,
-    target: &'static str,
-}
-
-fn version_report() -> VersionReport {
-    VersionReport {
-        ok: true,
-        version: option_env!("GUMGUM_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
-        git_sha: option_env!("GUMGUM_BUILD_SHA").unwrap_or("unknown"),
-        target: option_env!("GUMGUM_BUILD_TARGET").unwrap_or("unknown"),
-    }
-}
-
-async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
-    Ok(ping_report_from_core(DaemonHealthClient::ping(host).await?))
-}
-
-fn ping_report_from_core(report: DaemonPingReport) -> PingReport {
-    PingReport {
-        ok: report.ok,
-        host: report.host,
-        health_url: report.health_url,
-        service_active: report.service_active,
-        health: report.health,
     }
 }
 
@@ -473,13 +383,6 @@ fn print_error(err: GumgumError) {
         "{}",
         serde_json::to_string_pretty(&err.to_report()).expect("serialize error")
     );
-}
-
-#[derive(Debug, Serialize)]
-struct SchemaExplanation {
-    ok: bool,
-    schemas: Vec<&'static str>,
-    message: String,
 }
 
 #[cfg(test)]
