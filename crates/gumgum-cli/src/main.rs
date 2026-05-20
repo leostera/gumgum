@@ -1,6 +1,7 @@
 mod config_command;
 mod daemon_app;
 mod deploy_executor;
+mod graph_command;
 mod graph_presenter;
 mod logs_command;
 mod object_command;
@@ -12,7 +13,7 @@ use clap::{Args, Parser, Subcommand};
 use config_command::config_command;
 use daemon_app::DaemonApp;
 use deploy_executor::DeployExecutor;
-use graph_presenter::GraphPresenter;
+use graph_command::graph;
 use gumgum_api::{
     DeployApplyReport, DeployRequest, GraphEdge, GraphNode, PingReport, ServerListReport,
     SetupPlan, SetupReport,
@@ -637,87 +638,6 @@ async fn rollback(args: RollbackArgs, json: bool) -> gumgum_core::Result<()> {
     let server = resolve_server(args.host)?;
     let report = ServerClient::new(server.host).rollback(worker).await?;
     print_value(json, &report);
-    Ok(())
-}
-
-async fn graph(args: GraphArgs, json: bool) -> gumgum_core::Result<()> {
-    let server = match args.host {
-        Some(host) => host,
-        None => {
-            ConfigStore::from_home_env()?
-                .load_default_server()?
-                .ok_or_else(|| {
-                    GumgumError::structured(
-                        Subsystem::Config,
-                        ErrorCode::InvalidArgs,
-                        "no GumGum.dev server configured",
-                    )
-                    .next_command("gumgum setup <host> --root-domain <domain>")
-                    .build()
-                })?
-                .host
-        }
-    };
-    let scoped_target = args
-        .resource
-        .or_else(|| args.worker.map(|worker| format!("worker/{worker}")))
-        .or_else(|| infer_graph_target_from_manifest().ok().flatten());
-    match args.command.unwrap_or(GraphCommand::Show) {
-        GraphCommand::Show => {
-            if let Some(target) = scoped_target {
-                graph_affected(&server, &normalize_graph_target(&target), json).await
-            } else {
-                graph_show(&server, json).await
-            }
-        }
-        GraphCommand::Affected { target } => {
-            graph_affected(&server, &normalize_graph_target(&target), json).await
-        }
-    }
-}
-
-fn infer_graph_target_from_manifest() -> gumgum_core::Result<Option<String>> {
-    let path = PathBuf::from("gumgum.toml");
-    if path.exists() {
-        return Ok(Some(format!(
-            "worker/{}",
-            load_worker_path(&path)?.worker.name
-        )));
-    }
-    Ok(None)
-}
-
-fn normalize_graph_target(target: &str) -> String {
-    if target.contains('/') {
-        target.to_owned()
-    } else if target.contains('.') {
-        format!("route/{target}")
-    } else {
-        format!("worker/{target}")
-    }
-}
-
-async fn graph_show(server: &str, json: bool) -> gumgum_core::Result<()> {
-    let report = ServerClient::new(server).graph().await?;
-    if json {
-        print_value(true, &report);
-    } else {
-        println!("{}", report.graph);
-    }
-    Ok(())
-}
-
-async fn graph_affected(server: &str, target: &str, json: bool) -> gumgum_core::Result<()> {
-    let report = ServerClient::new(server).affected(target).await?;
-    if json {
-        print_value(true, &report);
-    } else {
-        println!("Affected by {}:", report.target);
-        let presenter = GraphPresenter::new();
-        for node in report.nodes {
-            println!("  {}", presenter.describe_node(&node));
-        }
-    }
     Ok(())
 }
 
