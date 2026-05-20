@@ -16,9 +16,9 @@ use gumgum_api::{
     ObjectRequest, PingReport, ServerListReport, ServerRecord, SetupPlan, SetupReport,
 };
 use gumgum_core::{
-    Capability, DoctorCheck, DoctorReport, ErrorCode, GumgumError, ManifestKind, PlanGraph,
-    Subsystem, WorkerManifest, load_worker_path, load_workspace_path, not_configured_status,
-    setup_actions, validate_path,
+    Capability, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport, ErrorCode,
+    GumgumError, ManifestKind, PlanGraph, Subsystem, WorkerManifest, load_worker_path,
+    load_workspace_path, not_configured_status, setup_actions, validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -1432,52 +1432,17 @@ fn sanitize_name(value: &str) -> String {
 }
 
 async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
-    let health_url = format!("http://{host}:7777/healthz");
-    let health: serde_json::Value = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .map_err(|source| {
-            GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to build HTTP client")
-                .likely_cause(source.to_string())
-                .build()
-        })?
-        .get(&health_url)
-        .send()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to reach gumgumd")
-                .likely_cause(source.to_string())
-                .next_command(format!("gumgum setup {host} --root-domain <domain>"))
-                .build()
-        })?
-        .error_for_status()
-        .map_err(|source| {
-            GumgumError::structured(Subsystem::Api, ErrorCode::Io, "gumgumd returned an error")
-                .likely_cause(source.to_string())
-                .build()
-        })?
-        .json()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "gumgumd returned invalid JSON",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    let ok = health
-        .get("ok")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    Ok(PingReport {
-        ok,
-        host: host.to_owned(),
-        health_url,
-        service_active: Some(ok),
-        health,
-    })
+    Ok(ping_report_from_core(DaemonHealthClient::ping(host).await?))
+}
+
+fn ping_report_from_core(report: DaemonPingReport) -> PingReport {
+    PingReport {
+        ok: report.ok,
+        host: report.host,
+        health_url: report.health_url,
+        service_active: report.service_active,
+        health: report.health,
+    }
 }
 
 async fn configure_host_dns(test_domain: &str, quiet: bool) -> gumgum_core::Result<()> {
@@ -1521,26 +1486,9 @@ async fn configure_client_resolver(
 }
 
 async fn wait_for_ping(host: &str) -> gumgum_core::Result<PingReport> {
-    let mut last_error = None;
-    for _ in 0..20 {
-        match ping_host(host).await {
-            Ok(report) if report.ok => return Ok(report),
-            Ok(report) => {
-                last_error = Some(format!("gumgumd health returned ok={}", report.ok));
-            }
-            Err(err) => {
-                let report = err.to_report();
-                last_error = Some(report.likely_cause.unwrap_or(report.message));
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    Err(
-        GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to reach gumgumd")
-            .likely_cause(last_error.unwrap_or_else(|| "health check timed out".to_owned()))
-            .next_command("gumgum setup 127.0.0.1 --root-domain <domain>")
-            .build(),
-    )
+    Ok(ping_report_from_core(
+        DaemonHealthClient::wait_for_ping(host).await?,
+    ))
 }
 
 async fn install_gumgumd(setup: ResolvedSetup, quiet: bool) -> gumgum_core::Result<SetupReport> {
