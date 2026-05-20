@@ -1,4 +1,5 @@
 use gumgum_core::{DaemonStatus, StatusReport};
+pub use gumgum_core::{GraphEdge, GraphNode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -128,20 +129,6 @@ pub struct GraphReport {
     pub nodes: Vec<GraphNode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<GraphEdge>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct GraphNode {
-    pub id: String,
-    pub kind: String,
-    pub label: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct GraphEdge {
-    pub from: String,
-    pub to: String,
-    pub kind: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -159,3 +159,89 @@ pub struct DoctorCheck {
     pub ok: bool,
     pub message: String,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+}
+
+impl GraphNode {
+    pub fn new(id: impl Into<String>, kind: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            kind: kind.into(),
+            label: label.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+}
+
+impl GraphEdge {
+    pub fn new(from: impl Into<String>, to: impl Into<String>, kind: impl Into<String>) -> Self {
+        Self {
+            from: from.into(),
+            to: to.into(),
+            kind: kind.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct Graph {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
+impl Graph {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_node(mut self, node: GraphNode) -> Self {
+        self.nodes.push(node);
+        self
+    }
+
+    pub fn with_edge(mut self, edge: GraphEdge) -> Self {
+        self.edges.push(edge);
+        self
+    }
+
+    pub fn topological_levels(&self) -> Vec<Vec<String>> {
+        let mut remaining = self
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut levels = Vec::new();
+        while !remaining.is_empty() {
+            let ready = remaining
+                .iter()
+                .filter(|id| {
+                    !self
+                        .edges
+                        .iter()
+                        .any(|edge| edge.to == **id && remaining.contains(&edge.from))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if ready.is_empty() {
+                levels.push(remaining.iter().cloned().collect());
+                break;
+            }
+            for id in &ready {
+                remaining.remove(id);
+            }
+            levels.push(ready);
+        }
+        levels
+    }
+}
