@@ -181,18 +181,27 @@ async fn daemon_create_object(
     let dns = object_dns(&capability_name, &request.name, &request.root_domain);
     let provider_plan = object_provider_plan(capability, &request.name, &dns);
     let provider = provider_plan.provider.provider.clone();
+    let provider_credentials = if capability == gumgum_core::Capability::Blob {
+        match ConfigStore::from_home_env().and_then(|store| store.load_minio_credentials()) {
+            Ok(Some(credentials)) => Some(credentials),
+            _ => {
+                return Json(missing_provider_credentials_report(
+                    capability_name,
+                    request.name,
+                    dns,
+                    provider,
+                    provider_plan.connection_examples,
+                ));
+            }
+        }
+    } else {
+        None
+    };
     let ok = tokio::task::spawn_blocking(move || store.materialize_object(&request_for_db))
         .await
         .ok()
         .and_then(Result::ok)
         .unwrap_or(false);
-    let provider_credentials = if capability == gumgum_core::Capability::Blob {
-        ConfigStore::from_home_env()
-            .and_then(|store| store.load_or_init_minio_credentials())
-            .ok()
-    } else {
-        None
-    };
     let provider_actions =
         ProviderReconciler::ensure_with_credentials(&provider_plan, provider_credentials)
             .await
@@ -212,6 +221,28 @@ async fn daemon_create_object(
         provider_actions,
         message: "global object materialized and provider reconciled".to_owned(),
     })
+}
+
+fn missing_provider_credentials_report(
+    kind: String,
+    name: String,
+    dns: String,
+    provider: String,
+    connection_examples: Vec<String>,
+) -> ObjectReport {
+    ObjectReport {
+        ok: false,
+        kind,
+        name,
+        dns,
+        provider,
+        connection_examples,
+        provider_actions: vec![
+            "provider credentials are required before creating this object".to_owned(),
+            "configure ~/.gumgum/providers/minio-main/credentials.json or run provider credential setup when available".to_owned(),
+        ],
+        message: "provider credentials are not configured".to_owned(),
+    }
 }
 
 async fn daemon_providers() -> Json<ProviderStatusReport> {
@@ -553,6 +584,26 @@ mod tests {
             report
                 .capabilities
                 .contains(&"rollback_revision_id".to_owned())
+        );
+    }
+
+    #[test]
+    fn missing_provider_credentials_report_blocks_object_creation() {
+        let report = missing_provider_credentials_report(
+            "blob".to_owned(),
+            "uploads".to_owned(),
+            "uploads.blob.example.test".to_owned(),
+            "minio.main".to_owned(),
+            Vec::new(),
+        );
+
+        assert!(!report.ok);
+        assert_eq!(report.message, "provider credentials are not configured");
+        assert!(
+            report
+                .provider_actions
+                .iter()
+                .any(|action| action.contains("provider credentials are required"))
         );
     }
 
