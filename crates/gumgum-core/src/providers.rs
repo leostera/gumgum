@@ -1,5 +1,6 @@
-use crate::{Capability, sanitize_name};
+use crate::{Capability, ErrorCode, GumgumError, Subsystem, sanitize_name};
 use serde::{Deserialize, Serialize};
+use tokio::process::Command as TokioCommand;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProviderSpec {
@@ -87,6 +88,89 @@ pub fn object_provider_plan(capability: Capability, name: &str, dns: &str) -> Ob
     }
 }
 
+pub struct ProviderReconciler;
+
+impl ProviderReconciler {
+    pub async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+        match plan.capability {
+            Capability::Kv => ensure_redis(&plan.provider).await,
+            _ => Ok(plan.actions.clone()),
+        }
+    }
+}
+
+async fn ensure_redis(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
+    ensure_network().await?;
+    if docker_inspect(&provider.container).await {
+        run_provider_command(
+            TokioCommand::new("docker")
+                .arg("start")
+                .arg(&provider.container),
+            "could not start redis provider",
+        )
+        .await?;
+        return Ok(vec![format!(
+            "started existing {} provider",
+            provider.provider
+        )]);
+    }
+    run_provider_command(
+        TokioCommand::new("docker")
+            .arg("run")
+            .arg("-d")
+            .arg("--name")
+            .arg(&provider.container)
+            .arg("--restart")
+            .arg("unless-stopped")
+            .arg("--network")
+            .arg("gumgum-network")
+            .arg(&provider.image),
+        "could not create redis provider",
+    )
+    .await?;
+    Ok(vec![format!(
+        "created {} provider container {}",
+        provider.provider, provider.container
+    )])
+}
+
+async fn ensure_network() -> crate::Result<()> {
+    run_provider_command(
+        TokioCommand::new("sh").arg("-c").arg(
+            "docker network inspect gumgum-network >/dev/null 2>&1 || docker network create gumgum-network >/dev/null",
+        ),
+        "could not ensure GumGum provider network",
+    )
+    .await
+}
+
+async fn docker_inspect(container: &str) -> bool {
+    TokioCommand::new("docker")
+        .arg("inspect")
+        .arg(container)
+        .output()
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+async fn run_provider_command(cmd: &mut TokioCommand, message: &str) -> crate::Result<()> {
+    let output = cmd.output().await.map_err(|source| {
+        GumgumError::structured(Subsystem::Setup, ErrorCode::Io, message)
+            .likely_cause(source.to_string())
+            .build()
+    })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(
+            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, message)
+                .likely_cause(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+                .build(),
+        )
+    }
+}
+
 pub fn connection_examples(capability: Capability, name: &str, dns: &str) -> Vec<String> {
     match capability {
         Capability::Db => vec![
@@ -160,6 +244,20 @@ mod tests {
         let blob = provider_spec(Capability::Blob);
         assert_eq!(blob.provider, "minio.main");
         assert_eq!(blob.protocol, "s3");
+    }
+
+    #[test]
+    fn kv_provider_reconciler_is_scoped_to_redis_container() {
+        let plan = object_provider_plan(Capability::Kv, "sessions", "sessions.kv.example.test");
+
+        assert_eq!(plan.provider.container, "gumgum-provider-redis-main");
+        assert_eq!(plan.provider.image, "redis:7-alpine");
+        assert_eq!(plan.provider.port, 6379);
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| action == "ensure redis.main provider is running")
+        );
     }
 
     #[test]

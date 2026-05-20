@@ -10,8 +10,8 @@ use gumgum_api::{
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
-    GlobalObject, GraphStore, GumgumError, LocalPlatform, Subsystem, WorkerBinding,
-    affected_subgraph, not_configured_status, object_dns, object_provider_plan,
+    GlobalObject, GraphStore, GumgumError, LocalPlatform, ProviderReconciler, Subsystem,
+    WorkerBinding, affected_subgraph, not_configured_status, object_dns, object_provider_plan,
     render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -184,6 +184,14 @@ async fn daemon_create_object(
         .ok()
         .and_then(Result::ok)
         .unwrap_or(false);
+    let provider_actions = ProviderReconciler::ensure(&provider_plan)
+        .await
+        .unwrap_or_else(|error| {
+            vec![format!(
+                "provider reconcile failed: {}",
+                error.to_report().message
+            )]
+        });
     Json(ObjectReport {
         ok,
         kind: capability_name,
@@ -191,8 +199,8 @@ async fn daemon_create_object(
         dns,
         provider,
         connection_examples: provider_plan.connection_examples,
-        provider_actions: provider_plan.actions,
-        message: "global object materialized in graph with provider plan".to_owned(),
+        provider_actions,
+        message: "global object materialized and provider reconciled".to_owned(),
     })
 }
 
