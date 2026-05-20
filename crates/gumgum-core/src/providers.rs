@@ -123,9 +123,22 @@ pub struct ProviderReconciler;
 
 impl ProviderReconciler {
     pub async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+        Self::ensure_with_credentials(plan, None).await
+    }
+
+    pub async fn ensure_with_credentials(
+        plan: &ObjectProviderPlan,
+        credentials: Option<ProviderCredentials>,
+    ) -> crate::Result<Vec<String>> {
         match plan.capability {
             Capability::Kv => ensure_redis(&plan.provider).await,
-            Capability::Blob => ensure_minio(plan, ProviderCredentials::minio_local_dev()).await,
+            Capability::Blob => {
+                ensure_minio(
+                    plan,
+                    credentials.unwrap_or_else(ProviderCredentials::minio_local_dev),
+                )
+                .await
+            }
             _ => Ok(plan.actions.clone()),
         }
     }
@@ -426,6 +439,20 @@ mod tests {
                 .iter()
                 .any(|action| action == "ensure redis.main provider is running")
         );
+    }
+
+    #[test]
+    fn provider_reconciler_accepts_explicit_credentials_for_bucket() {
+        let credentials = ProviderCredentials {
+            username_env: "MINIO_ROOT_USER".to_owned(),
+            password_env: "MINIO_ROOT_PASSWORD".to_owned(),
+            username: "gumgum".to_owned(),
+            password: "secret".to_owned(),
+        };
+        let plan = object_provider_plan(Capability::Blob, "uploads", "uploads.blob.example.test");
+
+        assert_eq!(credentials.username, "gumgum");
+        assert_eq!(plan.provider.provider, "minio.main");
     }
 
     #[test]

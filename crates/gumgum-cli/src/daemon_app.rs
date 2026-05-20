@@ -186,14 +186,22 @@ async fn daemon_create_object(
         .ok()
         .and_then(Result::ok)
         .unwrap_or(false);
-    let provider_actions = ProviderReconciler::ensure(&provider_plan)
-        .await
-        .unwrap_or_else(|error| {
-            vec![format!(
-                "provider reconcile failed: {}",
-                error.to_report().message
-            )]
-        });
+    let provider_credentials = if capability == gumgum_core::Capability::Blob {
+        ConfigStore::from_home_env()
+            .and_then(|store| store.load_or_init_minio_credentials())
+            .ok()
+    } else {
+        None
+    };
+    let provider_actions =
+        ProviderReconciler::ensure_with_credentials(&provider_plan, provider_credentials)
+            .await
+            .unwrap_or_else(|error| {
+                vec![format!(
+                    "provider reconcile failed: {}",
+                    error.to_report().message
+                )]
+            });
     Json(ObjectReport {
         ok,
         kind: capability_name,
