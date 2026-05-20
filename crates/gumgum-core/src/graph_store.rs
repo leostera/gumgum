@@ -203,7 +203,7 @@ impl GraphStore {
         self.init()?;
         let conn = self.open()?;
         let mut stmt = conn
-            .prepare("SELECT r.image, d.container, d.route, d.port, d.health FROM deployment_revisions r JOIN desired_deployments d ON d.worker = r.worker WHERE r.worker = ?1 ORDER BY r.id DESC LIMIT 1")
+            .prepare("SELECT image, container, route, port, health FROM deployment_revisions WHERE worker = ?1 ORDER BY id DESC LIMIT 1")
             .map_err(|source| self.error("could not query deployment revisions", source))?;
         let mut rows = stmt
             .query(params![worker])
@@ -596,10 +596,17 @@ mod tests {
         assert!(store.latest_previous_deploy("api").unwrap().is_none());
         let mut second = first.clone();
         second.image = "127.0.0.1:55000/dev.leostera/peekaboo/api:2".to_owned();
+        second.container = "gumgum-api-v2".to_owned();
+        second.route = "api-v2.peekaboo.leostera.test".to_owned();
+        second.port = 4000;
+        second.health = "/ready".to_owned();
         store.materialize_deploy(&second).unwrap();
         let previous = store.latest_previous_deploy("api").unwrap().unwrap();
         assert_eq!(previous.image, first.image);
+        assert_eq!(previous.container, first.container);
         assert_eq!(previous.route, first.route);
+        assert_eq!(previous.port, first.port);
+        assert_eq!(previous.health, first.health);
         let _ = fs::remove_file(store.path);
     }
 }
