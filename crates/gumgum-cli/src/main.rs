@@ -14,11 +14,11 @@ use graph_presenter::GraphPresenter;
 use gumgum_api::{
     BindingRequest, DeployApplyReport, DeployRequest, GraphEdge, GraphNode, ObjectReport,
     ObjectRequest, PingReport, ServerListReport, ServerRecord, SetupPlan, SetupReport,
-    not_configured_status, setup_actions,
 };
 use gumgum_core::{
     Capability, DoctorCheck, DoctorReport, ErrorCode, GumgumError, ManifestKind, PlanGraph,
-    Subsystem, WorkerManifest, load_worker_path, load_workspace_path, validate_path,
+    Subsystem, WorkerManifest, load_worker_path, load_workspace_path, not_configured_status,
+    setup_actions, validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -335,14 +335,15 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
             if cli.dry_run {
-                let plan = SetupPlan::dry_run(
-                    resolved.name,
-                    resolved.host,
-                    resolved.user,
-                    resolved.root_domain,
-                    resolved.test_domain,
-                    resolved.local,
-                );
+                let plan = SetupPlan {
+                    ok: true,
+                    name: resolved.name,
+                    host: resolved.host,
+                    user: resolved.user,
+                    root_domain: resolved.root_domain,
+                    test_domain: resolved.test_domain,
+                    actions: setup_actions(resolved.local),
+                };
                 print_value(cli.json, &plan)
             } else {
                 let report = install_gumgumd(resolved, cli.json).await?;

@@ -7,12 +7,12 @@ use axum::{
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest, GraphEdge,
     GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, RollbackReport,
-    RollbackRequest, not_configured_status,
+    RollbackRequest,
 };
 use gumgum_core::{
     ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
     GlobalObject, GraphStore, GumgumError, Subsystem, WorkerBinding, connection_examples,
-    object_dns, provider_for_object,
+    not_configured_status, object_dns, provider_for_object,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;

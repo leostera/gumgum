@@ -1,4 +1,4 @@
-use gumgum_core::{Capability, DaemonStatus, StatusReport};
+use gumgum_core::Capability;
 pub use gumgum_core::{GraphEdge, GraphNode};
 use serde::{Deserialize, Serialize};
 
@@ -13,27 +13,6 @@ pub struct SetupPlan {
     pub actions: Vec<String>,
 }
 
-impl SetupPlan {
-    pub fn dry_run(
-        name: String,
-        host: String,
-        user: Option<String>,
-        root_domain: String,
-        test_domain: String,
-        local: bool,
-    ) -> Self {
-        Self {
-            ok: true,
-            name,
-            host,
-            user,
-            root_domain,
-            test_domain,
-            actions: setup_actions(local),
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SetupReport {
     pub ok: bool,
@@ -44,28 +23,6 @@ pub struct SetupReport {
     pub service: String,
     pub health_url: String,
     pub actions: Vec<String>,
-}
-
-pub fn setup_actions(local: bool) -> Vec<String> {
-    if local {
-        return vec![
-            "create ~/.gumgum/bin and ~/.gumgum/daemon".to_owned(),
-            "install running gumgum binary into ~/.gumgum/bin".to_owned(),
-            "write gumgumd user-systemd service".to_owned(),
-            "enable and restart gumgumd".to_owned(),
-            "check http://127.0.0.1:7777/healthz".to_owned(),
-        ];
-    }
-
-    vec![
-        "ssh into host".to_owned(),
-        "run curl -fsSL https://get.gumgum.dev | sh".to_owned(),
-        "run ~/.gumgum/bin/gumgum setup on the host".to_owned(),
-        "exit ssh".to_owned(),
-        "save server locally".to_owned(),
-        "configure local resolver for test domain".to_owned(),
-        "check http://<host>:7777/healthz".to_owned(),
-    ]
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -190,13 +147,4 @@ pub struct RollbackReport {
     pub image: Option<String>,
     pub actions: Vec<String>,
     pub message: String,
-}
-
-pub fn not_configured_status() -> StatusReport {
-    StatusReport {
-        ok: true,
-        configured: false,
-        daemon: DaemonStatus::NotConfigured,
-        message: "GumGum.dev is not configured on this machine yet".to_owned(),
-    }
 }
