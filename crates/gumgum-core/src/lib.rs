@@ -1,5 +1,10 @@
+pub mod graph_store;
 pub mod manifest;
 
+pub use graph_store::{
+    DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, connection_examples, object_dns,
+    provider_for_object,
+};
 pub use manifest::{
     Ingress, Limits, ManifestKind, ObjectBinding, Observability, Project, ValidationReport, Worker,
     WorkerManifest, Workspace, WorkspaceManifest, Zone, load_worker_path, load_workspace_path,
@@ -452,7 +457,7 @@ impl MutablePlanGraph {
     }
 
     fn add_binding(&mut self, worker: &str, kind: &str, object: &str, binding: Option<&str>) {
-        let provider = provider_for_object(kind);
+        let provider = provider_for_plan_object(kind);
         let object_id = format!("{kind}/{object}");
         self.nodes.push(PlanNode::new(
             format!("provider/{provider}"),
@@ -499,7 +504,7 @@ impl MutablePlanGraph {
     }
 }
 
-fn provider_for_object(kind: &str) -> &'static str {
+fn provider_for_plan_object(kind: &str) -> &'static str {
     match kind {
         "db" | "database" => "postgres.main",
         "kv" => "redis.main",

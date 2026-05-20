@@ -21,10 +21,10 @@ use gumgum_api::{
     setup_actions,
 };
 use gumgum_core::{
-    DoctorCheck, DoctorReport, ErrorCode, GumgumError, ManifestKind, PlanGraph, Subsystem,
-    WorkerManifest, load_worker_path, load_workspace_path, validate_path,
+    DesiredDeploy, DoctorCheck, DoctorReport, ErrorCode, GlobalObject, GraphStore, GumgumError,
+    ManifestKind, PlanGraph, Subsystem, WorkerBinding, WorkerManifest, connection_examples,
+    load_worker_path, load_workspace_path, object_dns, provider_for_object, validate_path,
 };
-use rusqlite::{Connection, params};
 use serde::Serialize;
 use server_client::ServerClient;
 use std::{fs, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
@@ -1572,7 +1572,7 @@ struct DaemonState {
 async fn run_daemon() -> gumgum_core::Result<()> {
     ensure_local_platform(false).await?;
     let graph_path = gumgum_root()?.join("graph.sqlite");
-    init_graph_db(&graph_path)?;
+    GraphStore::new(graph_path.clone()).init()?;
     let state = DaemonState {
         graph_path: Arc::new(graph_path),
     };
@@ -1616,8 +1616,8 @@ async fn daemon_status() -> Json<gumgum_core::StatusReport> {
 }
 
 async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {
-    let path = (*state.graph_path).clone();
-    let (nodes, edges) = tokio::task::spawn_blocking(move || load_graph(&path))
+    let store = GraphStore::new((*state.graph_path).clone());
+    let (nodes, edges) = tokio::task::spawn_blocking(move || store.load_graph())
         .await
         .ok()
         .and_then(Result::ok)
@@ -1654,7 +1654,7 @@ async fn daemon_graph_affected(
     let target = query.target;
     let target_for_task = target.clone();
     let (nodes, edges) = tokio::task::spawn_blocking(move || {
-        let (nodes, edges) = load_graph(&path)?;
+        let (nodes, edges) = GraphStore::new(path).load_graph()?;
         Ok::<_, GumgumError>(affected_subgraph(&nodes, &edges, &target_for_task))
     })
     .await
@@ -1745,252 +1745,20 @@ fn affected_subgraph(
     (affected_nodes, affected_edges)
 }
 
-fn load_graph(path: &PathBuf) -> gumgum_core::Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
-    init_graph_db(path)?;
-    let conn = Connection::open(path).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not open graph database",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    let mut nodes = vec![
-        graph_node("gumgumd", "daemon", "gumgumd"),
-        graph_node("provider/registry.platform", "provider", "gumgum-registry"),
-        graph_node("provider/dnsmasq.platform", "provider", "gumgum-dnsmasq"),
-        graph_node("provider/caddy.gateway", "provider", "gumgum-caddy"),
-        graph_node("provider/postgres.main", "provider", "postgres.main"),
-        graph_node("provider/redis.main", "provider", "redis.main"),
-    ];
-    let mut edges = vec![
-        graph_edge("gumgumd", "provider/registry.platform", "owns"),
-        graph_edge("gumgumd", "provider/dnsmasq.platform", "owns"),
-        graph_edge("gumgumd", "provider/caddy.gateway", "owns"),
-        graph_edge("gumgumd", "provider/postgres.main", "owns"),
-        graph_edge("gumgumd", "provider/redis.main", "owns"),
-    ];
-    let mut stmt = conn
-        .prepare("SELECT worker, image, container, route FROM desired_deployments ORDER BY worker")
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not query graph database",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        })
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read graph rows",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    for row in rows {
-        let (worker, image, container, route) = row.map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not decode graph row",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-        let worker_id = format!("worker/{worker}");
-        let image_id = format!("image/{worker}");
-        let container_id = format!("container/{container}");
-        let route_id = format!("route/{route}");
-        nodes.push(graph_node(&worker_id, "worker", &worker));
-        nodes.push(graph_node(&image_id, "image", &image));
-        let (domain_scope, namespace) = image_scope(&image);
-        let project_network_id = format!("network/gumgum-{domain_scope}-{namespace}-network");
-        let domain_network_id = format!("network/gumgum-{domain_scope}-network");
-        nodes.push(graph_node(&container_id, "container", &container));
-        nodes.push(graph_node(
-            &project_network_id,
-            "network",
-            &format!("gumgum-{domain_scope}-{namespace}-network"),
-        ));
-        nodes.push(graph_node(
-            &domain_network_id,
-            "network",
-            &format!("gumgum-{domain_scope}-network"),
-        ));
-        nodes.push(graph_node(
-            "network/gumgum-network",
-            "network",
-            "gumgum-network",
-        ));
-        nodes.push(graph_node(&route_id, "route", &route));
-        edges.push(graph_edge("gumgumd", &worker_id, "owns"));
-        edges.push(graph_edge(&worker_id, &image_id, "created_from"));
-        edges.push(graph_edge(&worker_id, &container_id, "runs"));
-        edges.push(graph_edge(
-            &container_id,
-            &project_network_id,
-            "attached_to",
-        ));
-        edges.push(graph_edge(
-            &project_network_id,
-            &domain_network_id,
-            "depends_on",
-        ));
-        edges.push(graph_edge(
-            &domain_network_id,
-            "network/gumgum-network",
-            "depends_on",
-        ));
-        edges.push(graph_edge(&worker_id, &route_id, "owns"));
-        edges.push(graph_edge("provider/registry.platform", &image_id, "backs"));
-        edges.push(graph_edge("provider/caddy.gateway", &route_id, "routes"));
-        edges.push(graph_edge(&route_id, &container_id, "routes_to"));
-    }
-    let mut stmt = conn
-        .prepare("SELECT kind, name, dns, provider FROM global_objects ORDER BY kind, name")
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not query graph objects",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        })
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read graph objects",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    for row in rows {
-        let (kind, name, dns, provider) = row.map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not decode graph object",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-        let object_id = format!("{kind}/{name}");
-        let provider_id = format!("provider/{provider}");
-        nodes.push(graph_node(
-            &object_id,
-            "global_object",
-            &format!("{kind}: {dns}"),
-        ));
-        edges.push(graph_edge(&provider_id, &object_id, "backs"));
-    }
-    let mut stmt = conn
-        .prepare("SELECT object_kind, object_name, worker, binding, access FROM bindings ORDER BY worker, binding")
-        .map_err(|source| {
-            GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not query graph bindings")
-                .likely_cause(source.to_string())
-                .build()
-        })?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-            ))
-        })
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read graph bindings",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    for row in rows {
-        let (kind, name, worker, binding, access) = row.map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not decode graph binding",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-        let binding_id = format!("binding/{worker}/{binding}");
-        let worker_id = format!("worker/{worker}");
-        let object_id = format!("{kind}/{name}");
-        nodes.push(graph_node(
-            &binding_id,
-            "binding",
-            &format!("{binding} ({access})"),
-        ));
-        edges.push(graph_edge(&worker_id, &binding_id, "binds"));
-        edges.push(graph_edge(&binding_id, &object_id, "projects_as"));
-    }
-    Ok((nodes, edges))
-}
-
-fn image_scope(image: &str) -> (String, String) {
-    let repo = image.split('/').collect::<Vec<_>>();
-    if repo.len() >= 4 {
-        (repo[1].to_owned(), repo[2].to_owned())
-    } else {
-        ("local".to_owned(), "root".to_owned())
-    }
-}
-
-fn graph_node(id: &str, kind: &str, label: &str) -> GraphNode {
-    GraphNode {
-        id: id.to_owned(),
-        kind: kind.to_owned(),
-        label: label.to_owned(),
-    }
-}
-
-fn graph_edge(from: &str, to: &str, kind: &str) -> GraphEdge {
-    GraphEdge {
-        from: from.to_owned(),
-        to: to.to_owned(),
-        kind: kind.to_owned(),
-    }
-}
-
 async fn daemon_create_object(
     State(state): State<DaemonState>,
     Json(request): Json<ObjectRequest>,
 ) -> Json<ObjectReport> {
-    let path = (*state.graph_path).clone();
-    let request_for_db = request.clone();
+    let store = GraphStore::new((*state.graph_path).clone());
+    let request_for_db = GlobalObject {
+        kind: request.kind.clone(),
+        name: request.name.clone(),
+        namespace: request.namespace.clone(),
+        root_domain: request.root_domain.clone(),
+    };
     let provider = provider_for_object(&request.kind).to_owned();
-    let dns = format!("{}.{}.{}", request.name, request.kind, request.root_domain);
-    let ok = tokio::task::spawn_blocking(move || materialize_object(&path, &request_for_db))
+    let dns = object_dns(&request.kind, &request.name, &request.root_domain);
+    let ok = tokio::task::spawn_blocking(move || store.materialize_object(&request_for_db))
         .await
         .ok()
         .and_then(Result::ok)
@@ -2011,9 +1779,15 @@ async fn daemon_create_binding(
     State(state): State<DaemonState>,
     Json(request): Json<BindingRequest>,
 ) -> Json<BindingReport> {
-    let path = (*state.graph_path).clone();
-    let request_for_db = request.clone();
-    let ok = tokio::task::spawn_blocking(move || materialize_binding(&path, &request_for_db))
+    let store = GraphStore::new((*state.graph_path).clone());
+    let request_for_db = WorkerBinding {
+        object_kind: request.object_kind.clone(),
+        object_name: request.object_name.clone(),
+        worker: request.worker.clone(),
+        binding: request.binding.clone(),
+        access: request.access.clone(),
+    };
+    let ok = tokio::task::spawn_blocking(move || store.materialize_binding(&request_for_db))
         .await
         .ok()
         .and_then(Result::ok)
@@ -2025,102 +1799,6 @@ async fn daemon_create_binding(
         binding: request.binding,
         message: "binding materialized in graph".to_owned(),
     })
-}
-
-fn connection_examples(kind: &str, name: &str, dns: &str) -> Vec<String> {
-    match kind {
-        "db" | "database" => vec![
-            format!("psql postgres://{name}:<password>@{dns}:5432/{name}"),
-            format!("pgAdmin host={dns} port=5432 database={name} username={name}"),
-        ],
-        "kv" => vec![
-            format!("redis-cli -u redis://{dns}:6379/0"),
-            format!("RedisInsight host={dns} port=6379 database=0"),
-        ],
-        _ => Vec::new(),
-    }
-}
-
-fn provider_for_object(kind: &str) -> &'static str {
-    match kind {
-        "db" | "database" => "postgres.main",
-        "kv" => "redis.main",
-        "bucket" | "blob" => "minio.main",
-        "queue" => "redpanda.main",
-        _ => "manual.main",
-    }
-}
-
-fn materialize_object(path: &PathBuf, request: &ObjectRequest) -> gumgum_core::Result<bool> {
-    init_graph_db(path)?;
-    let conn = Connection::open(path).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not open graph database",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    let dns = format!("{}.{}.{}", request.name, request.kind, request.root_domain);
-    let provider = provider_for_object(&request.kind);
-    conn.execute(
-        "INSERT INTO global_objects (kind, name, namespace, root_domain, dns, provider, status, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ready', CURRENT_TIMESTAMP)
-         ON CONFLICT(kind, name) DO UPDATE SET
-           namespace=excluded.namespace,
-           root_domain=excluded.root_domain,
-           dns=excluded.dns,
-           provider=excluded.provider,
-           status='ready',
-           updated_at=CURRENT_TIMESTAMP",
-        params![request.kind, request.name, request.namespace, request.root_domain, dns, provider],
-    )
-    .map_err(|source| {
-        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not materialize object")
-            .likely_cause(source.to_string())
-            .build()
-    })?;
-    Ok(true)
-}
-
-fn materialize_binding(path: &PathBuf, request: &BindingRequest) -> gumgum_core::Result<bool> {
-    init_graph_db(path)?;
-    let conn = Connection::open(path).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not open graph database",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    conn.execute(
-        "INSERT INTO bindings (object_kind, object_name, worker, binding, access, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
-         ON CONFLICT(worker, binding) DO UPDATE SET
-           object_kind=excluded.object_kind,
-           object_name=excluded.object_name,
-           access=excluded.access,
-           updated_at=CURRENT_TIMESTAMP",
-        params![
-            request.object_kind,
-            request.object_name,
-            request.worker,
-            request.binding,
-            request.access
-        ],
-    )
-    .map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not materialize binding",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    Ok(true)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -2161,20 +1839,20 @@ async fn daemon_rollback(
     State(state): State<DaemonState>,
     Json(request): Json<RollbackRequest>,
 ) -> Json<RollbackReport> {
-    let path = (*state.graph_path).clone();
+    let store = GraphStore::new((*state.graph_path).clone());
     let worker = request.worker.clone();
     let rollback_request =
-        tokio::task::spawn_blocking(move || latest_previous_deploy(&path, &worker))
+        tokio::task::spawn_blocking(move || store.latest_previous_deploy(&worker))
             .await
             .ok()
             .and_then(Result::ok)
             .flatten();
-    if let Some(deploy_request) = rollback_request {
-        let image = deploy_request.image.clone();
-        let path = (*state.graph_path).clone();
-        let request_for_db = deploy_request.clone();
-        let _ =
-            tokio::task::spawn_blocking(move || materialize_deploy(&path, &request_for_db)).await;
+    if let Some(deploy) = rollback_request {
+        let image = deploy.image.clone();
+        let store = GraphStore::new((*state.graph_path).clone());
+        let deploy_for_db = deploy.clone();
+        let _ = tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db)).await;
+        let deploy_request = deploy_request_from_desired(deploy);
         let (_, mut actions) = reconcile_deploy(&(*state.graph_path), &deploy_request)
             .await
             .unwrap_or_else(|error| {
@@ -2211,9 +1889,10 @@ async fn daemon_deploy(
 ) -> Json<DeployApplyReport> {
     let path = (*state.graph_path).clone();
     let reconcile_path = path.clone();
-    let request_for_db = request.clone();
+    let store = GraphStore::new(path.clone());
+    let request_for_db = desired_from_deploy_request(request.clone());
     let materialized =
-        tokio::task::spawn_blocking(move || materialize_deploy(&path, &request_for_db))
+        tokio::task::spawn_blocking(move || store.materialize_deploy(&request_for_db))
             .await
             .ok()
             .and_then(Result::ok)
@@ -2236,204 +1915,26 @@ async fn daemon_deploy(
     })
 }
 
-fn init_graph_db(path: &PathBuf) -> gumgum_core::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not create graph directory",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    }
-    let conn = Connection::open(path).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not open graph database",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS desired_deployments (
-            worker TEXT PRIMARY KEY,
-            image TEXT NOT NULL,
-            container TEXT NOT NULL,
-            route TEXT NOT NULL,
-            port INTEGER NOT NULL,
-            health TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS global_objects (
-            kind TEXT NOT NULL,
-            name TEXT NOT NULL,
-            namespace TEXT NOT NULL,
-            root_domain TEXT NOT NULL,
-            dns TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'ready',
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY(kind, name)
-        );
-        CREATE TABLE IF NOT EXISTS bindings (
-            object_kind TEXT NOT NULL,
-            object_name TEXT NOT NULL,
-            worker TEXT NOT NULL,
-            binding TEXT NOT NULL,
-            access TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY(worker, binding)
-        );
-        CREATE TABLE IF NOT EXISTS deployment_revisions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            worker TEXT NOT NULL,
-            image TEXT NOT NULL,
-            container TEXT NOT NULL,
-            route TEXT NOT NULL,
-            port INTEGER NOT NULL,
-            health TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );",
-    )
-    .map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not initialize graph database",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })
-}
-
-fn materialize_deploy(path: &PathBuf, request: &DeployRequest) -> gumgum_core::Result<bool> {
-    init_graph_db(path)?;
-    let mut conn = Connection::open(path).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not open graph database",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    let tx = conn.transaction().map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not begin graph transaction",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    tx.execute(
-        "INSERT INTO deployment_revisions (worker, image, container, route, port, health)
-         SELECT worker, image, container, route, port, health
-         FROM desired_deployments
-         WHERE worker = ?1 AND image != ?2",
-        params![request.worker, request.image],
-    )
-    .map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not record deployment revision",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    tx.execute(
-        "INSERT INTO desired_deployments (worker, image, container, route, port, health, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
-         ON CONFLICT(worker) DO UPDATE SET
-           image=excluded.image,
-           container=excluded.container,
-           route=excluded.route,
-           port=excluded.port,
-           health=excluded.health,
-           updated_at=CURRENT_TIMESTAMP",
-        params![request.worker, request.image, request.container, request.route, request.port, request.health],
-    )
-    .map_err(|source| {
-        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not materialize deployment")
-            .likely_cause(source.to_string())
-            .build()
-    })?;
-    tx.commit().map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not commit graph transaction",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    Ok(true)
-}
-
-fn latest_previous_deploy(
-    path: &PathBuf,
-    worker: &str,
-) -> gumgum_core::Result<Option<DeployRequest>> {
-    init_graph_db(path)?;
-    let conn = Connection::open(path).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not open graph database",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    let mut stmt = conn
-        .prepare("SELECT r.image, d.container, d.route, d.port, d.health FROM deployment_revisions r JOIN desired_deployments d ON d.worker = r.worker WHERE r.worker = ?1 ORDER BY r.id DESC LIMIT 1")
-        .map_err(|source| {
-            GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not query deployment revisions")
-                .likely_cause(source.to_string())
-                .build()
-        })?;
-    let mut rows = stmt.query(params![worker]).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not read deployment revisions",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    if let Some(row) = rows.next().map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not decode deployment revision",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })? {
-        Ok(Some(DeployRequest {
-            worker: worker.to_owned(),
-            image: row.get(0).map_err(sql_decode_error)?,
-            container: row.get(1).map_err(sql_decode_error)?,
-            route: row.get(2).map_err(sql_decode_error)?,
-            port: row.get::<_, i64>(3).map_err(sql_decode_error)? as u16,
-            health: row.get(4).map_err(sql_decode_error)?,
-        }))
-    } else {
-        Ok(None)
+fn desired_from_deploy_request(value: DeployRequest) -> DesiredDeploy {
+    DesiredDeploy {
+        worker: value.worker,
+        image: value.image,
+        container: value.container,
+        route: value.route,
+        port: value.port,
+        health: value.health,
     }
 }
 
-fn sql_decode_error(source: rusqlite::Error) -> GumgumError {
-    GumgumError::structured(
-        Subsystem::Config,
-        ErrorCode::Io,
-        "could not decode deployment revision",
-    )
-    .likely_cause(source.to_string())
-    .build()
+fn deploy_request_from_desired(value: DesiredDeploy) -> DeployRequest {
+    DeployRequest {
+        worker: value.worker,
+        image: value.image,
+        container: value.container,
+        route: value.route,
+        port: value.port,
+        health: value.health,
+    }
 }
 
 async fn reconcile_deploy(
@@ -2517,73 +2018,7 @@ async fn reconcile_deploy(
 }
 
 fn load_binding_env(path: &PathBuf, worker: &str) -> gumgum_core::Result<Vec<(String, String)>> {
-    init_graph_db(path)?;
-    let conn = Connection::open(path).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            "could not open graph database",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT b.binding, b.object_kind, b.object_name, o.dns
-             FROM bindings b
-             JOIN global_objects o ON o.kind = b.object_kind AND o.name = b.object_name
-             WHERE b.worker = ?1
-             ORDER BY b.binding",
-        )
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not query binding env",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    let rows = stmt
-        .query_map(params![worker], |row| {
-            let binding: String = row.get(0)?;
-            let kind: String = row.get(1)?;
-            let name: String = row.get(2)?;
-            let dns: String = row.get(3)?;
-            Ok((binding, binding_value(&kind, &name, &dns)))
-        })
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read binding env",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    let mut env = Vec::new();
-    for row in rows {
-        env.push(row.map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not decode binding env",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?);
-    }
-    Ok(env)
-}
-
-fn binding_value(kind: &str, name: &str, dns: &str) -> String {
-    match kind {
-        "db" | "database" => format!("postgres://{name}:gumgum@{dns}:5432/{name}"),
-        "kv" => format!("redis://{dns}:6379/0"),
-        "bucket" | "blob" => format!("s3://{dns}/{name}"),
-        "queue" => format!("kafka://{dns}/{name}"),
-        _ => dns.to_owned(),
-    }
+    GraphStore::new(path.clone()).binding_env(worker)
 }
 
 async fn docker_running(name: &str) -> bool {
