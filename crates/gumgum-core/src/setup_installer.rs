@@ -194,48 +194,6 @@ impl GumgumInstaller {
         }
     }
 
-    pub async fn run_remote_setup_with_binary(
-        target: &str,
-        setup: &SetupTarget,
-        binary: &PathBuf,
-        quiet: bool,
-    ) -> crate::Result<()> {
-        if !binary.is_file() {
-            return Err(GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::InvalidArgs,
-                "local gumgum binary does not exist",
-            )
-            .likely_cause(binary.display().to_string())
-            .next_command("cargo build --release -p gumgum-cli")
-            .build());
-        }
-        let remote_binary = "~/.gumgum/bin/gumgum";
-        let remote_staged_binary = "~/.gumgum/bin/gumgum.next";
-        run_setup_command_streaming(
-            TokioCommand::new("ssh")
-                .arg(target)
-                .arg("mkdir -p ~/.gumgum/bin"),
-            quiet,
-        )
-        .await?;
-        run_setup_command_streaming(
-            TokioCommand::new("scp")
-                .arg(binary)
-                .arg(format!("{target}:{remote_staged_binary}")),
-            quiet,
-        )
-        .await?;
-        run_setup_command_streaming(
-            TokioCommand::new("ssh").arg(target).arg(format!(
-                "chmod 0755 {remote_staged_binary}; mv -f {remote_staged_binary} {remote_binary}; {}",
-                remote_setup_command(setup, quiet)
-            )),
-            quiet,
-        )
-        .await
-    }
-
     pub async fn run_remote_setup(
         target: &str,
         setup: &SetupTarget,

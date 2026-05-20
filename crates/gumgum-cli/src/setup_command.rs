@@ -3,8 +3,6 @@ use gumgum_api::{ServerRecord, SetupReport};
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, GumgumInstaller, SetupOptions, SetupTarget, setup_actions,
 };
-use std::path::PathBuf;
-
 pub(crate) async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<SetupTarget> {
     GumgumInstaller::resolve_target(SetupOptions {
         host: args.host,
@@ -18,7 +16,6 @@ pub(crate) async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<SetupT
 
 pub(crate) async fn install_gumgumd(
     setup: SetupTarget,
-    binary: Option<PathBuf>,
     quiet: bool,
 ) -> gumgum_core::Result<SetupReport> {
     progress(quiet, "resolving setup target");
@@ -35,16 +32,8 @@ pub(crate) async fn install_gumgumd(
         GumgumInstaller::configure_host_dns(&setup.test_domain, quiet).await?;
     } else {
         let target = setup.ssh_target();
-        if let Some(binary) = binary {
-            progress(
-                quiet,
-                format!("installing local binary on remote host {target}"),
-            );
-            GumgumInstaller::run_remote_setup_with_binary(&target, &setup, &binary, quiet).await?;
-        } else {
-            progress(quiet, format!("running remote bootstrap on {target}"));
-            GumgumInstaller::run_remote_setup(&target, &setup, quiet).await?;
-        }
+        progress(quiet, format!("running remote bootstrap on {target}"));
+        GumgumInstaller::run_remote_setup(&target, &setup, quiet).await?;
     }
     progress(quiet, "checking gumgumd health");
     DaemonHealthClient::wait_for_ping(&setup.host).await?;
