@@ -1393,13 +1393,6 @@ async fn run_command(cmd: &mut TokioCommand) -> gumgum_core::Result<()> {
     )
 }
 
-fn ssh_target(user: Option<&str>, host: &str) -> String {
-    match user {
-        Some(user) => format!("{user}@{host}"),
-        None => host.to_owned(),
-    }
-}
-
 fn progress(quiet: bool, message: impl AsRef<str>) {
     if !quiet {
         eprintln!("→ {}", message.as_ref());
@@ -1453,11 +1446,17 @@ mod tests {
 
     #[test]
     fn formats_ssh_target() {
-        assert_eq!(super::ssh_target(None, "192.168.0.3"), "192.168.0.3");
-        assert_eq!(
-            super::ssh_target(Some("root"), "192.168.0.3"),
-            "root@192.168.0.3"
-        );
+        let mut target = gumgum_core::SetupTarget {
+            name: "starbase".to_owned(),
+            host: "192.168.0.3".to_owned(),
+            user: None,
+            root_domain: "leostera.dev".to_owned(),
+            test_domain: "leostera.test".to_owned(),
+            local: false,
+        };
+        assert_eq!(target.ssh_target(), "192.168.0.3");
+        target.user = Some("root".to_owned());
+        assert_eq!(target.ssh_target(), "root@192.168.0.3");
     }
 
     #[test]
