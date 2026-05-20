@@ -18,7 +18,9 @@ use gumgum_core::{
     DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller,
     InitManifestKind as CoreInitKind, ManifestKind, PlanGraph, ServerRecord, SetupOptions,
     SetupTarget, Subsystem, WorkerManifest, default_project_name, init_plan, load_worker_path,
-    load_workspace_path, not_configured_status, sanitize_name, setup_actions, validate_path,
+    load_workspace_path, not_configured_status,
+    run_setup_command_streaming as run_command_streaming, sanitize_name, setup_actions,
+    validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -1287,66 +1289,6 @@ async fn install_gumgumd(setup: SetupTarget, quiet: bool) -> gumgum_core::Result
         health_url,
         actions: setup_actions(setup.local),
     })
-}
-
-pub(crate) async fn run_command_streaming(
-    cmd: &mut TokioCommand,
-    quiet: bool,
-) -> gumgum_core::Result<()> {
-    if quiet {
-        return run_command(cmd).await;
-    }
-    let status = cmd
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "failed to run setup command",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(
-            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "setup command failed")
-                .likely_cause(format!("exit status {status}"))
-                .next_command("gumgum setup <host> --root-domain <domain> --dry-run")
-                .build(),
-        )
-    }
-}
-
-async fn run_command(cmd: &mut TokioCommand) -> gumgum_core::Result<()> {
-    let output = cmd.output().await.map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "failed to run setup command",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(
-        GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "setup command failed")
-            .likely_cause(if stderr.is_empty() {
-                format!("exit status {}", output.status)
-            } else {
-                stderr
-            })
-            .next_command("gumgum setup <host> --root-domain <domain> --dry-run")
-            .build(),
-    )
 }
 
 fn progress(quiet: bool, message: impl AsRef<str>) {

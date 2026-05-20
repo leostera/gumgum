@@ -5,6 +5,7 @@ pub mod deployment;
 pub mod graph_store;
 pub mod manifest;
 pub mod platform;
+pub mod process;
 pub mod setup;
 pub mod setup_installer;
 
@@ -23,6 +24,7 @@ pub use manifest::{
     worker_manifest_template, worker_scaffold_files, workspace_manifest_template,
 };
 pub use platform::LocalPlatform;
+pub use process::{run_setup_command, run_setup_command_streaming};
 pub use setup::{not_configured_status, setup_actions};
 pub use setup_installer::{GumgumInstaller, SetupOptions, SetupTarget};
 
