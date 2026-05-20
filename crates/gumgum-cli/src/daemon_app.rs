@@ -270,18 +270,10 @@ async fn daemon_rollback(
             .and_then(Result::ok)
             .flatten();
     if let Some(revision) = rollback_revision {
-        let revision_id = Some(revision.id);
-        let deploy = revision.deploy;
+        let deploy = revision.deploy.clone();
         let image = deploy.image.clone();
-        let container = deploy.container.clone();
-        let route = deploy.route.clone();
-        let port = deploy.port;
-        let health = deploy.health.clone();
         let actions = if request.preview {
-            vec![
-                format!("would rollback to {image}"),
-                "preview only; no containers changed".to_owned(),
-            ]
+            rollback_preview_actions(&image)
         } else {
             let store = GraphStore::new((*state.graph_path).clone());
             let deploy_for_db = deploy.clone();
@@ -303,42 +295,70 @@ async fn daemon_rollback(
             actions.insert(0, format!("rollback to {image}"));
             actions
         };
-        Json(RollbackReport {
-            ok: true,
-            worker: request.worker,
-            image: Some(image),
-            revision_id,
-            container: Some(container),
-            route: Some(route),
-            port: Some(port),
-            health: Some(health),
+        Json(rollback_report_from_revision(
+            request.worker,
+            request.preview,
+            revision,
             actions,
-            message: if request.preview {
-                "rollback preview"
-            } else {
-                "rollback applied"
-            }
-            .to_owned(),
-        })
+        ))
     } else {
-        Json(RollbackReport {
-            ok: false,
-            worker: request.worker,
-            image: None,
-            revision_id: request.revision_id,
-            container: None,
-            route: None,
-            port: None,
-            health: None,
-            actions: vec![match request.revision_id {
-                Some(id) => format!("revision {id} not found"),
-                None => "no previous image recorded".to_owned(),
-            }],
-            message: match request.revision_id {
-                Some(id) => format!("deployment revision {id} not found"),
-                None => "no previous deployment image recorded".to_owned(),
-            },
-        })
+        Json(rollback_unavailable_report(
+            request.worker,
+            request.revision_id,
+        ))
+    }
+}
+
+fn rollback_preview_actions(image: &str) -> Vec<String> {
+    vec![
+        format!("would rollback to {image}"),
+        "preview only; no containers changed".to_owned(),
+    ]
+}
+
+fn rollback_report_from_revision(
+    worker: String,
+    preview: bool,
+    revision: gumgum_core::DeploymentRevision,
+    actions: Vec<String>,
+) -> RollbackReport {
+    RollbackReport {
+        ok: true,
+        worker,
+        image: Some(revision.deploy.image),
+        revision_id: Some(revision.id),
+        container: Some(revision.deploy.container),
+        route: Some(revision.deploy.route),
+        port: Some(revision.deploy.port),
+        health: Some(revision.deploy.health),
+        actions,
+        message: if preview {
+            "rollback preview"
+        } else {
+            "rollback applied"
+        }
+        .to_owned(),
+    }
+}
+
+fn rollback_unavailable_report(worker: String, revision_id: Option<i64>) -> RollbackReport {
+    RollbackReport {
+        ok: false,
+        worker,
+        image: None,
+        revision_id,
+        container: None,
+        route: None,
+        port: None,
+        health: None,
+        actions: vec![match revision_id {
+            Some(id) => format!("revision {id} not found"),
+            None => "no previous image recorded".to_owned(),
+        }],
+        message: match revision_id {
+            Some(id) => format!("deployment revision {id} not found"),
+            None => "no previous deployment image recorded".to_owned(),
+        },
     }
 }
 
@@ -438,6 +458,51 @@ mod tests {
         third.route = "api-v3.example.test".to_owned();
         store.materialize_deploy(&third).unwrap();
         store.deployment_revisions("api", 10).unwrap()
+    }
+
+    fn revision(id: i64) -> gumgum_core::DeploymentRevision {
+        gumgum_core::DeploymentRevision {
+            id,
+            created_at: "2026-05-20 12:00:00".to_owned(),
+            deploy: DesiredDeploy {
+                worker: "api".to_owned(),
+                image: "registry/api:1".to_owned(),
+                container: "gumgum-api".to_owned(),
+                route: "api.example.test".to_owned(),
+                port: 3000,
+                health: "/healthz".to_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn rollback_report_helper_preserves_apply_target_metadata() {
+        let report = rollback_report_from_revision(
+            "api".to_owned(),
+            false,
+            revision(42),
+            vec!["rollback to registry/api:1".to_owned()],
+        );
+
+        assert!(report.ok);
+        assert_eq!(report.message, "rollback applied");
+        assert_eq!(report.revision_id, Some(42));
+        assert_eq!(report.image.as_deref(), Some("registry/api:1"));
+        assert_eq!(report.container.as_deref(), Some("gumgum-api"));
+        assert_eq!(report.route.as_deref(), Some("api.example.test"));
+        assert_eq!(report.port, Some(3000));
+        assert_eq!(report.health.as_deref(), Some("/healthz"));
+        assert_eq!(report.actions, vec!["rollback to registry/api:1"]);
+    }
+
+    #[test]
+    fn rollback_unavailable_helper_distinguishes_missing_revision() {
+        let report = rollback_unavailable_report("api".to_owned(), Some(99));
+
+        assert!(!report.ok);
+        assert_eq!(report.revision_id, Some(99));
+        assert_eq!(report.actions, vec!["revision 99 not found"]);
+        assert_eq!(report.message, "deployment revision 99 not found");
     }
 
     #[tokio::test]
