@@ -243,23 +243,32 @@ async fn daemon_rollback(
         let route = deploy.route.clone();
         let port = deploy.port;
         let health = deploy.health.clone();
-        let store = GraphStore::new((*state.graph_path).clone());
-        let deploy_for_db = deploy.clone();
-        let _ = tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db)).await;
-        let deploy_request = deploy_request_from_desired(deploy);
-        let (_, mut actions) = ContainerReconciler::new((*state.graph_path).clone())
-            .reconcile(&core_deploy_request(&deploy_request))
-            .await
-            .unwrap_or_else(|error| {
-                (
-                    false,
-                    vec![format!(
-                        "rollback reconcile failed: {}",
-                        error.to_report().message
-                    )],
-                )
-            });
-        actions.insert(0, format!("rollback to {image}"));
+        let actions = if request.preview {
+            vec![
+                format!("would rollback to {image}"),
+                "preview only; no containers changed".to_owned(),
+            ]
+        } else {
+            let store = GraphStore::new((*state.graph_path).clone());
+            let deploy_for_db = deploy.clone();
+            let _ =
+                tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db)).await;
+            let deploy_request = deploy_request_from_desired(deploy);
+            let (_, mut actions) = ContainerReconciler::new((*state.graph_path).clone())
+                .reconcile(&core_deploy_request(&deploy_request))
+                .await
+                .unwrap_or_else(|error| {
+                    (
+                        false,
+                        vec![format!(
+                            "rollback reconcile failed: {}",
+                            error.to_report().message
+                        )],
+                    )
+                });
+            actions.insert(0, format!("rollback to {image}"));
+            actions
+        };
         Json(RollbackReport {
             ok: true,
             worker: request.worker,
@@ -269,7 +278,12 @@ async fn daemon_rollback(
             port: Some(port),
             health: Some(health),
             actions,
-            message: "rollback applied".to_owned(),
+            message: if request.preview {
+                "rollback preview"
+            } else {
+                "rollback applied"
+            }
+            .to_owned(),
         })
     } else {
         Json(RollbackReport {

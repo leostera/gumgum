@@ -71,9 +71,17 @@ impl ServerClient {
         self.post_json("/v0/deploy", request, "deploy").await
     }
 
-    pub(crate) async fn rollback(&self, worker: String) -> gumgum_core::Result<RollbackReport> {
-        self.post_json("/v0/rollback", &RollbackRequest { worker }, "rollback")
-            .await
+    pub(crate) async fn rollback(
+        &self,
+        worker: String,
+        preview: bool,
+    ) -> gumgum_core::Result<RollbackReport> {
+        self.post_json(
+            "/v0/rollback",
+            &RollbackRequest { worker, preview },
+            "rollback",
+        )
+        .await
     }
 
     pub(crate) async fn logs(&self, container: &str, tail: u32) -> gumgum_core::Result<LogsReport> {

@@ -90,6 +90,11 @@ pub(crate) struct RollbackArgs {
     pub(crate) host: Option<String>,
     #[arg(long)]
     pub(crate) worker: Option<String>,
+    #[arg(
+        long,
+        help = "Show the previous deployment that would be restored without applying it"
+    )]
+    pub(crate) preview: bool,
 }
 
 #[derive(Debug, Args)]

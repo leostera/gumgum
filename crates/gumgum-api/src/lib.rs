@@ -129,6 +129,8 @@ pub struct AffectedReport {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RollbackRequest {
     pub worker: String,
+    #[serde(default)]
+    pub preview: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

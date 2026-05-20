@@ -65,8 +65,11 @@ pub(crate) async fn rollback(args: RollbackArgs, json: bool) -> gumgum_core::Res
             .map(|manifest| manifest.worker.name)
             .unwrap_or_else(|_| "unknown".to_owned())
     });
+    let preview = args.preview;
     let server = resolve_server(args.host)?;
-    let report = ServerClient::new(server.host).rollback(worker).await?;
+    let report = ServerClient::new(server.host)
+        .rollback(worker, preview)
+        .await?;
     if json {
         print_value(true, &report);
     } else {
@@ -84,7 +87,11 @@ fn rollback_lines(report: &RollbackReport) -> Vec<String> {
             report.worker, report.message
         )];
     }
-    let mut lines = vec![format!("Rolled back worker {}", report.worker)];
+    let mut lines = vec![if report.message == "rollback preview" {
+        format!("Rollback preview for worker {}", report.worker)
+    } else {
+        format!("Rolled back worker {}", report.worker)
+    }];
     if let Some(image) = &report.image {
         lines.push(format!("Image: {image}"));
     }
@@ -138,6 +145,25 @@ mod tests {
                 "  - rollback to registry/api:1",
             ]
         );
+    }
+
+    #[test]
+    fn rollback_lines_include_preview_heading() {
+        let report = RollbackReport {
+            ok: true,
+            worker: "api".to_owned(),
+            image: Some("registry/api:1".to_owned()),
+            container: None,
+            route: None,
+            port: None,
+            health: None,
+            actions: vec!["preview only; no containers changed".to_owned()],
+            message: "rollback preview".to_owned(),
+        };
+
+        let lines = rollback_lines(&report);
+        assert_eq!(lines[0], "Rollback preview for worker api");
+        assert!(lines.contains(&"  - preview only; no containers changed".to_owned()));
     }
 
     #[test]
