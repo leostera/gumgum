@@ -177,8 +177,16 @@ impl GraphStore {
             "INSERT INTO deployment_revisions (worker, image, container, route, port, health)
              SELECT worker, image, container, route, port, health
              FROM desired_deployments
-             WHERE worker = ?1 AND image != ?2",
-            params![request.worker, request.image],
+             WHERE worker = ?1
+               AND (image != ?2 OR container != ?3 OR route != ?4 OR port != ?5 OR health != ?6)",
+            params![
+                request.worker,
+                request.image,
+                request.container,
+                request.route,
+                request.port,
+                request.health
+            ],
         )
         .map_err(|source| self.error("could not record deployment revision", source))?;
         tx.execute(
@@ -601,6 +609,32 @@ mod tests {
         second.port = 4000;
         second.health = "/ready".to_owned();
         store.materialize_deploy(&second).unwrap();
+        let previous = store.latest_previous_deploy("api").unwrap().unwrap();
+        assert_eq!(previous.image, first.image);
+        assert_eq!(previous.container, first.container);
+        assert_eq!(previous.route, first.route);
+        assert_eq!(previous.port, first.port);
+        assert_eq!(previous.health, first.health);
+        let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
+    fn deploy_revisions_record_non_image_changes() {
+        let store = temp_store("non-image-revision");
+        let first = DesiredDeploy {
+            worker: "api".to_owned(),
+            image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            route: "api.peekaboo.leostera.test".to_owned(),
+            port: 3000,
+            health: "/healthz".to_owned(),
+        };
+        store.materialize_deploy(&first).unwrap();
+
+        let mut route_change = first.clone();
+        route_change.route = "api-v2.peekaboo.leostera.test".to_owned();
+        store.materialize_deploy(&route_change).unwrap();
+
         let previous = store.latest_previous_deploy("api").unwrap().unwrap();
         assert_eq!(previous.image, first.image);
         assert_eq!(previous.container, first.container);
