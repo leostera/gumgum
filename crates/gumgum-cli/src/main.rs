@@ -1,3 +1,4 @@
+mod cli_output;
 mod config_command;
 mod daemon_app;
 mod deploy_command;
@@ -15,6 +16,7 @@ mod system_command;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+pub(crate) use cli_output::{print_error, print_value, progress};
 use config_command::config_command;
 use daemon_app::DaemonApp;
 use deploy_command::{deploy, print_deploy_output};
@@ -27,7 +29,6 @@ use init_command::init_manifest;
 use logs_command::logs;
 use object_command::object_command;
 use project_command::{info, rollback};
-use serde::Serialize;
 use setup_command::{install_gumgumd, resolve_setup};
 use std::path::PathBuf;
 use system_command::{doctor, schema, server, status, version};
@@ -356,33 +357,6 @@ fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
                 .build()
             }),
     }
-}
-
-fn progress(quiet: bool, message: impl AsRef<str>) {
-    if !quiet {
-        eprintln!("→ {}", message.as_ref());
-    }
-}
-
-fn print_value<T: Serialize>(json: bool, value: &T) {
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(value).expect("serialize json")
-        );
-    } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(value).expect("serialize json")
-        );
-    }
-}
-
-fn print_error(err: GumgumError) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&err.to_report()).expect("serialize error")
-    );
 }
 
 #[cfg(test)]
