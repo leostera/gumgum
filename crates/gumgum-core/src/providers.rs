@@ -232,12 +232,36 @@ async fn ensure_minio(
         .await?;
         created_provider_actions(provider)
     };
-    actions.push(format!(
-        "bucket {} planned on {}",
-        sanitize_name(&plan.name),
-        provider.provider
-    ));
+    let bucket = sanitize_name(&plan.name);
+    ensure_minio_bucket(&bucket, &credentials).await?;
+    actions.push(format!("ensured bucket {bucket} on {}", provider.provider));
     Ok(actions)
+}
+
+async fn ensure_minio_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate::Result<()> {
+    let script = format!(
+        "set -e; mc alias set gumgum-minio http://gumgum-provider-minio-main:9000 '{}' '{}'; mc mb --ignore-existing gumgum-minio/{}",
+        shell_single_quote(&credentials.username),
+        shell_single_quote(&credentials.password),
+        shell_single_quote(bucket)
+    );
+    run_provider_command(
+        TokioCommand::new("docker")
+            .arg("run")
+            .arg("--rm")
+            .arg("--network")
+            .arg("gumgum-network")
+            .arg("minio/mc:latest")
+            .arg("sh")
+            .arg("-c")
+            .arg(script),
+        "could not ensure minio bucket",
+    )
+    .await
+}
+
+fn shell_single_quote(value: &str) -> String {
+    value.replace('\'', "'\\''")
 }
 
 fn created_provider_actions(provider: &ProviderSpec) -> Vec<String> {
@@ -430,6 +454,12 @@ mod tests {
                 .iter()
                 .any(|action| action == "ensure bucket uploads exists")
         );
+    }
+
+    #[test]
+    fn shell_single_quote_escapes_minio_credentials() {
+        assert_eq!(shell_single_quote("plain"), "plain");
+        assert_eq!(shell_single_quote("don't"), "don'\\''t");
     }
 
     #[test]
