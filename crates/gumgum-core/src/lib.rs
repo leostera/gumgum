@@ -31,6 +31,23 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, GumgumError>;
 
+pub fn sanitize_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 #[derive(Debug, Error)]
 pub enum GumgumError {
     #[error("{message}")]

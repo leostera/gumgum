@@ -1,4 +1,4 @@
-use crate::{PlanGraph, ServerRecord, WorkerManifest};
+use crate::{PlanGraph, ServerRecord, WorkerManifest, sanitize_name};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -145,23 +145,6 @@ fn dns_scope(root_domain: &str) -> String {
         .rev()
         .collect::<Vec<_>>()
         .join(".")
-}
-
-fn sanitize_name(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
 }
 
 #[cfg(test)]

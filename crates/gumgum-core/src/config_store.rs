@@ -1,4 +1,4 @@
-use crate::{ErrorCode, GumgumError, Result, Subsystem};
+use crate::{ErrorCode, GumgumError, Result, Subsystem, sanitize_name};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{fs, path::PathBuf};
@@ -156,21 +156,4 @@ impl ConfigStore {
         }
         Ok(())
     }
-}
-
-fn sanitize_name(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
 }

@@ -17,7 +17,7 @@ use gumgum_core::{
     Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
     DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller, ManifestKind, PlanGraph,
     ServerRecord, SetupTarget, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
-    not_configured_status, setup_actions, validate_path,
+    not_configured_status, sanitize_name, setup_actions, validate_path,
 };
 use serde::Serialize;
 use server_client::ServerClient;
@@ -1356,20 +1356,6 @@ async fn remote_hostname(target: &str) -> gumgum_core::Result<String> {
     Ok(sanitize_name(
         String::from_utf8_lossy(&output.stdout).trim(),
     ))
-}
-
-fn sanitize_name(value: &str) -> String {
-    let name: String = value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    name.trim_matches('-').to_owned()
 }
 
 async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
