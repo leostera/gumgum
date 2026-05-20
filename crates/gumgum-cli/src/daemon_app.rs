@@ -11,6 +11,7 @@ use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
     GlobalObject, GraphStore, GumgumError, LocalPlatform, Subsystem, WorkerBinding,
     affected_subgraph, connection_examples, not_configured_status, object_dns, provider_for_object,
+    render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -93,7 +94,7 @@ async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {
                 Vec::new(),
             )
         });
-    let graph = crate::graph_presenter::GraphPresenter::new().mermaid(&nodes, &edges);
+    let graph = render_mermaid_graph(&nodes, &edges);
     Json(GraphReport {
         ok: true,
         format: "mermaid".to_owned(),
