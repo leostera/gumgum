@@ -35,10 +35,13 @@ impl DeploymentDescriptor {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_secs())
             .unwrap_or(0);
-        let image = format!("127.0.0.1:55000/{domain_scope}/{namespace}/{worker}:{revision}");
+        let namespace_slug = sanitize_name(namespace);
+        let worker_slug = sanitize_name(&worker);
+        let image =
+            format!("127.0.0.1:55000/{domain_scope}/{namespace_slug}/{worker_slug}:{revision}");
         let container = format!(
             "gumgum-{}",
-            sanitize_name(&format!("{domain_scope}-{namespace}-{worker}"))
+            sanitize_name(&format!("{domain_scope}-{namespace}-{worker_slug}"))
         );
         let routes = derived_routes(manifest, server, prod);
         let health_url = derived_routes(manifest, server, false)
@@ -230,7 +233,7 @@ mod tests {
         assert!(
             descriptor
                 .image
-                .starts_with("127.0.0.1:55000/dev.leostera/experiments/Hello World:")
+                .starts_with("127.0.0.1:55000/dev.leostera/experiments/hello-world:")
         );
     }
 
