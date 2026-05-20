@@ -156,7 +156,7 @@ impl ConfigStore {
         if let Some(credentials) = self.load_minio_credentials()? {
             return Ok(credentials);
         }
-        let credentials = ProviderCredentials::minio_local_dev();
+        let credentials = ProviderCredentials::minio_generated();
         self.save_minio_credentials(&credentials)?;
         Ok(credentials)
     }
@@ -324,6 +324,8 @@ mod tests {
     fn initializes_provider_credentials_once() {
         let store = temp_store("provider-credentials-init");
         let first = store.load_or_init_minio_credentials().unwrap();
+        assert_ne!(first.password, "gumgum-local-dev");
+        assert_eq!(first.password.len(), 48);
         let mut changed = first.clone();
         changed.password = "changed".to_owned();
         store.save_minio_credentials(&changed).unwrap();

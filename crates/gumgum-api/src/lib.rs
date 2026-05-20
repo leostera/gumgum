@@ -127,6 +127,17 @@ pub struct ProviderStatusReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProviderCredentialsReport {
+    pub ok: bool,
+    pub provider: String,
+    pub username_env: String,
+    pub password_env: String,
+    pub username: String,
+    pub configured: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct EnvReport {
     pub ok: bool,
     pub worker: String,

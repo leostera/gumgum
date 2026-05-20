@@ -6,7 +6,8 @@ use axum::{
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
     DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, GraphNode, GraphReport,
-    LogsReport, ObjectReport, ObjectRequest, ProviderStatusReport, RollbackReport, RollbackRequest,
+    LogsReport, ObjectReport, ObjectRequest, ProviderCredentialsReport, ProviderStatusReport,
+    RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
@@ -67,6 +68,10 @@ impl DaemonApp {
             .route("/v0/objects", post(daemon_create_object))
             .route("/v0/bindings", post(daemon_create_binding))
             .route("/v0/providers", get(daemon_providers))
+            .route(
+                "/v0/providers/minio/credentials/init",
+                post(daemon_init_minio_credentials),
+            )
             .route("/v0/env/{worker}", get(daemon_env))
             .route("/v0/graph", get(daemon_graph))
             .route("/v0/graph/affected", get(daemon_graph_affected))
@@ -252,6 +257,31 @@ async fn daemon_providers() -> Json<ProviderStatusReport> {
         message: format!("{} provider(s)", providers.len()),
         providers,
     })
+}
+
+async fn daemon_init_minio_credentials() -> Json<ProviderCredentialsReport> {
+    let credentials =
+        ConfigStore::from_home_env().and_then(|store| store.load_or_init_minio_credentials());
+    match credentials {
+        Ok(credentials) => Json(ProviderCredentialsReport {
+            ok: true,
+            provider: "minio.main".to_owned(),
+            username_env: credentials.username_env,
+            password_env: credentials.password_env,
+            username: credentials.username,
+            configured: true,
+            message: "minio provider credentials configured".to_owned(),
+        }),
+        Err(error) => Json(ProviderCredentialsReport {
+            ok: false,
+            provider: "minio.main".to_owned(),
+            username_env: "MINIO_ROOT_USER".to_owned(),
+            password_env: "MINIO_ROOT_PASSWORD".to_owned(),
+            username: String::new(),
+            configured: false,
+            message: error.to_report().message,
+        }),
+    }
 }
 
 async fn daemon_env(

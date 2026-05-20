@@ -41,6 +41,33 @@ impl ProviderCredentials {
                 .unwrap_or_else(|_| "gumgum-local-dev".to_owned()),
         }
     }
+
+    pub fn minio_generated() -> Self {
+        Self {
+            username_env: "MINIO_ROOT_USER".to_owned(),
+            password_env: "MINIO_ROOT_PASSWORD".to_owned(),
+            username: "gumgum".to_owned(),
+            password: generate_secret(),
+        }
+    }
+}
+
+fn generate_secret() -> String {
+    use std::io::Read;
+    let mut bytes = [0u8; 24];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .is_err()
+    {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = ((seed >> ((index % 16) * 8)) & 0xff) as u8;
+        }
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

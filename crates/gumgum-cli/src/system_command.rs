@@ -1,7 +1,7 @@
 use crate::server_client::ServerClient;
 use crate::{
-    SchemaCommand, SchemaSubcommand, ServerCommand, ServerSubcommand, ServerUpgradeArgs,
-    StatusArgs, config_command, print_value, progress,
+    SchemaCommand, SchemaSubcommand, ServerCommand, ServerCredentialsSubcommand, ServerSubcommand,
+    ServerUpgradeArgs, StatusArgs, config_command, print_value, progress,
 };
 use gumgum_api::{PingReport, ProviderStatusReport, ServerListReport};
 use gumgum_core::{
@@ -65,6 +65,18 @@ pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Re
             let name = required_server_name(server.name, "config")?;
             let report = config_command(Some(name), args.command)?;
             print_value(json, &report)
+        }
+        Some(ServerSubcommand::Credentials(args)) => {
+            let name = required_server_name(server.name, "credentials")?;
+            let server = find_server(&name)?;
+            match args.command {
+                ServerCredentialsSubcommand::Init => {
+                    let report = ServerClient::new(server.host)
+                        .init_minio_credentials()
+                        .await?;
+                    print_value(json, &report);
+                }
+            }
         }
         Some(ServerSubcommand::Providers) => {
             let name = required_server_name(server.name, "providers")?;

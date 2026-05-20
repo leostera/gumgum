@@ -236,6 +236,7 @@ pub(crate) enum ServerSubcommand {
     List,
     Ping(PingArgs),
     Config(ServerConfigArgs),
+    Credentials(ServerCredentialsArgs),
     Providers,
     Upgrade(ServerUpgradeArgs),
 }
@@ -244,6 +245,17 @@ pub(crate) enum ServerSubcommand {
 pub(crate) struct ServerConfigArgs {
     #[command(subcommand)]
     pub(crate) command: ConfigSubcommand,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ServerCredentialsArgs {
+    #[command(subcommand)]
+    pub(crate) command: ServerCredentialsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ServerCredentialsSubcommand {
+    Init,
 }
 
 #[derive(Debug, Args)]
