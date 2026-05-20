@@ -100,6 +100,8 @@ pub(crate) struct RollbackArgs {
         help = "List previous deployment revisions instead of applying rollback"
     )]
     pub(crate) revisions: bool,
+    #[arg(long, help = "Rollback or preview a specific deployment revision id")]
+    pub(crate) revision_id: Option<i64>,
     #[arg(long, default_value_t = 10)]
     pub(crate) limit: u32,
 }

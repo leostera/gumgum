@@ -262,13 +262,27 @@ async fn daemon_rollback(
 ) -> Json<RollbackReport> {
     let store = GraphStore::new((*state.graph_path).clone());
     let worker = request.worker.clone();
-    let rollback_request =
-        tokio::task::spawn_blocking(move || store.latest_previous_deploy(&worker))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .flatten();
-    if let Some(deploy) = rollback_request {
+    let revision_id = request.revision_id;
+    let rollback_revision = tokio::task::spawn_blocking(move || {
+        if let Some(revision_id) = revision_id {
+            store.deployment_revision(&worker, revision_id)
+        } else {
+            Ok(store.latest_previous_deploy(&worker)?.map(|deploy| {
+                gumgum_core::DeploymentRevision {
+                    id: 0,
+                    deploy,
+                    created_at: String::new(),
+                }
+            }))
+        }
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .flatten();
+    if let Some(revision) = rollback_revision {
+        let revision_id = (revision.id != 0).then_some(revision.id);
+        let deploy = revision.deploy;
         let image = deploy.image.clone();
         let container = deploy.container.clone();
         let route = deploy.route.clone();
@@ -304,6 +318,7 @@ async fn daemon_rollback(
             ok: true,
             worker: request.worker,
             image: Some(image),
+            revision_id,
             container: Some(container),
             route: Some(route),
             port: Some(port),
@@ -321,12 +336,19 @@ async fn daemon_rollback(
             ok: false,
             worker: request.worker,
             image: None,
+            revision_id: request.revision_id,
             container: None,
             route: None,
             port: None,
             health: None,
-            actions: vec!["no previous image recorded".to_owned()],
-            message: "no previous deployment image recorded".to_owned(),
+            actions: vec![match request.revision_id {
+                Some(id) => format!("revision {id} not found"),
+                None => "no previous image recorded".to_owned(),
+            }],
+            message: match request.revision_id {
+                Some(id) => format!("deployment revision {id} not found"),
+                None => "no previous deployment image recorded".to_owned(),
+            },
         })
     }
 }

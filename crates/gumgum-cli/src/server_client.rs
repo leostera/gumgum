@@ -76,10 +76,15 @@ impl ServerClient {
         &self,
         worker: String,
         preview: bool,
+        revision_id: Option<i64>,
     ) -> gumgum_core::Result<RollbackReport> {
         self.post_json(
             "/v0/rollback",
-            &RollbackRequest { worker, preview },
+            &RollbackRequest {
+                worker,
+                preview,
+                revision_id,
+            },
             "rollback",
         )
         .await

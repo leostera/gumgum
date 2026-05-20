@@ -131,6 +131,8 @@ pub struct RollbackRequest {
     pub worker: String,
     #[serde(default)]
     pub preview: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_id: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -138,6 +140,8 @@ pub struct RollbackReport {
     pub ok: bool,
     pub worker: String,
     pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

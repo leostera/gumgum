@@ -78,7 +78,9 @@ pub(crate) async fn rollback(args: RollbackArgs, json: bool) -> gumgum_core::Res
         }
         return Ok(());
     }
-    let report = client.rollback(worker, args.preview).await?;
+    let report = client
+        .rollback(worker, args.preview, args.revision_id)
+        .await?;
     if json {
         print_value(true, &report);
     } else {
@@ -122,6 +124,9 @@ fn rollback_lines(report: &RollbackReport) -> Vec<String> {
     } else {
         format!("Rolled back worker {}", report.worker)
     }];
+    if let Some(revision_id) = report.revision_id {
+        lines.push(format!("Revision: {revision_id}"));
+    }
     if let Some(image) = &report.image {
         lines.push(format!("Image: {image}"));
     }
@@ -154,6 +159,7 @@ mod tests {
             ok: true,
             worker: "api".to_owned(),
             image: Some("registry/api:1".to_owned()),
+            revision_id: Some(42),
             container: Some("gumgum-api".to_owned()),
             route: Some("api.example.test".to_owned()),
             port: Some(3000),
@@ -166,6 +172,7 @@ mod tests {
             rollback_lines(&report),
             vec![
                 "Rolled back worker api",
+                "Revision: 42",
                 "Image: registry/api:1",
                 "Container: gumgum-api",
                 "Route: api.example.test",
@@ -212,6 +219,7 @@ mod tests {
             ok: true,
             worker: "api".to_owned(),
             image: Some("registry/api:1".to_owned()),
+            revision_id: Some(42),
             container: None,
             route: None,
             port: None,
@@ -231,6 +239,7 @@ mod tests {
             ok: false,
             worker: "api".to_owned(),
             image: None,
+            revision_id: None,
             container: None,
             route: None,
             port: None,

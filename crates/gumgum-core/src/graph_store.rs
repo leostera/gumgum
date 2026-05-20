@@ -222,6 +222,54 @@ impl GraphStore {
             .map(|revision| revision.deploy))
     }
 
+    pub fn deployment_revision(
+        &self,
+        worker: &str,
+        revision_id: i64,
+    ) -> Result<Option<DeploymentRevision>> {
+        self.init()?;
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare("SELECT id, image, container, route, port, health, created_at FROM deployment_revisions WHERE worker = ?1 AND id = ?2")
+            .map_err(|source| self.error("could not query deployment revision", source))?;
+        let mut rows = stmt
+            .query(params![worker, revision_id])
+            .map_err(|source| self.error("could not read deployment revision", source))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|source| self.error("could not decode deployment revision", source))?
+        {
+            Ok(Some(DeploymentRevision {
+                id: row
+                    .get(0)
+                    .map_err(|source| self.error("could not decode deployment revision", source))?,
+                deploy: DesiredDeploy {
+                    worker: worker.to_owned(),
+                    image: row.get(1).map_err(|source| {
+                        self.error("could not decode deployment revision", source)
+                    })?,
+                    container: row.get(2).map_err(|source| {
+                        self.error("could not decode deployment revision", source)
+                    })?,
+                    route: row.get(3).map_err(|source| {
+                        self.error("could not decode deployment revision", source)
+                    })?,
+                    port: row.get::<_, i64>(4).map_err(|source| {
+                        self.error("could not decode deployment revision", source)
+                    })? as u16,
+                    health: row.get(5).map_err(|source| {
+                        self.error("could not decode deployment revision", source)
+                    })?,
+                },
+                created_at: row
+                    .get(6)
+                    .map_err(|source| self.error("could not decode deployment revision", source))?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn deployment_revisions(
         &self,
         worker: &str,
@@ -689,6 +737,14 @@ mod tests {
         let limited = store.deployment_revisions("api", 1).unwrap();
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].id, revisions[0].id);
+
+        let selected = store
+            .deployment_revision("api", revisions[1].id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.id, revisions[1].id);
+        assert_eq!(selected.deploy.image, first.image);
+        assert!(store.deployment_revision("api", -1).unwrap().is_none());
         let _ = fs::remove_file(store.path);
     }
 }
