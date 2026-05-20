@@ -6,6 +6,7 @@ mod graph_presenter;
 mod logs_command;
 mod object_command;
 mod presentation;
+mod project_command;
 mod server_client;
 
 use anyhow::Result;
@@ -15,8 +16,7 @@ use daemon_app::DaemonApp;
 use deploy_executor::DeployExecutor;
 use graph_command::graph;
 use gumgum_api::{
-    DeployApplyReport, DeployRequest, GraphEdge, GraphNode, PingReport, ServerListReport,
-    SetupPlan, SetupReport,
+    DeployApplyReport, DeployRequest, PingReport, ServerListReport, SetupPlan, SetupReport,
 };
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor, DoctorCheck,
@@ -28,6 +28,7 @@ use gumgum_core::{
 };
 use logs_command::logs;
 use object_command::object_command;
+use project_command::{info, rollback};
 use serde::Serialize;
 use server_client::ServerClient;
 use std::{fs, path::PathBuf, process::Stdio, time::Duration};
@@ -573,72 +574,6 @@ fn deploy_report(
             "deployment pending".to_owned()
         },
     }
-}
-
-#[derive(Debug, Serialize)]
-struct InfoReport {
-    ok: bool,
-    worker: String,
-    nodes: Vec<GraphNode>,
-    edges: Vec<GraphEdge>,
-    urls: Vec<String>,
-    latest_image: Option<String>,
-    message: String,
-}
-
-async fn info(args: InfoArgs, json: bool) -> gumgum_core::Result<()> {
-    let worker = args.worker.unwrap_or_else(|| {
-        load_worker_path(&args.path)
-            .map(|manifest| manifest.worker.name)
-            .unwrap_or_else(|_| "unknown".to_owned())
-    });
-    let server = resolve_server(args.host)?;
-    let target = format!("worker/{worker}");
-    let affected = ServerClient::new(server.host).affected(&target).await?;
-    let urls = affected
-        .nodes
-        .iter()
-        .filter(|node| node.kind == "route")
-        .map(|node| format!("http://{}", node.label))
-        .collect::<Vec<_>>();
-    let latest_image = affected
-        .nodes
-        .iter()
-        .find(|node| node.kind == "image")
-        .map(|node| node.label.clone());
-    let report = InfoReport {
-        ok: true,
-        worker,
-        nodes: affected.nodes,
-        edges: affected.edges,
-        urls,
-        latest_image,
-        message: "current project info".to_owned(),
-    };
-    if json {
-        print_value(true, &report);
-    } else {
-        println!("Worker: {}", report.worker);
-        for url in &report.urls {
-            println!("URL: {url}");
-        }
-        if let Some(image) = &report.latest_image {
-            println!("Image: {image}");
-        }
-    }
-    Ok(())
-}
-
-async fn rollback(args: RollbackArgs, json: bool) -> gumgum_core::Result<()> {
-    let worker = args.worker.unwrap_or_else(|| {
-        load_worker_path(&args.path)
-            .map(|manifest| manifest.worker.name)
-            .unwrap_or_else(|_| "unknown".to_owned())
-    });
-    let server = resolve_server(args.host)?;
-    let report = ServerClient::new(server.host).rollback(worker).await?;
-    print_value(json, &report);
-    Ok(())
 }
 
 fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
