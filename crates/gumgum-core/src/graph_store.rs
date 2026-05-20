@@ -472,3 +472,134 @@ fn image_scope(image: &str) -> (String, String) {
         ("local".to_owned(), "root".to_owned())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_store(name: &str) -> GraphStore {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        GraphStore::new(std::env::temp_dir().join(format!("gumgum-graph-{name}-{nonce}.sqlite")))
+    }
+
+    fn has_node(nodes: &[GraphNode], id: &str, kind: &str) -> bool {
+        nodes.iter().any(|node| node.id == id && node.kind == kind)
+    }
+
+    fn has_edge(edges: &[GraphEdge], from: &str, to: &str, kind: &str) -> bool {
+        edges
+            .iter()
+            .any(|edge| edge.from == from && edge.to == to && edge.kind == kind)
+    }
+
+    #[test]
+    fn materialized_state_loads_as_graph_with_bindings_and_routes() {
+        let store = temp_store("load");
+        store
+            .materialize_object(&GlobalObject {
+                capability: Capability::Db,
+                name: "main".to_owned(),
+                namespace: "peekaboo".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_binding(&WorkerBinding {
+                capability: Capability::Db,
+                object_name: "main".to_owned(),
+                worker: "api".to_owned(),
+                binding: "DATABASE_URL".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_deploy(&DesiredDeploy {
+                worker: "api".to_owned(),
+                image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
+                container: "gumgum-dev-leostera-peekaboo-api".to_owned(),
+                route: "api.peekaboo.leostera.test".to_owned(),
+                port: 3000,
+                health: "/healthz".to_owned(),
+            })
+            .unwrap();
+
+        let (nodes, edges) = store.load_graph().unwrap();
+        assert!(has_node(&nodes, "worker/api", "worker"));
+        assert!(has_node(&nodes, "db/main", "global_object"));
+        assert!(has_node(&nodes, "binding/api/DATABASE_URL", "binding"));
+        assert!(has_node(
+            &nodes,
+            "route/api.peekaboo.leostera.test",
+            "route"
+        ));
+        assert!(has_edge(
+            &edges,
+            "worker/api",
+            "binding/api/DATABASE_URL",
+            "binds"
+        ));
+        assert!(has_edge(
+            &edges,
+            "binding/api/DATABASE_URL",
+            "db/main",
+            "projects_as"
+        ));
+        assert!(has_edge(
+            &edges,
+            "route/api.peekaboo.leostera.test",
+            "container/gumgum-dev-leostera-peekaboo-api",
+            "routes_to"
+        ));
+        let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
+    fn binding_env_and_previous_deploy_use_materialized_graph_state() {
+        let store = temp_store("env-revisions");
+        store
+            .materialize_object(&GlobalObject {
+                capability: Capability::Kv,
+                name: "sessions".to_owned(),
+                namespace: "peekaboo".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_binding(&WorkerBinding {
+                capability: Capability::Kv,
+                object_name: "sessions".to_owned(),
+                worker: "api".to_owned(),
+                binding: "SESSIONS".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(
+            store.binding_env("api").unwrap(),
+            vec![(
+                "SESSIONS".to_owned(),
+                "redis://sessions.kv.leostera.dev:6379/0".to_owned()
+            )]
+        );
+
+        let first = DesiredDeploy {
+            worker: "api".to_owned(),
+            image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            route: "api.peekaboo.leostera.test".to_owned(),
+            port: 3000,
+            health: "/healthz".to_owned(),
+        };
+        store.materialize_deploy(&first).unwrap();
+        assert!(store.latest_previous_deploy("api").unwrap().is_none());
+        let mut second = first.clone();
+        second.image = "127.0.0.1:55000/dev.leostera/peekaboo/api:2".to_owned();
+        store.materialize_deploy(&second).unwrap();
+        let previous = store.latest_previous_deploy("api").unwrap().unwrap();
+        assert_eq!(previous.image, first.image);
+        assert_eq!(previous.route, first.route);
+        let _ = fs::remove_file(store.path);
+    }
+}
