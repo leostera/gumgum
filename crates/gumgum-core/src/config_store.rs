@@ -12,6 +12,21 @@ pub struct ServerRecord {
     pub health_url: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConfigScope {
+    Local,
+    Server(String),
+}
+
+impl ConfigScope {
+    pub fn label(&self) -> String {
+        match self {
+            ConfigScope::Local => "local".to_owned(),
+            ConfigScope::Server(name) => format!("server:{name}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ConfigStore {
     root: PathBuf,
@@ -33,6 +48,20 @@ impl ConfigStore {
 
     pub fn root(&self) -> &PathBuf {
         &self.root
+    }
+
+    pub fn load_config(&self, scope: &ConfigScope) -> Result<Map<String, Value>> {
+        match scope {
+            ConfigScope::Local => self.load_local_config(),
+            ConfigScope::Server(name) => self.load_server_config(name),
+        }
+    }
+
+    pub fn save_config(&self, scope: &ConfigScope, values: &Map<String, Value>) -> Result<()> {
+        match scope {
+            ConfigScope::Local => self.save_local_config(values),
+            ConfigScope::Server(name) => self.save_server_config(name, values),
+        }
     }
 
     pub fn load_local_config(&self) -> Result<Map<String, Value>> {

@@ -14,8 +14,8 @@ use gumgum_api::{
     ObjectRequest, PingReport, ServerListReport, SetupPlan, SetupReport,
 };
 use gumgum_core::{
-    Capability, ConfigStore, DaemonHealthClient, DaemonPingReport, DeploymentDescriptor,
-    DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller,
+    Capability, ConfigScope, ConfigStore, DaemonHealthClient, DaemonPingReport,
+    DeploymentDescriptor, DoctorCheck, DoctorReport, ErrorCode, GumgumError, GumgumInstaller,
     InitManifestKind as CoreInitKind, ManifestKind, PlanGraph, ServerRecord, SetupOptions,
     SetupTarget, Subsystem, WorkerManifest, default_project_name, init_plan, load_worker_path,
     load_workspace_path, not_configured_status,
@@ -402,14 +402,11 @@ fn config_command(
     command: ConfigSubcommand,
 ) -> gumgum_core::Result<ConfigReport> {
     let store = ConfigStore::from_home_env()?;
-    let scope = server_name
-        .as_ref()
-        .map(|name| format!("server:{name}"))
-        .unwrap_or_else(|| "local".to_owned());
-    let mut values = match &server_name {
-        Some(name) => store.load_server_config(name)?,
-        None => store.load_local_config()?,
-    };
+    let config_scope = server_name
+        .map(ConfigScope::Server)
+        .unwrap_or(ConfigScope::Local);
+    let scope = config_scope.label();
+    let mut values = store.load_config(&config_scope)?;
     match command {
         ConfigSubcommand::List => Ok(ConfigReport {
             ok: true,
@@ -431,10 +428,7 @@ fn config_command(
         }
         ConfigSubcommand::Set { key, value } => {
             values.insert(key.clone(), serde_json::Value::String(value));
-            match &server_name {
-                Some(name) => store.save_server_config(name, &values)?,
-                None => store.save_local_config(&values)?,
-            };
+            store.save_config(&config_scope, &values)?;
             let mut selected = serde_json::Map::new();
             selected.insert(key.clone(), values.get(&key).cloned().unwrap());
             Ok(ConfigReport {
