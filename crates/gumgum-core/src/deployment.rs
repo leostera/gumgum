@@ -31,10 +31,7 @@ impl DeploymentDescriptor {
         let domain_scope = server
             .map(|server| dns_scope(&server.root_domain))
             .unwrap_or_else(|| "local".to_owned());
-        let revision = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or(0);
+        let revision = stable_deploy_revision(path, manifest);
         let namespace_slug = sanitize_name(namespace);
         let worker_slug = sanitize_name(&worker);
         let image =
@@ -126,6 +123,76 @@ fn derived_routes(
     }
 }
 
+fn stable_deploy_revision(path: &Path, manifest: &WorkerManifest) -> String {
+    let mut hash = Fnv64::default();
+    hash.write(path.display().to_string().as_bytes());
+    hash.write(manifest.worker.name.as_bytes());
+    hash.write(
+        manifest
+            .worker
+            .image
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    hash.write(
+        manifest
+            .worker
+            .build_context
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    hash.write(
+        manifest
+            .worker
+            .command
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    hash.write(&manifest.worker.port.unwrap_or_default().to_be_bytes());
+    hash.write(
+        manifest
+            .worker
+            .health
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    for ingress in &manifest.ingress {
+        hash.write(ingress.local_domain.as_bytes());
+        hash.write(
+            ingress
+                .public_domain
+                .as_deref()
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+        hash.write(&[ingress.publish as u8]);
+    }
+    format!("gg{:016x}", hash.finish())
+}
+
+#[derive(Default)]
+struct Fnv64(u64);
+
+impl Fnv64 {
+    fn write(&mut self, bytes: &[u8]) {
+        if self.0 == 0 {
+            self.0 = 0xcbf29ce484222325;
+        }
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(0x100000001b3);
+        }
+    }
+
+    fn finish(self) -> u64 {
+        self.0
+    }
+}
+
 fn dns_scope(root_domain: &str) -> String {
     root_domain
         .trim_end_matches('.')
@@ -139,6 +206,16 @@ fn dns_scope(root_domain: &str) -> String {
 mod tests {
     use super::*;
     use crate::{Ingress, Project, Worker, WorkerManifest, Zone};
+
+    fn server() -> ServerRecord {
+        ServerRecord {
+            name: "starbase".to_owned(),
+            host: "192.168.0.3".to_owned(),
+            root_domain: "leostera.dev".to_owned(),
+            test_domain: "leostera.test".to_owned(),
+            health_url: "http://192.168.0.3:7777/healthz".to_owned(),
+        }
+    }
 
     fn manifest() -> WorkerManifest {
         WorkerManifest {
@@ -174,13 +251,7 @@ mod tests {
 
     #[test]
     fn derives_test_descriptor_from_server() {
-        let server = ServerRecord {
-            name: "starbase".to_owned(),
-            host: "192.168.0.3".to_owned(),
-            root_domain: "leostera.dev".to_owned(),
-            test_domain: "leostera.test".to_owned(),
-            health_url: "http://192.168.0.3:7777/healthz".to_owned(),
-        };
+        let server = server();
         let descriptor = DeploymentDescriptor::from_manifest(
             Path::new("apps/api/gumgum.toml"),
             &manifest(),
@@ -211,13 +282,7 @@ mod tests {
 
     #[test]
     fn derives_prod_routes_from_project_and_zones() {
-        let server = ServerRecord {
-            name: "starbase".to_owned(),
-            host: "192.168.0.3".to_owned(),
-            root_domain: "leostera.dev".to_owned(),
-            test_domain: "leostera.test".to_owned(),
-            health_url: "http://192.168.0.3:7777/healthz".to_owned(),
-        };
+        let server = server();
         let descriptor = DeploymentDescriptor::from_manifest(
             Path::new("gumgum.toml"),
             &manifest(),
@@ -235,6 +300,27 @@ mod tests {
             descriptor.health_url.as_deref(),
             Some("http://hello-world.experiments.leostera.test/ready")
         );
+    }
+
+    #[test]
+    fn deploy_revision_is_stable_for_unchanged_manifest() {
+        let first = DeploymentDescriptor::from_manifest(
+            Path::new("api/gumgum.toml"),
+            &manifest(),
+            Some(&server()),
+            false,
+        );
+        let second = DeploymentDescriptor::from_manifest(
+            Path::new("api/gumgum.toml"),
+            &manifest(),
+            Some(&server()),
+            false,
+        );
+
+        assert_eq!(first.image, second.image);
+        let tag = first.image.rsplit(':').next().unwrap();
+        assert!(tag.starts_with("gg"));
+        assert_eq!(tag.len(), 18);
     }
 
     #[test]
