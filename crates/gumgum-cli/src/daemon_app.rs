@@ -740,9 +740,11 @@ async fn daemon_deploy(
             .and_then(Result::ok)
             .unwrap_or(false);
     if reconciliation_steps.is_empty() {
-        reconciliation_steps.push(GraphActionPlanner::ensure_container_step(
+        reconciliation_steps.push(GraphActionPlanner::ensure_deploy_step(
+            request.worker.clone(),
             request.container.clone(),
             request.image.clone(),
+            request.route.clone(),
         ));
     }
     let deploy_context = GraphExecutionContext {

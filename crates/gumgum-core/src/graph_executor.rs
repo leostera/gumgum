@@ -154,6 +154,31 @@ impl GraphActionPlanner {
             image: image.into(),
         })
     }
+
+    pub fn ensure_deploy_step(
+        worker: impl Into<String>,
+        container: impl Into<String>,
+        image: impl Into<String>,
+        route: impl Into<String>,
+    ) -> GraphExecutionStep {
+        let worker = worker.into();
+        let container = container.into();
+        let image = image.into();
+        let route = route.into();
+        GraphExecutionStep {
+            action: GraphReconcileAction::EnsureContainer {
+                name: container.clone(),
+                image: image.clone(),
+            },
+            target: GraphExecutionTarget::DeployRuntime {
+                worker: Some(worker.clone()),
+                container,
+                image: image.clone(),
+                route: Some(route),
+            },
+            description: format!("ensure deploy runtime for {worker} runs image {image}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -495,6 +520,26 @@ mod tests {
                 image: "ghcr.io/acme/api:v1".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn planner_can_synthesize_idempotent_deploy_step() {
+        let step = GraphActionPlanner::ensure_deploy_step(
+            "api",
+            "gumgum-api",
+            "ghcr.io/acme/api:v1",
+            "api.example.test",
+        );
+
+        assert!(matches!(
+            step.target,
+            GraphExecutionTarget::DeployRuntime {
+                worker: Some(ref worker),
+                ref container,
+                route: Some(ref route),
+                ..
+            } if worker == "api" && container == "gumgum-api" && route == "api.example.test"
+        ));
     }
 
     #[tokio::test]
