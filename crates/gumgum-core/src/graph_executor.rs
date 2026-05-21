@@ -20,6 +20,12 @@ pub enum GraphExecutionTarget {
         container: String,
         image: String,
     },
+    DeployRuntime {
+        worker: Option<String>,
+        container: String,
+        image: String,
+        route: Option<String>,
+    },
     Gateway {
         host: String,
         target_container: String,
@@ -64,21 +70,47 @@ impl GraphActionPlanner {
     }
 
     pub fn normalize_steps(steps: Vec<GraphExecutionStep>) -> Vec<GraphExecutionStep> {
-        let has_container_runtime = steps
-            .iter()
-            .any(|step| matches!(step.target, GraphExecutionTarget::ContainerRuntime { .. }));
-        if !has_container_runtime {
+        let worker = steps.iter().find_map(|step| match &step.target {
+            GraphExecutionTarget::WorkerRuntime { worker, .. } => Some(worker.clone()),
+            _ => None,
+        });
+        let route = steps.iter().find_map(|step| match &step.target {
+            GraphExecutionTarget::Gateway { host, .. } => Some(host.clone()),
+            _ => None,
+        });
+        let deploy_step = steps.iter().find_map(|step| match &step.target {
+            GraphExecutionTarget::ContainerRuntime { container, image } => {
+                Some(GraphExecutionStep {
+                    action: step.action.clone(),
+                    target: GraphExecutionTarget::DeployRuntime {
+                        worker: worker.clone(),
+                        container: container.clone(),
+                        image: image.clone(),
+                        route: route.clone(),
+                    },
+                    description: format!(
+                        "ensure deploy runtime for {} runs image {}",
+                        worker.as_deref().unwrap_or(container),
+                        image
+                    ),
+                })
+            }
+            _ => None,
+        });
+        let Some(deploy_step) = deploy_step else {
             return steps;
-        }
+        };
         steps
             .into_iter()
             .filter(|step| {
                 !matches!(
                     step.target,
                     GraphExecutionTarget::WorkerRuntime { .. }
+                        | GraphExecutionTarget::ContainerRuntime { .. }
                         | GraphExecutionTarget::Gateway { .. }
                 )
             })
+            .chain(std::iter::once(deploy_step))
             .collect()
     }
 
@@ -156,7 +188,8 @@ impl GraphActionExecutor {
                         actions.push(format!("planned {}", step.description));
                     }
                 }
-                GraphExecutionTarget::ContainerRuntime { .. } => {
+                GraphExecutionTarget::ContainerRuntime { .. }
+                | GraphExecutionTarget::DeployRuntime { .. } => {
                     if container_runtime_seen {
                         actions.push(
                             "container runtime already reconciled for this graph execution"
@@ -477,7 +510,7 @@ mod tests {
 
         assert_eq!(
             actions,
-            vec!["planned ensure container api runs image ghcr.io/acme/api:v1"]
+            vec!["planned ensure deploy runtime for api runs image ghcr.io/acme/api:v1"]
         );
     }
 
@@ -498,10 +531,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(actions.len(), 2);
+        assert_eq!(actions.len(), 1);
         assert_eq!(
-            actions[1],
-            "container runtime already reconciled for this graph execution"
+            actions[0],
+            "planned ensure deploy runtime for api runs image ghcr.io/acme/api:v1"
         );
     }
 
@@ -525,7 +558,11 @@ mod tests {
         assert_eq!(steps.len(), 1);
         assert!(matches!(
             steps[0].target,
-            GraphExecutionTarget::ContainerRuntime { .. }
+            GraphExecutionTarget::DeployRuntime {
+                worker: Some(ref worker),
+                route: Some(ref route),
+                ..
+            } if worker == "api" && route == "api.example.test"
         ));
     }
 
@@ -545,7 +582,10 @@ mod tests {
         assert_eq!(steps.len(), 1);
         assert!(matches!(
             steps[0].target,
-            GraphExecutionTarget::ContainerRuntime { .. }
+            GraphExecutionTarget::DeployRuntime {
+                route: Some(ref route),
+                ..
+            } if route == "api.example.test"
         ));
     }
 }
