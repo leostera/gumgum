@@ -8,7 +8,7 @@ This is the canonical end-to-end GumGum fixture. It is intentionally small, but 
 - Queue receives events that point at bucket objects.
 - Background worker consumes queue events and writes normalized rows into DB.
 
-The Python implementation uses `uv` with a small FastAPI API worker and a queue worker. The API worker uses realistic clients when GumGum projects provider env (`redis`, `boto3` for S3/MinIO, and `confluent-kafka` for Redpanda/Kafka) and falls back to local files for tests/dev. The queue worker can use a real Postgres `DATABASE_URL` projected by GumGum, and falls back to SQLite when provider-backed bindings are not ready.
+The Python implementation uses `uv` with a small FastAPI API worker and a queue worker. The API worker uses realistic clients when GumGum projects provider env (`redis`, `boto3` for S3/MinIO, and `confluent-kafka` for Redpanda/Kafka) and falls back to local files for tests/dev. The queue worker uses realistic clients for Postgres (`psycopg`), S3/MinIO (`boto3`), and Redpanda/Kafka (`confluent-kafka`) when bindings are present, and falls back to SQLite/filesystem adapters for tests/dev.
 
 ## GumGum path
 

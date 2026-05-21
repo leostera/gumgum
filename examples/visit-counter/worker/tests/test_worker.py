@@ -9,6 +9,11 @@ def configure_fallback_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(worker, "QUEUE_DIR", tmp_path / "queue")
     monkeypatch.setattr(worker, "DB_PATH", tmp_path / "visits.sqlite")
     monkeypatch.setattr(worker, "DATABASE_URL", None)
+    monkeypatch.setattr(worker, "S3_ENDPOINT", None)
+    monkeypatch.setattr(worker, "S3_ACCESS_KEY_ID", None)
+    monkeypatch.setattr(worker, "S3_SECRET_ACCESS_KEY", None)
+    monkeypatch.setattr(worker, "KAFKA_BROKERS", None)
+    monkeypatch.setattr(worker, "KAFKA_TOPIC", None)
     monkeypatch.setattr(worker, "MIGRATIONS_DIR", tmp_path / "missing-migrations")
 
 
@@ -31,9 +36,13 @@ def test_worker_reads_bucket_message_and_inserts_visit(monkeypatch, tmp_path):
     message_path.write_text(json.dumps({"bucket": "visit-requests", "key": request_key}))
 
     store = worker.visit_store()
+    events = worker.event_source()
     try:
-        worker.process_message(store, message_path)
+        messages = events.poll()
+        assert len(messages) == 1
+        worker.process_message(store, messages[0], events=events)
     finally:
+        events.close()
         store.close()
 
     assert not message_path.exists()
