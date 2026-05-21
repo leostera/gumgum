@@ -151,7 +151,7 @@ pub(crate) enum ObjectCommand {
     Create(CreateObjectArgs),
     Delete(DeleteObjectArgs),
     Bind(BindObjectArgs),
-    Unbind(BindObjectArgs),
+    Unbind(UnbindObjectArgs),
 }
 
 #[derive(Debug, Args)]
@@ -194,6 +194,19 @@ pub(crate) struct BindObjectArgs {
     pub(crate) binding: String,
     #[arg(long, default_value = "read-write")]
     pub(crate) access: String,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UnbindObjectArgs {
+    pub(crate) name: String,
+    #[arg(long)]
+    pub(crate) host: Option<String>,
+    #[arg(long = "to")]
+    pub(crate) to: Option<String>,
+    #[arg(long = "as")]
+    pub(crate) binding: String,
+    #[arg(long)]
+    pub(crate) preview: bool,
 }
 
 #[derive(Debug, Args)]

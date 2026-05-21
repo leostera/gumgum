@@ -1,6 +1,6 @@
 use crate::{
-    BindObjectArgs, CreateObjectArgs, DeleteObjectArgs, ObjectArgs, ObjectCommand, print_value,
-    resolve_server,
+    BindObjectArgs, CreateObjectArgs, DeleteObjectArgs, ObjectArgs, ObjectCommand,
+    UnbindObjectArgs, print_value, resolve_server,
 };
 use gumgum_api::{
     BindingDeleteRequest, BindingRequest, ObjectDeleteRequest, ObjectReport, ObjectRequest,
@@ -109,7 +109,7 @@ async fn delete_object(
 
 async fn unbind_object(
     capability: Capability,
-    args: BindObjectArgs,
+    args: UnbindObjectArgs,
     json: bool,
 ) -> gumgum_core::Result<()> {
     let server = resolve_server(args.host)?;
@@ -122,7 +122,7 @@ async fn unbind_object(
         object_name: args.name,
         worker,
         binding: args.binding,
-        preview: false,
+        preview: args.preview,
     };
     let report = ServerClient::new(server.host)
         .delete_binding(&request)
@@ -130,10 +130,17 @@ async fn unbind_object(
     if json {
         print_value(true, &report);
     } else {
-        println!(
-            "unbound {} from {} as {}",
-            report.object, report.worker, report.binding
-        );
+        if args.preview {
+            println!(
+                "would unbind {} from {} as {}",
+                report.object, report.worker, report.binding
+            );
+        } else {
+            println!(
+                "unbound {} from {} as {}",
+                report.object, report.worker, report.binding
+            );
+        }
     }
     Ok(())
 }
