@@ -1,6 +1,6 @@
 use crate::{
     Capability, DeployRequest, DesiredGraph, GraphReconcileAction, GraphReconciler,
-    ObjectProviderPlan, ProviderCredentials,
+    ObjectProviderPlan, Port, ProviderCredentials,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -25,7 +25,7 @@ pub enum GraphExecutionTarget {
         container: String,
         image: String,
         route: Option<String>,
-        port: Option<u16>,
+        port: Option<Port>,
         health: Option<String>,
     },
     Gateway {
@@ -165,7 +165,7 @@ impl GraphActionPlanner {
         container: impl Into<String>,
         image: impl Into<String>,
         route: impl Into<String>,
-        port: u16,
+        port: Port,
         health: impl Into<String>,
     ) -> GraphExecutionStep {
         let worker = worker.into();
@@ -323,7 +323,7 @@ fn deploy_request_from_target(target: &GraphExecutionTarget) -> Option<DeployReq
             image: image.clone(),
             container: container.clone(),
             route: route.clone(),
-            port: *port,
+            port: port.get(),
             health: health.clone(),
         }),
         _ => None,
@@ -585,7 +585,7 @@ mod tests {
             "gumgum-api",
             "ghcr.io/acme/api:v1",
             "api.example.test",
-            3000,
+            Port::new(3000).unwrap(),
             "/healthz",
         );
 
@@ -595,10 +595,10 @@ mod tests {
                 worker: Some(ref worker),
                 ref container,
                 route: Some(ref route),
-                port: Some(3000),
+                port: Some(port),
                 health: Some(ref health),
                 ..
-            } if worker == "api" && container == "gumgum-api" && route == "api.example.test" && health == "/healthz"
+            } if worker == "api" && container == "gumgum-api" && route == "api.example.test" && port.get() == 3000 && health == "/healthz"
         ));
     }
 
@@ -609,7 +609,7 @@ mod tests {
             "gumgum-api",
             "ghcr.io/acme/api:v1",
             "api.example.test",
-            3000,
+            Port::new(3000).unwrap(),
             "/healthz",
         );
         let actions = GraphActionExecutor::execute_steps(

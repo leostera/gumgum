@@ -745,7 +745,8 @@ async fn daemon_deploy(
             request.container.clone(),
             request.image.clone(),
             request.route.clone(),
-            request.port,
+            gumgum_core::Port::new(request.port)
+                .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
             request.health.clone(),
         ));
     }
@@ -788,7 +789,8 @@ async fn deploy_reconciliation_plan(
             image: request.image.clone(),
             container: request.container.clone(),
             route: request.route.clone(),
-            port: request.port,
+            port: gumgum_core::Port::new(request.port)
+                .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
             health: request.health.clone(),
         });
         Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)

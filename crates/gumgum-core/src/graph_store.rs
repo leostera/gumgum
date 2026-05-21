@@ -1,5 +1,5 @@
 use crate::{
-    Capability, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge, GraphNode, GumgumError,
+    Capability, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge, GraphNode, GumgumError, Port,
     Result, Subsystem,
 };
 use rusqlite::{Connection, params};
@@ -534,7 +534,7 @@ impl GraphStore {
                 image,
                 container,
                 route,
-                port,
+                port: Port::new(port)?,
                 health,
             });
         }
@@ -1008,7 +1008,7 @@ mod tests {
             image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
             container: "gumgum-dev-leostera-peekaboo-api".to_owned(),
             route: "api.peekaboo.leostera.test".to_owned(),
-            port: 3000,
+            port: Port::new(3000).unwrap(),
             health: "/healthz".to_owned(),
         }));
         let desired = store.load_desired_graph().unwrap();
