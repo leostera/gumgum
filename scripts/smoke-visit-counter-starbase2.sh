@@ -54,6 +54,7 @@ visit-counter starbase2 smoke modes:
   DEPLOY_ONLY=1 APPLY=1: deploy/curl using existing desired object/binding state
   OBSERVE_ONLY=1: show status/events/operations/logs for existing deployment
   ARTIFACT_DIR=<dir>: copy response/graph/container snapshots and observe output into a directory
+  ARTIFACT_DIR also writes index.txt, summary.txt, and checksums.sha256 for review
   CLEANUP_ONLY=1 VERIFY_CLEANUP_PREVIEW=1: preview cleanup without creating objects
   CLEANUP_ONLY=1 APPLY_CLEANUP=1: apply cleanup without creating objects
   PLAN=1 or --plan: print the recommended intentional apply sequence
@@ -109,8 +110,26 @@ write_artifact_index() {
   )
 }
 
+write_artifact_checksums() {
+  if [ -z "$ARTIFACT_DIR" ]; then
+    return
+  fi
+  if ! command -v shasum >/dev/null 2>&1; then
+    return
+  fi
+  (
+    cd "$ARTIFACT_DIR"
+    find . -maxdepth 1 -type f ! -name checksums.sha256 -print \
+      | sed 's#^./##' \
+      | sort \
+      | xargs shasum -a 256 >checksums.sha256
+  )
+}
+
 write_artifacts() {
   write_artifact_summary
+  write_artifact_index
+  write_artifact_checksums
   write_artifact_index
 }
 cleanup() {
