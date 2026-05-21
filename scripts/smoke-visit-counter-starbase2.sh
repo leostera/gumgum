@@ -25,11 +25,12 @@ REQUIRE_CURRENT_DAEMON=${REQUIRE_CURRENT_DAEMON:-0}
 HELP=${HELP:-0}
 PLAN=${PLAN:-0}
 ARTIFACT_DIR=${ARTIFACT_DIR:-}
+ARTIFACT_ROOT=${ARTIFACT_ROOT:-}
 
 print_plan() {
   cat <<'EOF'
 recommended intentional starbase2 sequence:
-  0. export ARTIFACT_DIR=/tmp/visit-counter-smoke-$(date -u +%Y%m%dT%H%M%SZ)
+  0. export ARTIFACT_ROOT=/tmp/visit-counter-smoke-$(date -u +%Y%m%dT%H%M%SZ)
   1. scripts/smoke-visit-counter-starbase2.sh
   2. REQUIRE_CURRENT_DAEMON=1 scripts/smoke-visit-counter-starbase2.sh
   3. RUN_SETUP=1 VERIFY_SETUP_IDEMPOTENCY=1 SETUP_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
@@ -40,7 +41,7 @@ recommended intentional starbase2 sequence:
   8. DEPLOY_ONLY=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
   9. OBSERVE_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
  10. CLEANUP_ONLY=1 APPLY_CLEANUP=1 scripts/smoke-visit-counter-starbase2.sh
- 11. cd "$ARTIFACT_DIR" && shasum -a 256 -c checksums.sha256
+ 11. find "$ARTIFACT_ROOT" -name checksums.sha256 -print -execdir shasum -a 256 -c checksums.sha256 \;
 EOF
 }
 
@@ -56,7 +57,8 @@ visit-counter starbase2 smoke modes:
   DEPLOY_ONLY=1 APPLY=1: deploy/curl using existing desired object/binding state
   OBSERVE_ONLY=1: show status/events/operations/logs for existing deployment
   ARTIFACT_DIR=<dir>: copy response/graph/container snapshots and observe output into a directory
-  ARTIFACT_DIR also writes index.txt, summary.txt, and checksums.sha256 for review
+  ARTIFACT_ROOT=<dir>: derive per-mode artifact directories under a shared root
+  Artifacts include index.txt, summary.txt, commands.txt, and checksums.sha256 for review
   CLEANUP_ONLY=1 VERIFY_CLEANUP_PREVIEW=1: preview cleanup without creating objects
   CLEANUP_ONLY=1 APPLY_CLEANUP=1: apply cleanup without creating objects
   PLAN=1 or --plan: print the recommended intentional apply sequence
@@ -77,9 +79,6 @@ before_file=$(mktemp)
 after_file=$(mktemp)
 before_graph_file=$(mktemp)
 after_graph_file=$(mktemp)
-if [ -n "$ARTIFACT_DIR" ]; then
-  mkdir -p "$ARTIFACT_DIR"
-fi
 
 smoke_mode() {
   if [ "$SETUP_ONLY" = "1" ]; then
@@ -108,6 +107,14 @@ smoke_mode() {
     echo "default-dry-run"
   fi
 }
+
+if [ -n "$ARTIFACT_ROOT" ] && [ -z "$ARTIFACT_DIR" ]; then
+  ARTIFACT_DIR="$ARTIFACT_ROOT/$(smoke_mode)"
+fi
+
+if [ -n "$ARTIFACT_DIR" ]; then
+  mkdir -p "$ARTIFACT_DIR"
+fi
 
 write_artifact_summary() {
   if [ -z "$ARTIFACT_DIR" ]; then
