@@ -41,6 +41,23 @@ pub(crate) async fn ensure(
     let bucket = sanitize_name(&plan.name);
     ensure_bucket(&bucket, &credentials).await?;
     actions.push(format!("ensured bucket {bucket} on {}", provider.provider));
+    actions.push(format!("published DNS {} to minio.main", plan.dns));
+    Ok(actions)
+}
+
+pub(crate) async fn delete(
+    plan: &ObjectProviderPlan,
+    credentials: ProviderCredentials,
+) -> crate::Result<Vec<String>> {
+    let provider = &plan.provider;
+    let mut actions = ensure_provider(provider, credentials.clone()).await?;
+    let bucket = sanitize_name(&plan.name);
+    delete_bucket(&bucket, &credentials).await?;
+    actions.push(format!(
+        "deleted bucket {bucket} from {}",
+        provider.provider
+    ));
+    actions.push(format!("removed DNS {} from minio.main", plan.dns));
     Ok(actions)
 }
 
@@ -101,6 +118,28 @@ async fn ensure_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate
             .arg("-c")
             .arg(script),
         "could not ensure minio bucket",
+    )
+    .await
+}
+
+async fn delete_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate::Result<()> {
+    let script = format!(
+        "set -e; mc alias set gumgum-minio http://gumgum-provider-minio-main:9000 '{}' '{}'; mc rb --force gumgum-minio/{} || true",
+        shell_single_quote(&credentials.username),
+        shell_single_quote(&credentials.password),
+        shell_single_quote(bucket)
+    );
+    run_provider_command(
+        TokioCommand::new("docker")
+            .arg("run")
+            .arg("--rm")
+            .arg("--network")
+            .arg("gumgum-network")
+            .arg("minio/mc:latest")
+            .arg("sh")
+            .arg("-c")
+            .arg(script),
+        "could not delete minio bucket",
     )
     .await
 }

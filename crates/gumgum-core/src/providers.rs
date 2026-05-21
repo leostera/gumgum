@@ -185,6 +185,22 @@ mod tests {
     }
 
     #[test]
+    fn blob_provider_delete_plan_is_scoped_to_minio_bucket() {
+        let plan = object_provider_plan(
+            Capability::Blob,
+            "visit-requests",
+            "visit-requests.blob.example.test",
+        );
+
+        assert_eq!(plan.provider.provider, "minio.main");
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| action == "ensure bucket visit-requests exists")
+        );
+    }
+
+    #[test]
     fn vaultwarden_module_owns_secret_provider_details() {
         let spec = vaultwarden::spec();
         assert_eq!(spec.provider, "vaultwarden.main");

@@ -47,6 +47,13 @@ impl ProviderReconciler {
                 .await
             }
             Capability::Kv => super::redis::delete_object(plan).await,
+            Capability::Blob => {
+                super::minio::delete(
+                    plan,
+                    credentials.unwrap_or_else(ProviderCredentials::minio_local_dev),
+                )
+                .await
+            }
             _ => Ok(vec![format!(
                 "removed desired {} object {}; provider cleanup is not implemented yet",
                 plan.capability, plan.name
