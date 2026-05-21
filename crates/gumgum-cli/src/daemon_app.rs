@@ -836,25 +836,30 @@ async fn daemon_rollback(
             if steps.is_empty() {
                 steps.push(deploy.execution_step());
             }
-            let store = GraphStore::new(graph_path.clone());
-            let deploy_for_db = deploy.clone();
-            let _ =
-                tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db)).await;
-            let mut actions = GraphActionExecutor::execute_steps(
+            let execution_result = GraphActionExecutor::execute_steps(
                 &steps,
                 GraphExecutionContext {
                     object_plan: None,
                     provider_credentials: None,
-                    graph_path: Some(graph_path),
+                    graph_path: Some(graph_path.clone()),
                 },
             )
-            .await
-            .unwrap_or_else(|error| {
-                vec![format!(
-                    "rollback reconcile failed: {}",
+            .await;
+            let mut actions = match execution_result {
+                Ok(actions) => {
+                    let store = GraphStore::new(graph_path);
+                    let deploy_for_db = deploy.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        store.materialize_deploy(&deploy_for_db)
+                    })
+                    .await;
+                    actions
+                }
+                Err(error) => vec![format!(
+                    "rollback reconcile failed: {}; desired deploy was not changed",
                     error.to_report().message
-                )]
-            });
+                )],
+            };
             actions.insert(0, format!("rollback to {image}"));
             actions
         };
