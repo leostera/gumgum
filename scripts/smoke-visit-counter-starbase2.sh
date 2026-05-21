@@ -29,6 +29,7 @@ ARTIFACT_ROOT=${ARTIFACT_ROOT:-}
 SMOKE_STATUS=running
 SMOKE_EXIT_CODE=0
 SMOKE_FAILURE_MESSAGE=
+SMOKE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 print_plan() {
   cat <<'EOF'
@@ -130,7 +131,9 @@ write_artifact_summary() {
     return
   fi
   cat >"$ARTIFACT_DIR/summary.txt" <<EOF
-created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+created_at=$SMOKE_STARTED_AT
+started_at=$SMOKE_STARTED_AT
+finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 mode=$(smoke_mode)
 host=$HOST
 root_domain=$ROOT_DOMAIN
@@ -158,7 +161,7 @@ write_artifact_readme() {
 Visit-counter smoke artifacts
 
 Key files:
-  summary.txt             resolved mode, host, domains, flags, and timestamp
+  summary.txt             resolved mode, host, domains, flags, status, and timestamps
   index.txt               sorted list of captured files
   checksums.sha256        integrity checksums for captured files
   containers-before.txt   remote containers before the smoke stage
