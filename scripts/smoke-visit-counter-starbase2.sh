@@ -15,6 +15,7 @@ APPLY_UPGRADE=${APPLY_UPGRADE:-0}
 VERIFY_CLEANUP_PREVIEW=${VERIFY_CLEANUP_PREVIEW:-0}
 APPLY_CLEANUP=${APPLY_CLEANUP:-0}
 VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
+REQUIRE_CURRENT_DAEMON=${REQUIRE_CURRENT_DAEMON:-0}
 
 before_file=$(mktemp)
 after_file=$(mktemp)
@@ -93,6 +94,21 @@ has_daemon_capability() {
   fi
 }
 
+require_daemon_capabilities() {
+  local missing=""
+  for capability in "$@"; do
+    if ! has_daemon_capability "$capability"; then
+      missing="$missing $capability"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    echo "error: gumgumd on $HOST is missing required capabilities:$missing" >&2
+    echo "run: gumgum --dry-run server $HOST upgrade" >&2
+    echo "then intentionally run: APPLY_UPGRADE=1 VERIFY_UPGRADE_IDEMPOTENCY=1 scripts/smoke-visit-counter-starbase2.sh" >&2
+    exit 1
+  fi
+}
+
 plan_gumgum() {
   echo "+ gumgum $*"
 }
@@ -112,6 +128,9 @@ fi
 if [ "$APPLY_CLEANUP" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
   echo "error: APPLY_CLEANUP=1 requires APPLY_OBJECTS=1 to make destructive cleanup explicit" >&2
   exit 1
+fi
+if [ "$REQUIRE_CURRENT_DAEMON" = "1" ] || [ "$APPLY_OBJECTS" = "1" ] || [ "$APPLY" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
+  require_daemon_capabilities events rollback_revision_id binding_delete object_delete deployment_delete
 fi
 
 remote_containers >"$before_file"

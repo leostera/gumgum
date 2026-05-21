@@ -46,6 +46,9 @@ Use the repository smoke harness when intentionally exercising the real host. It
 # safest default: print object/binding commands and run only deploy dry-run
 scripts/smoke-visit-counter-starbase2.sh
 
+# verify daemon compatibility before any mutation
+REQUIRE_CURRENT_DAEMON=1 scripts/smoke-visit-counter-starbase2.sh
+
 # create/bind objects intentionally, but still only dry-run deploy
 APPLY_OBJECTS=1 scripts/smoke-visit-counter-starbase2.sh
 
@@ -61,7 +64,7 @@ APPLY_OBJECTS=1 APPLY_CLEANUP=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_OBJECTS=1 APPLY=1 VERIFY_ROLLBACK_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
 ```
 
-The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, verifies DNS/Caddy with a `Host: api.visit-counter.leostera.test` request, and can optionally preview rollback. Cleanup preview mode snapshots the desired graph before/after and fails if a preview mutates state. Explicit cleanup apply mode also snapshots the graph and verifies visit-counter object/binding desired state is gone without removing pre-existing containers. The default mode does not mutate starbase2 objects.
+The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, verifies DNS/Caddy with a `Host: api.visit-counter.leostera.test` request, and can optionally preview rollback. Mutating modes require a current daemon that advertises safe delete/rollback capabilities. Cleanup preview mode snapshots the desired graph before/after and fails if a preview mutates state. Explicit cleanup apply mode also snapshots the graph and verifies visit-counter object/binding desired state is gone without removing pre-existing containers. The default mode does not mutate starbase2 objects.
 
 ## Local fallback smoke test
 
