@@ -743,7 +743,8 @@ async fn daemon_deploy(
         reconciliation_steps.push(GraphActionPlanner::ensure_deploy_step(
             gumgum_core::WorkerId::new(&request.worker)
                 .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
-            request.container.clone(),
+            gumgum_core::ContainerName::new(&request.container)
+                .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
             request.image.clone(),
             request.route.clone(),
             gumgum_core::Port::new(request.port)
@@ -789,7 +790,8 @@ async fn deploy_reconciliation_plan(
             worker: gumgum_core::WorkerId::new(&request.worker)
                 .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
             image: request.image.clone(),
-            container: request.container.clone(),
+            container: gumgum_core::ContainerName::new(&request.container)
+                .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
             route: request.route.clone(),
             port: gumgum_core::Port::new(request.port)
                 .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),

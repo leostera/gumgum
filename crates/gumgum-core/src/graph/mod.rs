@@ -7,4 +7,4 @@ pub use executor::{
     GraphExecutionTarget, GraphReconciliationPlan,
 };
 pub use reconciler::{DesiredGraph, DesiredGraphNode, GraphReconcileAction, GraphReconciler};
-pub use types::{Port, WorkerId};
+pub use types::{ContainerName, Port, WorkerId};

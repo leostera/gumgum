@@ -16,9 +16,9 @@ pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
 pub use graph::{
-    DesiredGraph, DesiredGraphNode, GraphActionExecutor, GraphActionPlanner, GraphExecutionContext,
-    GraphExecutionStep, GraphExecutionTarget, GraphReconcileAction, GraphReconciler,
-    GraphReconciliationPlan, Port, WorkerId,
+    ContainerName, DesiredGraph, DesiredGraphNode, GraphActionExecutor, GraphActionPlanner,
+    GraphExecutionContext, GraphExecutionStep, GraphExecutionTarget, GraphReconcileAction,
+    GraphReconciler, GraphReconciliationPlan, Port, WorkerId,
 };
 pub use graph_store::{
     DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject, GraphStore, WorkerBinding,
