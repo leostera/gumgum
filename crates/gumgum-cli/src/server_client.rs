@@ -235,12 +235,19 @@ impl ServerClient {
         request: &T,
         name: &str,
     ) -> gumgum_core::Result<R> {
-        self.http
+        let response = self
+            .http
             .delete(self.url(path))
             .json(request)
             .send()
             .await
-            .map_err(|source| self.api_error(format!("failed to call gumgumd {name} API"), source))?
+            .map_err(|source| {
+                self.api_error(format!("failed to call gumgumd {name} API"), source)
+            })?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            return Err(self.unsupported_delete_error(path, name));
+        }
+        response
             .error_for_status()
             .map_err(|source| {
                 self.api_error(format!("gumgumd {name} API returned an error"), source)
@@ -260,6 +267,24 @@ impl ServerClient {
         GumgumError::structured(Subsystem::Api, ErrorCode::Io, message.into())
             .likely_cause(source.to_string())
             .build()
+    }
+
+    fn unsupported_delete_error(&self, path: &str, name: &str) -> GumgumError {
+        GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::Io,
+            format!("gumgumd does not expose safe {name} API"),
+        )
+        .likely_cause(format!(
+            "server {} returned 405 for DELETE {path}; the daemon is probably older than the CLI or was installed before safe delete/unbind APIs were added",
+            self.host
+        ))
+        .next_command(format!(
+            "gumgum setup {} --root-domain <domain>",
+            self.host
+        ))
+        .next_command(format!("gumgum server {} upgrade", self.host))
+        .build()
     }
 
     fn unsupported_revisions_error(&self, worker: &str) -> GumgumError {
@@ -284,6 +309,26 @@ impl ServerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_delete_error_explains_old_daemon() {
+        let report = ServerClient::new("starbase2")
+            .unsupported_delete_error("/v0/bindings", "binding delete")
+            .to_report();
+
+        assert_eq!(
+            report.message,
+            "gumgumd does not expose safe binding delete API"
+        );
+        assert!(report.likely_cause.unwrap().contains("DELETE /v0/bindings"));
+        assert_eq!(
+            report.next_commands,
+            vec![
+                "gumgum setup starbase2 --root-domain <domain>",
+                "gumgum server starbase2 upgrade",
+            ]
+        );
+    }
 
     #[test]
     fn unsupported_revisions_error_explains_old_daemon() {
