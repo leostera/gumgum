@@ -148,6 +148,7 @@ pub(crate) struct ObjectArgs {
 pub(crate) enum ObjectCommand {
     Create(CreateObjectArgs),
     Bind(BindObjectArgs),
+    Unbind(BindObjectArgs),
 }
 
 #[derive(Debug, Args)]

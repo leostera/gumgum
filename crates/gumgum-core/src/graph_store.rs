@@ -180,6 +180,24 @@ impl WorkerBinding {
         .and_then(Result::ok)
         .unwrap_or_default()
     }
+
+    pub async fn delete_reconciliation_steps(
+        &self,
+        graph_path: PathBuf,
+    ) -> Vec<GraphExecutionStep> {
+        let binding = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = GraphStore::new(graph_path);
+            let old_graph = store.load_desired_graph()?;
+            let mut new_graph = old_graph.clone();
+            new_graph.nodes.remove(&binding.graph_node()?);
+            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -482,6 +500,23 @@ impl GraphStore {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn delete_binding(&self, binding: &WorkerBinding) -> Result<bool> {
+        self.init()?;
+        let conn = self.open()?;
+        let changed = conn
+            .execute(
+                "DELETE FROM bindings WHERE object_kind = ?1 AND object_name = ?2 AND worker = ?3 AND binding = ?4",
+                params![
+                    binding.capability.to_string(),
+                    binding.object_name,
+                    binding.worker,
+                    binding.binding
+                ],
+            )
+            .map_err(|source| self.error("could not delete binding", source))?;
+        Ok(changed > 0)
     }
 
     pub fn materialize_binding(&self, binding: &WorkerBinding) -> Result<bool> {

@@ -120,6 +120,16 @@ pub struct BindingRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BindingDeleteRequest {
+    pub capability: Capability,
+    pub object_name: String,
+    pub worker: String,
+    pub binding: String,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BindingReport {
     pub ok: bool,
     pub object: String,

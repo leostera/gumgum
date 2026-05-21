@@ -4,9 +4,9 @@ use axum::{
     routing::{get, post},
 };
 use gumgum_api::{
-    AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
-    DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, EventsReport, GraphNode,
-    GraphReport, LogsReport, ObjectReport, ObjectRequest, ProviderBootReport,
+    AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DaemonVersionReport,
+    DeployApplyReport, DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, EventsReport,
+    GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, ProviderBootReport,
     ProviderConfigureReport, ProviderConfigureRequest, ProviderCredentialsInitReport,
     ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
@@ -68,7 +68,10 @@ impl DaemonApp {
             .route("/v0/revisions/{worker}", get(daemon_revisions))
             .route("/v0/events", get(daemon_events))
             .route("/v0/objects", post(daemon_create_object))
-            .route("/v0/bindings", post(daemon_create_binding))
+            .route(
+                "/v0/bindings",
+                post(daemon_create_binding).delete(daemon_delete_binding),
+            )
             .route("/v0/providers", get(daemon_providers))
             .route("/v0/providers/configure", post(daemon_configure_provider))
             .route(
@@ -537,6 +540,67 @@ async fn daemon_env(
         worker,
         message: format!("{} environment variable(s)", vars.len()),
         vars,
+    })
+}
+
+async fn daemon_delete_binding(
+    State(state): State<DaemonState>,
+    Json(request): Json<BindingDeleteRequest>,
+) -> Json<BindingReport> {
+    let graph_path = (*state.graph_path).clone();
+    let binding = WorkerBinding {
+        capability: request.capability,
+        object_name: request.object_name.clone(),
+        worker: request.worker.clone(),
+        binding: request.binding.clone(),
+        access: "delete".to_owned(),
+    };
+    let reconciliation_steps = binding
+        .delete_reconciliation_steps(graph_path.clone())
+        .await;
+    let deleted = if request.preview {
+        false
+    } else {
+        let store = GraphStore::new(graph_path.clone());
+        let binding_for_db = binding.clone();
+        tokio::task::spawn_blocking(move || store.delete_binding(&binding_for_db))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false)
+    };
+    let binding_actions = if request.preview {
+        vec!["preview only; no bindings changed".to_owned()]
+    } else {
+        GraphActionExecutor::execute_steps(
+            &reconciliation_steps,
+            GraphExecutionContext {
+                graph_path: Some(graph_path),
+                ..GraphExecutionContext::default()
+            },
+        )
+        .await
+        .unwrap_or_else(|error| {
+            vec![format!(
+                "binding delete reconcile failed: {}",
+                error.to_report().message
+            )]
+        })
+    };
+    Json(BindingReport {
+        ok: request.preview || deleted,
+        object: format!("{}/{}", request.capability, request.object_name),
+        worker: request.worker,
+        binding: request.binding,
+        binding_actions,
+        reconciliation_steps,
+        message: if request.preview {
+            "binding delete preview".to_owned()
+        } else if deleted {
+            "binding deleted from graph".to_owned()
+        } else {
+            "binding was not present".to_owned()
+        },
     })
 }
 

@@ -1,8 +1,9 @@
 use gumgum_api::{
-    AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest,
-    DeploymentRevisionsReport, EnvReport, EventsReport, GraphReport, LogsReport, ObjectReport,
-    ObjectRequest, ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
-    ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport, RollbackRequest,
+    AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DeployApplyReport,
+    DeployRequest, DeploymentRevisionsReport, EnvReport, EventsReport, GraphReport, LogsReport,
+    ObjectReport, ObjectRequest, ProviderBootReport, ProviderConfigureReport,
+    ProviderConfigureRequest, ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport,
+    RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
 
@@ -98,6 +99,14 @@ impl ServerClient {
         self.post_json("/v0/bindings", request, "binding").await
     }
 
+    pub(crate) async fn delete_binding(
+        &self,
+        request: &BindingDeleteRequest,
+    ) -> gumgum_core::Result<BindingReport> {
+        self.delete_json("/v0/bindings", request, "binding delete")
+            .await
+    }
+
     pub(crate) async fn env(&self, worker: &str) -> gumgum_core::Result<EnvReport> {
         self.get_json(&format!("/v0/env/{worker}"), "env").await
     }
@@ -189,6 +198,29 @@ impl ServerClient {
     ) -> gumgum_core::Result<R> {
         self.http
             .post(self.url(path))
+            .json(request)
+            .send()
+            .await
+            .map_err(|source| self.api_error(format!("failed to call gumgumd {name} API"), source))?
+            .error_for_status()
+            .map_err(|source| {
+                self.api_error(format!("gumgumd {name} API returned an error"), source)
+            })?
+            .json()
+            .await
+            .map_err(|source| {
+                self.api_error(format!("gumgumd {name} API returned invalid JSON"), source)
+            })
+    }
+
+    async fn delete_json<T: serde::Serialize + ?Sized, R: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        request: &T,
+        name: &str,
+    ) -> gumgum_core::Result<R> {
+        self.http
+            .delete(self.url(path))
             .json(request)
             .send()
             .await
