@@ -745,7 +745,8 @@ async fn daemon_deploy(
                 .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
             gumgum_core::ContainerName::new(&request.container)
                 .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
-            request.image.clone(),
+            gumgum_core::ImageName::new(&request.image)
+                .unwrap_or_else(|_| gumgum_core::ImageName::new("invalid:latest").unwrap()),
             request.route.clone(),
             gumgum_core::Port::new(request.port)
                 .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
@@ -789,7 +790,8 @@ async fn deploy_reconciliation_plan(
         new_graph.nodes.insert(DesiredGraphNode::Deployment {
             worker: gumgum_core::WorkerId::new(&request.worker)
                 .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
-            image: request.image.clone(),
+            image: gumgum_core::ImageName::new(&request.image)
+                .unwrap_or_else(|_| gumgum_core::ImageName::new("invalid:latest").unwrap()),
             container: gumgum_core::ContainerName::new(&request.container)
                 .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
             route: request.route.clone(),

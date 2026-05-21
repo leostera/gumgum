@@ -1,6 +1,6 @@
 use crate::{
     Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge, GraphNode,
-    GumgumError, Port, Result, Subsystem, WorkerId,
+    GumgumError, ImageName, Port, Result, Subsystem, WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -531,7 +531,7 @@ impl GraphStore {
                 row.map_err(|source| self.error("could not decode desired deployment", source))?;
             nodes.push(DesiredGraphNode::Deployment {
                 worker: WorkerId::new(&worker)?,
-                image,
+                image: ImageName::new(&image)?,
                 container: ContainerName::new(&container)?,
                 route,
                 port: Port::new(port)?,
@@ -1005,7 +1005,7 @@ mod tests {
         }));
         assert!(desired.nodes.contains(&DesiredGraphNode::Deployment {
             worker: WorkerId::new("api").unwrap(),
-            image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
+            image: ImageName::new("127.0.0.1:55000/dev.leostera/peekaboo/api:1").unwrap(),
             container: ContainerName::new("gumgum-dev-leostera-peekaboo-api").unwrap(),
             route: "api.peekaboo.leostera.test".to_owned(),
             port: Port::new(3000).unwrap(),

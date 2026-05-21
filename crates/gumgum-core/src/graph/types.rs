@@ -118,6 +118,50 @@ impl TryFrom<&str> for ContainerName {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ImageName(String);
+
+impl ImageName {
+    pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
+        let value = value.as_ref().trim().to_owned();
+        if value.is_empty() {
+            return Err(invalid_graph_value("image name must not be empty"));
+        }
+        if value.chars().any(char::is_whitespace) {
+            return Err(invalid_graph_value(
+                "image name must not contain whitespace",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ImageName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for ImageName {
+    type Error = GumgumError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for ImageName {
+    type Error = GumgumError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
 fn invalid_graph_value(message: &'static str) -> GumgumError {
     GumgumError::structured(Subsystem::Config, ErrorCode::InvalidArgs, message).build()
 }
@@ -139,6 +183,14 @@ mod tests {
             "gumgum-api-1"
         );
         assert!(ContainerName::new("---").is_err());
+    }
+
+    #[test]
+    fn image_name_preserves_registry_reference_but_rejects_whitespace() {
+        let image = ImageName::new(" ghcr.io/acme/api:v1 ").unwrap();
+        assert_eq!(image.as_str(), "ghcr.io/acme/api:v1");
+        assert!(ImageName::new("bad image:v1").is_err());
+        assert!(ImageName::new(" ").is_err());
     }
 
     #[test]

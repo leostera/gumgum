@@ -1,6 +1,6 @@
 use crate::{
     Capability, ContainerName, DeployRequest, DesiredGraph, GraphReconcileAction, GraphReconciler,
-    ObjectProviderPlan, Port, ProviderCredentials, WorkerId,
+    ImageName, ObjectProviderPlan, Port, ProviderCredentials, WorkerId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub enum GraphExecutionTarget {
     DeployRuntime {
         worker: Option<WorkerId>,
         container: ContainerName,
-        image: String,
+        image: ImageName,
         route: Option<String>,
         port: Option<Port>,
         health: Option<String>,
@@ -89,7 +89,8 @@ impl GraphActionPlanner {
                         worker: worker.clone(),
                         container: ContainerName::new(container)
                             .unwrap_or_else(|_| ContainerName::new("container").unwrap()),
-                        image: image.clone(),
+                        image: ImageName::new(image)
+                            .unwrap_or_else(|_| ImageName::new("invalid:latest").unwrap()),
                         route: route.clone(),
                         port: None,
                         health: None,
@@ -167,18 +168,17 @@ impl GraphActionPlanner {
     pub fn ensure_deploy_step(
         worker: WorkerId,
         container: ContainerName,
-        image: impl Into<String>,
+        image: ImageName,
         route: impl Into<String>,
         port: Port,
         health: impl Into<String>,
     ) -> GraphExecutionStep {
-        let image = image.into();
         let route = route.into();
         let health = health.into();
         GraphExecutionStep {
             action: GraphReconcileAction::EnsureContainer {
                 name: container.to_string(),
-                image: image.clone(),
+                image: image.to_string(),
             },
             target: GraphExecutionTarget::DeployRuntime {
                 worker: Some(worker.clone()),
@@ -322,7 +322,7 @@ fn deploy_request_from_target(target: &GraphExecutionTarget) -> Option<DeployReq
             health: Some(health),
         } => Some(DeployRequest {
             worker: worker.to_string(),
-            image: image.clone(),
+            image: image.to_string(),
             container: container.to_string(),
             route: route.clone(),
             port: port.get(),
@@ -585,7 +585,7 @@ mod tests {
         let step = GraphActionPlanner::ensure_deploy_step(
             WorkerId::new("api").unwrap(),
             ContainerName::new("gumgum-api").unwrap(),
-            "ghcr.io/acme/api:v1",
+            ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             "api.example.test",
             Port::new(3000).unwrap(),
             "/healthz",
@@ -609,7 +609,7 @@ mod tests {
         let step = GraphActionPlanner::ensure_deploy_step(
             WorkerId::new("api").unwrap(),
             ContainerName::new("gumgum-api").unwrap(),
-            "ghcr.io/acme/api:v1",
+            ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             "api.example.test",
             Port::new(3000).unwrap(),
             "/healthz",
