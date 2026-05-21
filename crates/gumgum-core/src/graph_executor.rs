@@ -94,19 +94,51 @@ impl GraphActionPlanner {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct GraphExecutionContext {
+    pub object_plan: Option<ObjectProviderPlan>,
+    pub provider_credentials: Option<ProviderCredentials>,
+}
+
 pub struct GraphActionExecutor;
 
 impl GraphActionExecutor {
-    pub async fn execute_provider_steps(
+    pub async fn execute_steps(
         steps: &[GraphExecutionStep],
+        context: GraphExecutionContext,
     ) -> crate::Result<Vec<String>> {
         let mut actions = Vec::new();
         for step in steps {
-            if let GraphExecutionTarget::Provider { name, capability } = &step.target {
-                actions.extend(Self::execute_provider(name, *capability).await?);
+            match &step.target {
+                GraphExecutionTarget::Provider { name, capability } => {
+                    actions.extend(Self::execute_provider(name, *capability).await?);
+                }
+                GraphExecutionTarget::ObjectProvider { .. } => {
+                    if let Some(plan) = &context.object_plan {
+                        actions.extend(
+                            Self::execute_object_plan(plan, context.provider_credentials.clone())
+                                .await?,
+                        );
+                    } else {
+                        actions.push(format!("planned {}", step.description));
+                    }
+                }
+                GraphExecutionTarget::WorkerRuntime { .. }
+                | GraphExecutionTarget::ContainerRuntime { .. }
+                | GraphExecutionTarget::Gateway { .. }
+                | GraphExecutionTarget::GraphStore { .. }
+                | GraphExecutionTarget::Removal { .. } => {
+                    actions.push(format!("planned {}", step.description));
+                }
             }
         }
         Ok(actions)
+    }
+
+    pub async fn execute_provider_steps(
+        steps: &[GraphExecutionStep],
+    ) -> crate::Result<Vec<String>> {
+        Self::execute_steps(steps, GraphExecutionContext::default()).await
     }
 
     pub async fn execute_provider(
@@ -126,14 +158,14 @@ impl GraphActionExecutor {
         plan: &ObjectProviderPlan,
         credentials: Option<ProviderCredentials>,
     ) -> crate::Result<Vec<String>> {
-        let should_execute = steps
-            .iter()
-            .any(|step| matches!(step.target, GraphExecutionTarget::ObjectProvider { .. }));
-        if should_execute {
-            Self::execute_object_plan(plan, credentials).await
-        } else {
-            Ok(Vec::new())
-        }
+        Self::execute_steps(
+            steps,
+            GraphExecutionContext {
+                object_plan: Some(plan.clone()),
+                provider_credentials: credentials,
+            },
+        )
+        .await
     }
 
     pub async fn execute_object_plan(
@@ -337,6 +369,27 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("no secret value stored"))
         );
+    }
+
+    #[tokio::test]
+    async fn generic_executor_dispatches_provider_and_plans_runtime_targets() {
+        let steps = GraphActionPlanner::plan(&[
+            GraphReconcileAction::EnsureProvider {
+                name: "manual.main".to_owned(),
+                capability: Capability::Manual,
+            },
+            GraphReconcileAction::EnsureRoute {
+                host: "api.example.test".to_owned(),
+                target_container: "api".to_owned(),
+            },
+        ]);
+
+        let actions = GraphActionExecutor::execute_steps(&steps, GraphExecutionContext::default())
+            .await
+            .unwrap();
+
+        assert_eq!(actions[0], "configured manual provider manual.main");
+        assert!(actions[1].contains("planned ensure route api.example.test"));
     }
 
     #[test]
