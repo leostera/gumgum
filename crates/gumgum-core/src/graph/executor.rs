@@ -1,6 +1,6 @@
 use crate::{
     Capability, DeployRequest, DesiredGraph, GraphReconcileAction, GraphReconciler,
-    ObjectProviderPlan, Port, ProviderCredentials,
+    ObjectProviderPlan, Port, ProviderCredentials, WorkerId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -21,7 +21,7 @@ pub enum GraphExecutionTarget {
         image: String,
     },
     DeployRuntime {
-        worker: Option<String>,
+        worker: Option<WorkerId>,
         container: String,
         image: String,
         route: Option<String>,
@@ -73,7 +73,7 @@ impl GraphActionPlanner {
 
     pub fn normalize_steps(steps: Vec<GraphExecutionStep>) -> Vec<GraphExecutionStep> {
         let worker = steps.iter().find_map(|step| match &step.target {
-            GraphExecutionTarget::WorkerRuntime { worker, .. } => Some(worker.clone()),
+            GraphExecutionTarget::WorkerRuntime { worker, .. } => WorkerId::new(worker).ok(),
             _ => None,
         });
         let route = steps.iter().find_map(|step| match &step.target {
@@ -95,7 +95,10 @@ impl GraphActionPlanner {
                     },
                     description: format!(
                         "ensure deploy runtime for {} runs image {}",
-                        worker.as_deref().unwrap_or(container),
+                        worker
+                            .as_ref()
+                            .map(|worker| worker.as_str())
+                            .unwrap_or(container),
                         image
                     ),
                 })
@@ -161,14 +164,13 @@ impl GraphActionPlanner {
     }
 
     pub fn ensure_deploy_step(
-        worker: impl Into<String>,
+        worker: WorkerId,
         container: impl Into<String>,
         image: impl Into<String>,
         route: impl Into<String>,
         port: Port,
         health: impl Into<String>,
     ) -> GraphExecutionStep {
-        let worker = worker.into();
         let container = container.into();
         let image = image.into();
         let route = route.into();
@@ -319,7 +321,7 @@ fn deploy_request_from_target(target: &GraphExecutionTarget) -> Option<DeployReq
             port: Some(port),
             health: Some(health),
         } => Some(DeployRequest {
-            worker: worker.clone(),
+            worker: worker.to_string(),
             image: image.clone(),
             container: container.clone(),
             route: route.clone(),
@@ -581,7 +583,7 @@ mod tests {
     #[test]
     fn planner_can_synthesize_idempotent_deploy_step() {
         let step = GraphActionPlanner::ensure_deploy_step(
-            "api",
+            WorkerId::new("api").unwrap(),
             "gumgum-api",
             "ghcr.io/acme/api:v1",
             "api.example.test",
@@ -598,14 +600,14 @@ mod tests {
                 port: Some(port),
                 health: Some(ref health),
                 ..
-            } if worker == "api" && container == "gumgum-api" && route == "api.example.test" && port.get() == 3000 && health == "/healthz"
+            } if worker.as_str() == "api" && container == "gumgum-api" && route == "api.example.test" && port.get() == 3000 && health == "/healthz"
         ));
     }
 
     #[tokio::test]
     async fn generic_executor_can_execute_self_contained_deploy_without_deploy_context() {
         let step = GraphActionPlanner::ensure_deploy_step(
-            "api",
+            WorkerId::new("api").unwrap(),
             "gumgum-api",
             "ghcr.io/acme/api:v1",
             "api.example.test",
@@ -690,7 +692,7 @@ mod tests {
                 worker: Some(ref worker),
                 route: Some(ref route),
                 ..
-            } if worker == "api" && route == "api.example.test"
+            } if worker.as_str() == "api" && route == "api.example.test"
         ));
     }
 

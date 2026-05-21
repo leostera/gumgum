@@ -741,7 +741,8 @@ async fn daemon_deploy(
             .unwrap_or(false);
     if reconciliation_steps.is_empty() {
         reconciliation_steps.push(GraphActionPlanner::ensure_deploy_step(
-            request.worker.clone(),
+            gumgum_core::WorkerId::new(&request.worker)
+                .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
             request.container.clone(),
             request.image.clone(),
             request.route.clone(),
@@ -785,7 +786,8 @@ async fn deploy_reconciliation_plan(
         let old_graph = store.load_desired_graph()?;
         let mut new_graph = old_graph.clone();
         new_graph.nodes.insert(DesiredGraphNode::Deployment {
-            worker: request.worker.clone(),
+            worker: gumgum_core::WorkerId::new(&request.worker)
+                .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
             image: request.image.clone(),
             container: request.container.clone(),
             route: request.route.clone(),

@@ -18,7 +18,7 @@ pub use deployment::DeploymentDescriptor;
 pub use graph::{
     DesiredGraph, DesiredGraphNode, GraphActionExecutor, GraphActionPlanner, GraphExecutionContext,
     GraphExecutionStep, GraphExecutionTarget, GraphReconcileAction, GraphReconciler,
-    GraphReconciliationPlan, Port,
+    GraphReconciliationPlan, Port, WorkerId,
 };
 pub use graph_store::{
     DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject, GraphStore, WorkerBinding,
