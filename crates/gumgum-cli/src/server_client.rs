@@ -1,7 +1,7 @@
 use gumgum_api::{
     AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DeployApplyReport,
     DeployRequest, DeploymentRevisionsReport, EnvReport, EventsReport, GraphReport, LogsReport,
-    ObjectReport, ObjectRequest, ProviderBootReport, ProviderConfigureReport,
+    ObjectDeleteRequest, ObjectReport, ObjectRequest, ProviderBootReport, ProviderConfigureReport,
     ProviderConfigureRequest, ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport,
     RollbackRequest,
 };
@@ -58,6 +58,14 @@ impl ServerClient {
         request: &ObjectRequest,
     ) -> gumgum_core::Result<ObjectReport> {
         self.post_json("/v0/objects", request, "object").await
+    }
+
+    pub(crate) async fn delete_object(
+        &self,
+        request: &ObjectDeleteRequest,
+    ) -> gumgum_core::Result<ObjectReport> {
+        self.delete_json("/v0/objects", request, "object delete")
+            .await
     }
 
     pub(crate) async fn providers(&self) -> gumgum_core::Result<ProviderStatusReport> {

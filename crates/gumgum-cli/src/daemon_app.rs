@@ -6,9 +6,10 @@ use axum::{
 use gumgum_api::{
     AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DaemonVersionReport,
     DeployApplyReport, DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, EventsReport,
-    GraphNode, GraphReport, LogsReport, ObjectReport, ObjectRequest, ProviderBootReport,
-    ProviderConfigureReport, ProviderConfigureRequest, ProviderCredentialsInitReport,
-    ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
+    GraphNode, GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest,
+    ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
+    ProviderCredentialsInitReport, ProviderCredentialsReport, ProviderStatusReport, RollbackReport,
+    RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject,
@@ -67,7 +68,10 @@ impl DaemonApp {
             .route("/v0/rollback", post(daemon_rollback))
             .route("/v0/revisions/{worker}", get(daemon_revisions))
             .route("/v0/events", get(daemon_events))
-            .route("/v0/objects", post(daemon_create_object))
+            .route(
+                "/v0/objects",
+                post(daemon_create_object).delete(daemon_delete_object),
+            )
             .route(
                 "/v0/bindings",
                 post(daemon_create_binding).delete(daemon_delete_binding),
@@ -178,6 +182,69 @@ async fn daemon_graph_affected(
         nodes,
         edges,
         message,
+    })
+}
+
+async fn daemon_delete_object(
+    State(state): State<DaemonState>,
+    Json(request): Json<ObjectDeleteRequest>,
+) -> Json<ObjectReport> {
+    let graph_path = (*state.graph_path).clone();
+    let object = GlobalObject {
+        capability: request.capability,
+        name: request.name.clone(),
+        namespace: request.namespace.clone(),
+        root_domain: request.root_domain.clone(),
+    };
+    let capability_name = request.capability.to_string();
+    let dns = object_dns(&capability_name, &request.name, &request.root_domain);
+    let provider = request.capability.provider().to_owned();
+    let reconciliation_steps = object.delete_reconciliation_steps(graph_path.clone()).await;
+    let deleted = if request.preview {
+        false
+    } else {
+        let store = GraphStore::new(graph_path.clone());
+        let object_for_db = object.clone();
+        tokio::task::spawn_blocking(move || store.delete_object(&object_for_db))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false)
+    };
+    let provider_actions = if request.preview {
+        vec!["preview only; no objects changed".to_owned()]
+    } else {
+        GraphActionExecutor::execute_steps(
+            &reconciliation_steps,
+            GraphExecutionContext {
+                graph_path: Some(graph_path),
+                ..GraphExecutionContext::default()
+            },
+        )
+        .await
+        .unwrap_or_else(|error| {
+            vec![format!(
+                "object delete reconcile failed: {}",
+                error.to_report().message
+            )]
+        })
+    };
+    Json(ObjectReport {
+        ok: request.preview || deleted,
+        kind: capability_name,
+        name: request.name,
+        dns,
+        provider,
+        connection_examples: Vec::new(),
+        provider_actions,
+        reconciliation_steps,
+        message: if request.preview {
+            "object delete preview".to_owned()
+        } else if deleted {
+            "object deleted from graph".to_owned()
+        } else {
+            "object was not present".to_owned()
+        },
     })
 }
 

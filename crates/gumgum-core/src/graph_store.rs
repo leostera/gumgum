@@ -148,6 +148,38 @@ pub struct GlobalObject {
     pub root_domain: String,
 }
 
+impl GlobalObject {
+    pub fn graph_node(&self) -> Result<DesiredGraphNode> {
+        Ok(DesiredGraphNode::Object {
+            capability: self.capability,
+            name: ObjectName::new(&self.name)?,
+            provider: ProviderName::new(self.capability.provider())?,
+        })
+    }
+
+    pub async fn delete_reconciliation_steps(
+        &self,
+        graph_path: PathBuf,
+    ) -> Vec<GraphExecutionStep> {
+        let object = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = GraphStore::new(graph_path);
+            let old_graph = store.load_desired_graph()?;
+            let mut new_graph = old_graph.clone();
+            let object_ref = ObjectRef::new(format!("{}/{}", object.capability, object.name))?;
+            new_graph.nodes.remove(&object.graph_node()?);
+            new_graph.nodes.retain(|node| {
+                !matches!(node, DesiredGraphNode::Binding { object, .. } if object == &object_ref)
+            });
+            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorkerBinding {
     pub capability: Capability,
@@ -427,6 +459,34 @@ impl GraphStore {
         )
         .map_err(|source| self.error("could not materialize provider", source))?;
         Ok(true)
+    }
+
+    pub fn delete_object(&self, object: &GlobalObject) -> Result<bool> {
+        self.init()?;
+        let mut conn = self.open()?;
+        let tx = conn
+            .transaction()
+            .map_err(|source| self.error("could not begin object delete transaction", source))?;
+        let kind = object.capability.to_string();
+        tx.execute(
+            "DELETE FROM bindings WHERE object_kind = ?1 AND object_name = ?2",
+            params![kind, object.name],
+        )
+        .map_err(|source| self.error("could not delete object bindings", source))?;
+        tx.execute(
+            "DELETE FROM object_secrets WHERE object_kind = ?1 AND object_name = ?2",
+            params![kind, object.name],
+        )
+        .map_err(|source| self.error("could not delete object secrets", source))?;
+        let changed = tx
+            .execute(
+                "DELETE FROM global_objects WHERE kind = ?1 AND name = ?2",
+                params![kind, object.name],
+            )
+            .map_err(|source| self.error("could not delete object", source))?;
+        tx.commit()
+            .map_err(|source| self.error("could not commit object delete transaction", source))?;
+        Ok(changed > 0)
     }
 
     pub fn materialize_object(&self, object: &GlobalObject) -> Result<bool> {

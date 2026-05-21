@@ -147,6 +147,7 @@ pub(crate) struct ObjectArgs {
 #[derive(Debug, Subcommand)]
 pub(crate) enum ObjectCommand {
     Create(CreateObjectArgs),
+    Delete(DeleteObjectArgs),
     Bind(BindObjectArgs),
     Unbind(BindObjectArgs),
 }
@@ -165,6 +166,19 @@ pub(crate) struct CreateObjectArgs {
         help = "Use this password for credential-backed objects such as db"
     )]
     pub(crate) password: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct DeleteObjectArgs {
+    pub(crate) name: String,
+    #[arg(long)]
+    pub(crate) host: Option<String>,
+    #[arg(long, default_value = "root")]
+    pub(crate) namespace: String,
+    #[arg(long)]
+    pub(crate) root_domain: Option<String>,
+    #[arg(long)]
+    pub(crate) preview: bool,
 }
 
 #[derive(Debug, Args)]

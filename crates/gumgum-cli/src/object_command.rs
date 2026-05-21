@@ -1,7 +1,10 @@
 use crate::{
-    BindObjectArgs, CreateObjectArgs, ObjectArgs, ObjectCommand, print_value, resolve_server,
+    BindObjectArgs, CreateObjectArgs, DeleteObjectArgs, ObjectArgs, ObjectCommand, print_value,
+    resolve_server,
 };
-use gumgum_api::{BindingDeleteRequest, BindingRequest, ObjectReport, ObjectRequest};
+use gumgum_api::{
+    BindingDeleteRequest, BindingRequest, ObjectDeleteRequest, ObjectReport, ObjectRequest,
+};
 use gumgum_core::{Capability, load_worker_path};
 use std::path::PathBuf;
 
@@ -15,6 +18,7 @@ pub(crate) async fn object_command(
     let capability = capability_from_cli_kind(kind);
     match args.command {
         ObjectCommand::Create(args) => create_object(capability, args, json).await,
+        ObjectCommand::Delete(args) => delete_object(capability, args, json).await,
         ObjectCommand::Bind(args) => bind_object(capability, args, json).await,
         ObjectCommand::Unbind(args) => unbind_object(capability, args, json).await,
     }
@@ -74,6 +78,33 @@ async fn create_object(
 
 fn print_object_report(report: &ObjectReport) {
     crate::presentation::Presenter::new().object_report(report);
+}
+
+async fn delete_object(
+    capability: Capability,
+    args: DeleteObjectArgs,
+    json: bool,
+) -> gumgum_core::Result<()> {
+    let server = resolve_server(args.host)?;
+    let root_domain = args
+        .root_domain
+        .unwrap_or_else(|| server.root_domain.clone());
+    let request = ObjectDeleteRequest {
+        capability,
+        name: args.name,
+        namespace: args.namespace,
+        root_domain,
+        preview: args.preview,
+    };
+    let report = ServerClient::new(server.host)
+        .delete_object(&request)
+        .await?;
+    if json {
+        print_value(true, &report);
+    } else {
+        println!("{} {}", report.kind, report.message);
+    }
+    Ok(())
 }
 
 async fn unbind_object(

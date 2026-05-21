@@ -95,6 +95,16 @@ pub struct ObjectRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ObjectDeleteRequest {
+    pub capability: Capability,
+    pub name: String,
+    pub namespace: String,
+    pub root_domain: String,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObjectReport {
     pub ok: bool,
     pub kind: String,
