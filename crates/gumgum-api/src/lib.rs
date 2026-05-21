@@ -144,6 +144,8 @@ pub struct ProviderConfigureRequest {
 pub struct ProviderConfigureReport {
     pub ok: bool,
     pub config: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
     pub message: String,
 }
 

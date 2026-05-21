@@ -318,15 +318,25 @@ async fn daemon_configure_provider(
         request.vault,
     );
     match ConfigStore::from_home_env().and_then(|store| store.save_provider_config(&config)) {
-        Ok(()) => Json(ProviderConfigureReport {
-            ok: true,
-            message: "provider configured".to_owned(),
-            config: Some(config),
-        }),
+        Ok(()) => match ProviderReconciler::ensure_configured_provider(&config).await {
+            Ok(actions) => Json(ProviderConfigureReport {
+                ok: true,
+                message: "provider configured and reconciled".to_owned(),
+                config: Some(config),
+                actions,
+            }),
+            Err(error) => Json(ProviderConfigureReport {
+                ok: false,
+                message: error.to_report().message,
+                config: Some(config),
+                actions: Vec::new(),
+            }),
+        },
         Err(error) => Json(ProviderConfigureReport {
             ok: false,
             message: error.to_report().message,
             config: None,
+            actions: Vec::new(),
         }),
     }
 }
