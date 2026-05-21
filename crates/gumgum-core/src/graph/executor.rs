@@ -753,6 +753,29 @@ mod tests {
     }
 
     #[test]
+    fn planner_routes_deploy_removal_to_container_cleanup_target() {
+        let step = GraphActionPlanner::plan(&[GraphReconcileAction::RemoveDeploy {
+            worker: WorkerId::new("api").unwrap(),
+            container: ContainerName::new("gumgum-api").unwrap(),
+        }])
+        .into_iter()
+        .next()
+        .unwrap();
+
+        assert!(matches!(
+            step.target,
+            GraphExecutionTarget::Removal {
+                ref id,
+                container: Some(ref container),
+            } if id.as_str() == "deployment/api" && container.as_str() == "gumgum-api"
+        ));
+        assert_eq!(
+            step.description,
+            "remove deployment api and container gumgum-api"
+        );
+    }
+
+    #[test]
     fn planner_can_synthesize_idempotent_deploy_step() {
         let step = GraphActionPlanner::ensure_deploy_step(
             WorkerId::new("api").unwrap(),
