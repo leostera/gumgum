@@ -26,6 +26,7 @@ HELP=${HELP:-0}
 PLAN=${PLAN:-0}
 ARTIFACT_DIR=${ARTIFACT_DIR:-}
 ARTIFACT_ROOT=${ARTIFACT_ROOT:-}
+SMOKE_STATUS=running
 
 print_plan() {
   cat <<'EOF'
@@ -133,6 +134,7 @@ host=$HOST
 root_domain=$ROOT_DOMAIN
 test_domain=$TEST_DOMAIN
 artifact_dir=$ARTIFACT_DIR
+status=$SMOKE_STATUS
 apply_objects=$APPLY_OBJECTS
 apply=$APPLY
 objects_only=$OBJECTS_ONLY
@@ -229,10 +231,25 @@ write_artifacts() {
   write_artifact_root_readme
   write_artifact_root_index
 }
+
+finish_artifacts() {
+  SMOKE_STATUS=success
+  write_artifacts
+}
+
 cleanup() {
   rm -f "$before_file" "$after_file" "$before_graph_file" "$after_graph_file"
 }
-trap cleanup EXIT
+
+on_exit() {
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    SMOKE_STATUS=failed
+    write_artifacts || true
+  fi
+  cleanup
+}
+trap on_exit EXIT
 
 remote_containers() {
   ssh "$HOST" "docker ps --format '{{.Names}}' | sort" 2>/dev/null || true
@@ -417,7 +434,7 @@ fi
 
 if [ "$SETUP_ONLY" = "1" ]; then
   container_delta_guard
-  write_artifacts
+  finish_artifacts
   echo "visit-counter smoke setup-only completed; RUN_SETUP=$RUN_SETUP VERIFY_SETUP_IDEMPOTENCY=$VERIFY_SETUP_IDEMPOTENCY; pre-existing containers preserved"
   exit 0
 fi
@@ -435,7 +452,7 @@ fi
 
 if [ "$UPGRADE_ONLY" = "1" ]; then
   container_delta_guard
-  write_artifacts
+  finish_artifacts
   echo "visit-counter smoke upgrade-only completed; APPLY_UPGRADE=$APPLY_UPGRADE; pre-existing containers preserved"
   exit 0
 fi
@@ -447,7 +464,7 @@ if [ "$OBSERVE_ONLY" = "1" ]; then
   run_gumgum_artifact logs-api logs --host "$HOST" api --tail 20 || true
   run_gumgum_artifact logs-worker logs --host "$HOST" worker --tail 20 || true
   container_delta_guard
-  write_artifacts
+  finish_artifacts
   echo "visit-counter smoke observe-only completed; pre-existing containers preserved"
   exit 0
 fi
@@ -471,7 +488,7 @@ fi
 if [ "$OBJECTS_ONLY" = "1" ]; then
   popd >/dev/null
   container_delta_guard
-  write_artifacts
+  finish_artifacts
   echo "visit-counter smoke objects-only completed; APPLY_OBJECTS=$APPLY_OBJECTS; pre-existing containers preserved"
   exit 0
 fi
@@ -517,7 +534,7 @@ fi
 if [ "$CLEANUP_ONLY" = "1" ]; then
   popd >/dev/null
   container_delta_guard
-  write_artifacts
+  finish_artifacts
   echo "visit-counter smoke cleanup-only completed; APPLY_CLEANUP=$APPLY_CLEANUP; pre-existing containers preserved"
   exit 0
 fi
@@ -541,6 +558,6 @@ fi
 popd >/dev/null
 
 container_delta_guard
-write_artifacts
+finish_artifacts
 
 echo "visit-counter smoke completed; APPLY_OBJECTS=$APPLY_OBJECTS APPLY=$APPLY DEPLOY_ONLY=$DEPLOY_ONLY APPLY_CLEANUP=$APPLY_CLEANUP; pre-existing containers preserved"
