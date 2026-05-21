@@ -124,6 +124,9 @@ fn daemon_version_report() -> DaemonVersionReport {
             "rollback_revisions".to_owned(),
             "rollback_revision_id".to_owned(),
             "events".to_owned(),
+            "binding_delete".to_owned(),
+            "object_delete".to_owned(),
+            "deployment_delete".to_owned(),
         ],
     }
 }
@@ -1296,7 +1299,7 @@ mod tests {
     }
 
     #[test]
-    fn daemon_version_report_advertises_rollback_revision_capabilities() {
+    fn daemon_version_report_advertises_safe_delete_and_rollback_capabilities() {
         let report = daemon_version_report();
 
         assert!(report.ok);
@@ -1309,6 +1312,13 @@ mod tests {
             report
                 .capabilities
                 .contains(&"rollback_revision_id".to_owned())
+        );
+        assert!(report.capabilities.contains(&"binding_delete".to_owned()));
+        assert!(report.capabilities.contains(&"object_delete".to_owned()));
+        assert!(
+            report
+                .capabilities
+                .contains(&"deployment_delete".to_owned())
         );
     }
 

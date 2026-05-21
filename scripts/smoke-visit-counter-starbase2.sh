@@ -83,6 +83,15 @@ assert_visit_resources_absent() {
   fi
 }
 
+has_daemon_capability() {
+  local capability="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS "http://${HOST}:7777/v0/version" 2>/dev/null | grep -q "\"${capability}\""
+  else
+    return 1
+  fi
+}
+
 plan_gumgum() {
   echo "+ gumgum $*"
 }
@@ -133,8 +142,11 @@ run_object_step queue bind visit-events --host "$HOST" --to api --as VISIT_EVENT
 run_object_step queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE
 
 if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
-  capture_graph "$before_graph_file"
-  preview_flag="--preview"
+  if ! has_daemon_capability "binding_delete" || ! has_daemon_capability "object_delete"; then
+    echo "warning: gumgumd on $HOST does not advertise safe delete APIs; run gumgum setup/upgrade before cleanup verification" >&2
+  else
+    capture_graph "$before_graph_file"
+    preview_flag="--preview"
   if [ "$APPLY_CLEANUP" = "1" ]; then
     preview_flag=""
   fi
@@ -159,10 +171,11 @@ if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
   # shellcheck disable=SC2086
   run_gumgum queue delete visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
   capture_graph "$after_graph_file"
-  if [ "$APPLY_CLEANUP" = "1" ]; then
-    assert_visit_resources_absent "$after_graph_file"
-  else
-    assert_graph_unchanged
+    if [ "$APPLY_CLEANUP" = "1" ]; then
+      assert_visit_resources_absent "$after_graph_file"
+    else
+      assert_graph_unchanged
+    fi
   fi
 fi
 
