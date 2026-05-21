@@ -60,10 +60,13 @@ pub(crate) async fn server(
             let report = ping_host(&args.host).await?;
             print_value(json, &report)
         }
-        Some(ServerSubcommand::Capabilities) => {
+        Some(ServerSubcommand::Capabilities(args)) => {
             let name = required_server_name(server.name, "capabilities")?;
             let server = find_server(&name)?;
             let report = ServerClient::new(server.host).version().await?;
+            if args.require_visit_counter {
+                require_visit_counter_readiness(&name, &report)?;
+            }
             if json {
                 print_value(true, &report);
             } else {
@@ -246,6 +249,30 @@ async fn upgrade_server(
         actions,
         message: "server upgraded from published release".to_owned(),
     })
+}
+
+fn require_visit_counter_readiness(
+    name: &str,
+    report: &DaemonVersionReport,
+) -> gumgum_core::Result<()> {
+    let missing = missing_visit_counter_capabilities(&report.capabilities);
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(GumgumError::structured(
+        Subsystem::Cli,
+        ErrorCode::NotImplemented,
+        format!(
+            "gumgumd on {name} is missing visit-counter capabilities: {}",
+            missing.join(", ")
+        ),
+    )
+    .next_command(format!("gumgum server {name} capabilities"))
+    .next_command(format!("gumgum --dry-run server {name} upgrade"))
+    .next_command(format!(
+        "HOST={name} APPLY_UPGRADE=1 VERIFY_UPGRADE_IDEMPOTENCY=1 scripts/smoke-visit-counter-starbase2.sh"
+    ))
+    .build())
 }
 
 fn capability_lines(report: &DaemonVersionReport) -> Vec<String> {
@@ -459,6 +486,32 @@ mod tests {
 
         assert!(lines.contains(&"visit-counter readiness: missing rollback_revision_id, binding_delete, object_delete, deployment_delete".to_owned()));
         assert!(lines.contains(&"next: gumgum --dry-run server <name> upgrade".to_owned()));
+    }
+
+    #[test]
+    fn require_visit_counter_readiness_errors_with_upgrade_hint() {
+        let report = DaemonVersionReport {
+            ok: true,
+            version: "0.1.0".to_owned(),
+            git_sha: "abc123".to_owned(),
+            target: "x86_64".to_owned(),
+            capabilities: vec!["events".to_owned()],
+        };
+
+        let report = require_visit_counter_readiness("starbase2", &report)
+            .unwrap_err()
+            .to_report();
+
+        assert!(
+            report
+                .message
+                .contains("missing visit-counter capabilities")
+        );
+        assert!(
+            report
+                .next_commands
+                .contains(&"gumgum --dry-run server starbase2 upgrade".to_owned())
+        );
     }
 
     #[test]

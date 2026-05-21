@@ -48,6 +48,7 @@ scripts/smoke-visit-counter-starbase2.sh
 
 # inspect daemon capabilities and verify compatibility before any mutation
 gumgum server starbase2 capabilities
+gumgum server starbase2 capabilities --require-visit-counter
 REQUIRE_CURRENT_DAEMON=1 scripts/smoke-visit-counter-starbase2.sh
 
 # create/bind objects intentionally, but still only dry-run deploy

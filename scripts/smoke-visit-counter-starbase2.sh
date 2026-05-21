@@ -95,18 +95,13 @@ has_daemon_capability() {
 }
 
 require_daemon_capabilities() {
-  local missing=""
-  for capability in "$@"; do
-    if ! has_daemon_capability "$capability"; then
-      missing="$missing $capability"
-    fi
-  done
-  if [ -n "$missing" ]; then
-    echo "error: gumgumd on $HOST is missing required capabilities:$missing" >&2
-    echo "run: gumgum --dry-run server $HOST upgrade" >&2
-    echo "then intentionally run: APPLY_UPGRADE=1 VERIFY_UPGRADE_IDEMPOTENCY=1 scripts/smoke-visit-counter-starbase2.sh" >&2
-    exit 1
+  echo "+ gumgum server $HOST capabilities --require-visit-counter"
+  # shellcheck disable=SC2086
+  if $GUMGUM server "$HOST" capabilities --require-visit-counter; then
+    return
   fi
+  echo "error: gumgumd on $HOST is not ready for mutating visit-counter smoke modes" >&2
+  exit 1
 }
 
 plan_gumgum() {

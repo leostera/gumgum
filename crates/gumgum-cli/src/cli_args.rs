@@ -306,12 +306,21 @@ pub(crate) struct ServerCommand {
 pub(crate) enum ServerSubcommand {
     List,
     Ping(PingArgs),
-    Capabilities,
+    Capabilities(ServerCapabilitiesArgs),
     BootProviders,
     Config(ServerConfigArgs),
     Credentials(ServerCredentialsArgs),
     Providers(ServerProvidersArgs),
     Upgrade(ServerUpgradeArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ServerCapabilitiesArgs {
+    #[arg(
+        long,
+        help = "Fail if capabilities required by the visit-counter smoke are missing"
+    )]
+    pub(crate) require_visit_counter: bool,
 }
 
 #[derive(Debug, Args)]
@@ -363,6 +372,27 @@ pub(crate) struct ServerUpgradeArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_capabilities_command_supports_visit_counter_requirement() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "server",
+                "starbase2",
+                "capabilities",
+                "--require-visit-counter",
+            ])
+            .unwrap()
+            .command,
+            Command::Server(ServerCommand {
+                name: Some(ref name),
+                command: Some(ServerSubcommand::Capabilities(ServerCapabilitiesArgs {
+                    require_visit_counter: true,
+                }))
+            }) if name == "starbase2"
+        ));
+    }
 
     #[test]
     fn bucket_command_grammar_covers_create_bind_delete_unbind() {
