@@ -132,7 +132,7 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
             }
         }
         Command::Daemon => DaemonApp::new().run().await?,
-        Command::Server(args) => server(args, cli.json).await?,
+        Command::Server(args) => server(args, cli.json, cli.dry_run).await?,
     }
     Ok(())
 }

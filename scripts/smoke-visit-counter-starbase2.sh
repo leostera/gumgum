@@ -11,6 +11,7 @@ APPLY_OBJECTS=${APPLY_OBJECTS:-0}
 RUN_SETUP=${RUN_SETUP:-0}
 VERIFY_SETUP_IDEMPOTENCY=${VERIFY_SETUP_IDEMPOTENCY:-0}
 VERIFY_UPGRADE_IDEMPOTENCY=${VERIFY_UPGRADE_IDEMPOTENCY:-0}
+APPLY_UPGRADE=${APPLY_UPGRADE:-0}
 VERIFY_CLEANUP_PREVIEW=${VERIFY_CLEANUP_PREVIEW:-0}
 APPLY_CLEANUP=${APPLY_CLEANUP:-0}
 VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
@@ -123,8 +124,13 @@ if [ "$RUN_SETUP" = "1" ]; then
 fi
 
 if [ "$VERIFY_UPGRADE_IDEMPOTENCY" = "1" ]; then
-  run_gumgum server "$HOST" upgrade
-  run_gumgum server "$HOST" upgrade
+  if [ "$APPLY_UPGRADE" = "1" ]; then
+    run_gumgum server "$HOST" upgrade
+    run_gumgum server "$HOST" upgrade
+  else
+    run_gumgum --dry-run server "$HOST" upgrade
+    run_gumgum --dry-run server "$HOST" upgrade
+  fi
 fi
 
 pushd "$EXAMPLE_DIR" >/dev/null

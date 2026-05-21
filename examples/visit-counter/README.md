@@ -53,6 +53,7 @@ APPLY_OBJECTS=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_OBJECTS=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
 RUN_SETUP=1 VERIFY_SETUP_IDEMPOTENCY=1 APPLY_OBJECTS=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
 VERIFY_UPGRADE_IDEMPOTENCY=1 scripts/smoke-visit-counter-starbase2.sh
+VERIFY_UPGRADE_IDEMPOTENCY=1 APPLY_UPGRADE=1 scripts/smoke-visit-counter-starbase2.sh
 
 # cleanup/rollback checks: preview is non-destructive; apply cleanup is explicit
 APPLY_OBJECTS=1 VERIFY_CLEANUP_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
