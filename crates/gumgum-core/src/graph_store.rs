@@ -1,4 +1,7 @@
-use crate::{Capability, ErrorCode, GraphEdge, GraphNode, GumgumError, Result, Subsystem};
+use crate::{
+    Capability, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge, GraphNode, GumgumError,
+    Result, Subsystem,
+};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -113,6 +116,40 @@ impl GraphStore {
             );",
         )
         .map_err(|source| self.error("could not initialize graph database", source))
+    }
+
+    pub fn load_desired_graph(&self) -> Result<DesiredGraph> {
+        self.init()?;
+        let conn = self.open()?;
+        let mut nodes = vec![
+            DesiredGraphNode::Daemon {
+                name: "gumgumd".to_owned(),
+            },
+            DesiredGraphNode::Provider {
+                name: "registry.platform".to_owned(),
+                capability: Capability::Manual,
+            },
+            DesiredGraphNode::Provider {
+                name: "dnsmasq.platform".to_owned(),
+                capability: Capability::Manual,
+            },
+            DesiredGraphNode::Provider {
+                name: "caddy.gateway".to_owned(),
+                capability: Capability::Manual,
+            },
+            DesiredGraphNode::Provider {
+                name: "postgres.main".to_owned(),
+                capability: Capability::Db,
+            },
+            DesiredGraphNode::Provider {
+                name: "redis.main".to_owned(),
+                capability: Capability::Kv,
+            },
+        ];
+        self.load_desired_deployments(&conn, &mut nodes)?;
+        self.load_desired_objects(&conn, &mut nodes)?;
+        self.load_desired_bindings(&conn, &mut nodes)?;
+        Ok(DesiredGraph::new(nodes))
     }
 
     pub fn load_graph(&self) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
@@ -413,6 +450,104 @@ impl GraphStore {
             env.extend(binding_values(&kind, &binding, &name, &dns, secret));
         }
         Ok(env)
+    }
+
+    fn load_desired_deployments(
+        &self,
+        conn: &Connection,
+        nodes: &mut Vec<DesiredGraphNode>,
+    ) -> Result<()> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT worker, image, container, route FROM desired_deployments ORDER BY worker",
+            )
+            .map_err(|source| self.error("could not query desired deployments", source))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|source| self.error("could not read desired deployments", source))?;
+        for row in rows {
+            let (worker, image, container, route) =
+                row.map_err(|source| self.error("could not decode desired deployment", source))?;
+            nodes.push(DesiredGraphNode::Worker {
+                name: worker,
+                image: image.clone(),
+            });
+            nodes.push(DesiredGraphNode::Container {
+                name: container.clone(),
+                image,
+            });
+            nodes.push(DesiredGraphNode::Route {
+                host: route,
+                target_container: container,
+            });
+        }
+        Ok(())
+    }
+
+    fn load_desired_objects(
+        &self,
+        conn: &Connection,
+        nodes: &mut Vec<DesiredGraphNode>,
+    ) -> Result<()> {
+        let mut stmt = conn
+            .prepare("SELECT kind, name, provider FROM global_objects ORDER BY kind, name")
+            .map_err(|source| self.error("could not query desired objects", source))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|source| self.error("could not read desired objects", source))?;
+        for row in rows {
+            let (kind, name, provider) =
+                row.map_err(|source| self.error("could not decode desired object", source))?;
+            nodes.push(DesiredGraphNode::Object {
+                capability: Capability::from_str(&kind).unwrap_or(Capability::Manual),
+                name,
+                provider,
+            });
+        }
+        Ok(())
+    }
+
+    fn load_desired_bindings(
+        &self,
+        conn: &Connection,
+        nodes: &mut Vec<DesiredGraphNode>,
+    ) -> Result<()> {
+        let mut stmt = conn
+            .prepare("SELECT object_kind, object_name, worker, binding FROM bindings ORDER BY worker, binding")
+            .map_err(|source| self.error("could not query desired bindings", source))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|source| self.error("could not read desired bindings", source))?;
+        for row in rows {
+            let (kind, name, worker, binding) =
+                row.map_err(|source| self.error("could not decode desired binding", source))?;
+            nodes.push(DesiredGraphNode::Binding {
+                worker,
+                name: binding,
+                object: format!("{kind}/{name}"),
+            });
+        }
+        Ok(())
     }
 
     fn load_deployments(
@@ -768,6 +903,26 @@ mod tests {
             "container/gumgum-dev-leostera-peekaboo-api",
             "routes_to"
         ));
+
+        let desired = store.load_desired_graph().unwrap();
+        assert!(desired.nodes.contains(&DesiredGraphNode::Provider {
+            name: "postgres.main".to_owned(),
+            capability: Capability::Db,
+        }));
+        assert!(desired.nodes.contains(&DesiredGraphNode::Object {
+            capability: Capability::Db,
+            name: "main".to_owned(),
+            provider: "postgres.main".to_owned(),
+        }));
+        assert!(desired.nodes.contains(&DesiredGraphNode::Binding {
+            worker: "api".to_owned(),
+            name: "DATABASE_URL".to_owned(),
+            object: "db/main".to_owned(),
+        }));
+        assert!(desired.nodes.contains(&DesiredGraphNode::Route {
+            host: "api.peekaboo.leostera.test".to_owned(),
+            target_container: "gumgum-dev-leostera-peekaboo-api".to_owned(),
+        }));
         let _ = fs::remove_file(store.path);
     }
 
