@@ -1,7 +1,7 @@
 use gumgum_core::Capability;
 pub use gumgum_core::{
     DeploymentRevision, GraphEdge, GraphExecutionStep, GraphNode, ProviderConfig, ProviderStatus,
-    ServerRecord,
+    ReconcileEvent, ServerRecord,
 };
 use serde::{Deserialize, Serialize};
 
@@ -125,6 +125,17 @@ pub struct BindingReport {
     pub object: String,
     pub worker: String,
     pub binding: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binding_actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reconciliation_steps: Vec<GraphExecutionStep>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EventsReport {
+    pub ok: bool,
+    pub events: Vec<ReconcileEvent>,
     pub message: String,
 }
 

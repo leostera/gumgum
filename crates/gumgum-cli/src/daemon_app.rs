@@ -5,10 +5,10 @@ use axum::{
 };
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
-    DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, GraphNode, GraphReport,
-    LogsReport, ObjectReport, ObjectRequest, ProviderBootReport, ProviderConfigureReport,
-    ProviderConfigureRequest, ProviderCredentialsInitReport, ProviderCredentialsReport,
-    ProviderStatusReport, RollbackReport, RollbackRequest,
+    DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, EventsReport, GraphNode,
+    GraphReport, LogsReport, ObjectReport, ObjectRequest, ProviderBootReport,
+    ProviderConfigureReport, ProviderConfigureRequest, ProviderCredentialsInitReport,
+    ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject,
@@ -66,6 +66,7 @@ impl DaemonApp {
             .route("/v0/deploy", post(daemon_deploy))
             .route("/v0/rollback", post(daemon_rollback))
             .route("/v0/revisions/{worker}", get(daemon_revisions))
+            .route("/v0/events", get(daemon_events))
             .route("/v0/objects", post(daemon_create_object))
             .route("/v0/bindings", post(daemon_create_binding))
             .route("/v0/providers", get(daemon_providers))
@@ -112,6 +113,7 @@ fn daemon_version_report() -> DaemonVersionReport {
             "rollback".to_owned(),
             "rollback_revisions".to_owned(),
             "rollback_revision_id".to_owned(),
+            "events".to_owned(),
         ],
     }
 }
@@ -550,16 +552,36 @@ async fn daemon_create_binding(
         binding: request.binding.clone(),
         access: request.access.clone(),
     };
+    let graph_path = (*state.graph_path).clone();
+    let reconciliation_steps = request_for_db
+        .reconciliation_steps(graph_path.clone())
+        .await;
     let ok = tokio::task::spawn_blocking(move || store.materialize_binding(&request_for_db))
         .await
         .ok()
         .and_then(Result::ok)
         .unwrap_or(false);
+    let binding_actions = GraphActionExecutor::execute_steps(
+        &reconciliation_steps,
+        GraphExecutionContext {
+            graph_path: Some(graph_path),
+            ..GraphExecutionContext::default()
+        },
+    )
+    .await
+    .unwrap_or_else(|error| {
+        vec![format!(
+            "binding reconcile failed: {}",
+            error.to_report().message
+        )]
+    });
     Json(BindingReport {
         ok,
         object: format!("{}/{}", request.capability, request.object_name),
         worker: request.worker,
         binding: request.binding,
+        binding_actions,
+        reconciliation_steps,
         message: "binding materialized in graph".to_owned(),
     })
 }
@@ -568,6 +590,30 @@ async fn daemon_create_binding(
 struct RevisionsQuery {
     tail: Option<u32>,
     limit: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EventsQuery {
+    limit: Option<u32>,
+}
+
+async fn daemon_events(
+    State(state): State<DaemonState>,
+    Query(query): Query<EventsQuery>,
+) -> Json<EventsReport> {
+    let path = (*state.graph_path).clone();
+    let limit = query.limit.unwrap_or(50);
+    let events =
+        tokio::task::spawn_blocking(move || GraphStore::new(path).list_reconcile_events(limit))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
+    Json(EventsReport {
+        ok: true,
+        message: format!("{} reconciliation event(s)", events.len()),
+        events,
+    })
 }
 
 async fn daemon_revisions(

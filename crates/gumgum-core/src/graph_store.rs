@@ -157,6 +157,31 @@ pub struct WorkerBinding {
     pub access: String,
 }
 
+impl WorkerBinding {
+    pub fn graph_node(&self) -> Result<DesiredGraphNode> {
+        Ok(DesiredGraphNode::Binding {
+            worker: WorkerId::new(&self.worker)?,
+            name: BindingName::new(&self.binding)?,
+            object: ObjectRef::new(format!("{}/{}", self.capability, self.object_name))?,
+        })
+    }
+
+    pub async fn reconciliation_steps(&self, graph_path: PathBuf) -> Vec<GraphExecutionStep> {
+        let binding = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = GraphStore::new(graph_path);
+            let old_graph = store.load_desired_graph()?;
+            let mut new_graph = old_graph.clone();
+            new_graph.nodes.insert(binding.graph_node()?);
+            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DesiredProvider {
     pub name: String,
