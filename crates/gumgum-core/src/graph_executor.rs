@@ -64,6 +64,34 @@ impl GraphActionPlanner {
     }
 }
 
+pub struct GraphActionExecutor;
+
+impl GraphActionExecutor {
+    pub async fn execute_provider_steps(
+        steps: &[GraphExecutionStep],
+    ) -> crate::Result<Vec<String>> {
+        let mut actions = Vec::new();
+        for step in steps {
+            if let GraphExecutionTarget::Provider { name, capability } = &step.target {
+                actions.extend(Self::execute_provider(name, *capability).await?);
+            }
+        }
+        Ok(actions)
+    }
+
+    pub async fn execute_provider(
+        name: &str,
+        capability: Capability,
+    ) -> crate::Result<Vec<String>> {
+        match (name, capability) {
+            ("vaultwarden.main", Capability::Secret) => {
+                crate::providers::vaultwarden::ensure().await
+            }
+            _ => Ok(vec![format!("configured {capability} provider {name}")]),
+        }
+    }
+}
+
 fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
     match action {
         GraphReconcileAction::EnsureProvider { name, capability } => GraphExecutionStep {
@@ -160,6 +188,15 @@ mod tests {
             GraphExecutionTarget::Provider { ref name, capability: Capability::Secret }
                 if name == "vaultwarden.main"
         )));
+    }
+
+    #[tokio::test]
+    async fn executor_routes_vaultwarden_provider_target_to_backend() {
+        let actions = GraphActionExecutor::execute_provider("manual.main", Capability::Manual)
+            .await
+            .unwrap();
+
+        assert_eq!(actions, vec!["configured manual provider manual.main"]);
     }
 
     #[test]

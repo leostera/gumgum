@@ -12,9 +12,10 @@ use gumgum_api::{
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy,
-    DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject, GraphActionPlanner, GraphStore,
-    GumgumError, LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph,
-    not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
+    DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject, GraphActionExecutor,
+    GraphActionPlanner, GraphStore, GumgumError, LocalPlatform, ProviderReconciler, Subsystem,
+    WorkerBinding, affected_subgraph, not_configured_status, object_dns, object_provider_plan,
+    render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -328,22 +329,25 @@ async fn daemon_configure_provider(
             })
         });
     match persist_result {
-        Ok(_) => match ProviderReconciler::ensure_configured_provider(&config).await {
-            Ok(actions) => Json(ProviderConfigureReport {
-                ok: true,
-                message: "provider configured and reconciled".to_owned(),
-                config: Some(config),
-                actions,
-                reconciliation_steps: plan.unwrap_or_default(),
-            }),
-            Err(error) => Json(ProviderConfigureReport {
-                ok: false,
-                message: error.to_report().message,
-                config: Some(config),
-                actions: Vec::new(),
-                reconciliation_steps: plan.unwrap_or_default(),
-            }),
-        },
+        Ok(_) => {
+            let steps = plan.unwrap_or_default();
+            match GraphActionExecutor::execute_provider_steps(&steps).await {
+                Ok(actions) => Json(ProviderConfigureReport {
+                    ok: true,
+                    message: "provider configured and reconciled".to_owned(),
+                    config: Some(config),
+                    actions,
+                    reconciliation_steps: steps,
+                }),
+                Err(error) => Json(ProviderConfigureReport {
+                    ok: false,
+                    message: error.to_report().message,
+                    config: Some(config),
+                    actions: Vec::new(),
+                    reconciliation_steps: steps,
+                }),
+            }
+        }
         Err(error) => Json(ProviderConfigureReport {
             ok: false,
             message: error.to_report().message,
