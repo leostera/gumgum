@@ -752,7 +752,7 @@ async fn daemon_deploy(
     let deploy_context = GraphExecutionContext {
         object_plan: None,
         provider_credentials: None,
-        deploy_request: Some(core_deploy_request(&request)),
+        deploy_request: None,
         graph_path: Some(reconcile_path),
     };
     let actions = GraphActionExecutor::execute_steps(&reconciliation_steps, deploy_context)

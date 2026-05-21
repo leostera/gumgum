@@ -603,6 +603,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generic_executor_can_execute_self_contained_deploy_without_deploy_context() {
+        let step = GraphActionPlanner::ensure_deploy_step(
+            "api",
+            "gumgum-api",
+            "ghcr.io/acme/api:v1",
+            "api.example.test",
+            3000,
+            "/healthz",
+        );
+        let actions = GraphActionExecutor::execute_steps(
+            &[step],
+            GraphExecutionContext {
+                graph_path: None,
+                ..GraphExecutionContext::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(actions[0].contains("planned ensure deploy runtime for api"));
+    }
+
+    #[tokio::test]
     async fn generic_executor_plans_container_without_runtime_context() {
         let steps = GraphActionPlanner::plan(&[GraphReconcileAction::EnsureContainer {
             name: "api".to_owned(),
