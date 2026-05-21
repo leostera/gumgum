@@ -15,6 +15,7 @@ APPLY_UPGRADE=${APPLY_UPGRADE:-0}
 UPGRADE_ONLY=${UPGRADE_ONLY:-0}
 VERIFY_CLEANUP_PREVIEW=${VERIFY_CLEANUP_PREVIEW:-0}
 APPLY_CLEANUP=${APPLY_CLEANUP:-0}
+CLEANUP_ONLY=${CLEANUP_ONLY:-0}
 VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
 REQUIRE_CURRENT_DAEMON=${REQUIRE_CURRENT_DAEMON:-0}
 
@@ -121,8 +122,12 @@ if [ "$APPLY" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
   echo "error: APPLY=1 requires APPLY_OBJECTS=1 so deploy bindings exist intentionally" >&2
   exit 1
 fi
-if [ "$APPLY_CLEANUP" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
-  echo "error: APPLY_CLEANUP=1 requires APPLY_OBJECTS=1 to make destructive cleanup explicit" >&2
+if [ "$APPLY_CLEANUP" = "1" ] && [ "$APPLY_OBJECTS" != "1" ] && [ "$CLEANUP_ONLY" != "1" ]; then
+  echo "error: APPLY_CLEANUP=1 requires APPLY_OBJECTS=1 or CLEANUP_ONLY=1 to make destructive cleanup explicit" >&2
+  exit 1
+fi
+if [ "$CLEANUP_ONLY" = "1" ] && [ "$VERIFY_CLEANUP_PREVIEW" != "1" ] && [ "$APPLY_CLEANUP" != "1" ]; then
+  echo "error: CLEANUP_ONLY=1 requires VERIFY_CLEANUP_PREVIEW=1 or APPLY_CLEANUP=1" >&2
   exit 1
 fi
 if [ "$APPLY_UPGRADE" = "1" ] && [ "$VERIFY_UPGRADE_IDEMPOTENCY" != "1" ]; then
@@ -165,17 +170,19 @@ fi
 
 pushd "$EXAMPLE_DIR" >/dev/null
 
-run_object_step db create visits --host "$HOST" --root-domain "$ROOT_DOMAIN"
-run_object_step kv create user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN"
-run_object_step bucket create visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN"
-run_object_step queue create visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN"
+if [ "$CLEANUP_ONLY" != "1" ]; then
+  run_object_step db create visits --host "$HOST" --root-domain "$ROOT_DOMAIN"
+  run_object_step kv create user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN"
+  run_object_step bucket create visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN"
+  run_object_step queue create visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN"
 
-run_object_step db bind visits --host "$HOST" --to worker --as DATABASE_URL
-run_object_step kv bind user-counters --host "$HOST" --to api --as USER_COUNTERS
-run_object_step bucket bind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET
-run_object_step bucket bind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET
-run_object_step queue bind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE
-run_object_step queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE
+  run_object_step db bind visits --host "$HOST" --to worker --as DATABASE_URL
+  run_object_step kv bind user-counters --host "$HOST" --to api --as USER_COUNTERS
+  run_object_step bucket bind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET
+  run_object_step bucket bind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET
+  run_object_step queue bind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE
+  run_object_step queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE
+fi
 
 if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
   if ! has_daemon_capability "binding_delete" || ! has_daemon_capability "object_delete"; then
@@ -183,36 +190,43 @@ if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
   else
     capture_graph "$before_graph_file"
     preview_flag="--preview"
-  if [ "$APPLY_CLEANUP" = "1" ]; then
-    preview_flag=""
-  fi
-  # shellcheck disable=SC2086
-  run_gumgum db unbind visits --host "$HOST" --to worker --as DATABASE_URL $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum kv unbind user-counters --host "$HOST" --to api --as USER_COUNTERS $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum bucket unbind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum bucket unbind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum queue unbind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum queue unbind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum db delete visits --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum kv delete user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum bucket delete visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
-  # shellcheck disable=SC2086
-  run_gumgum queue delete visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
-  capture_graph "$after_graph_file"
+    if [ "$APPLY_CLEANUP" = "1" ]; then
+      preview_flag=""
+    fi
+    # shellcheck disable=SC2086
+    run_gumgum db unbind visits --host "$HOST" --to worker --as DATABASE_URL $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum kv unbind user-counters --host "$HOST" --to api --as USER_COUNTERS $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum bucket unbind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum bucket unbind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum queue unbind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum queue unbind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum db delete visits --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum kv delete user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum bucket delete visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
+    # shellcheck disable=SC2086
+    run_gumgum queue delete visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
+    capture_graph "$after_graph_file"
     if [ "$APPLY_CLEANUP" = "1" ]; then
       assert_visit_resources_absent "$after_graph_file"
     else
       assert_graph_unchanged
     fi
   fi
+fi
+
+if [ "$CLEANUP_ONLY" = "1" ]; then
+  popd >/dev/null
+  container_delta_guard
+  echo "visit-counter smoke cleanup-only completed; APPLY_CLEANUP=$APPLY_CLEANUP; pre-existing containers preserved"
+  exit 0
 fi
 
 if [ "$APPLY" = "1" ]; then

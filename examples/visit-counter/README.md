@@ -63,12 +63,14 @@ VERIFY_UPGRADE_IDEMPOTENCY=1 APPLY_UPGRADE=1 UPGRADE_ONLY=1 scripts/smoke-visit-
 VERIFY_UPGRADE_IDEMPOTENCY=1 APPLY_UPGRADE=1 scripts/smoke-visit-counter-starbase2.sh
 
 # cleanup/rollback checks: preview is non-destructive; apply cleanup is explicit
+VERIFY_CLEANUP_PREVIEW=1 CLEANUP_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
+APPLY_CLEANUP=1 CLEANUP_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_OBJECTS=1 VERIFY_CLEANUP_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_OBJECTS=1 APPLY_CLEANUP=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_OBJECTS=1 APPLY=1 VERIFY_ROLLBACK_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
 ```
 
-The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, verifies DNS/Caddy with a `Host: api.visit-counter.leostera.test` request, and can optionally preview rollback. Mutating modes require a current daemon that advertises safe delete/rollback capabilities, and real upgrade smoke verifies those capabilities after the upgrade completes. `UPGRADE_ONLY=1` exits after the upgrade/idempotency path and container preservation guard, which is the safest way to intentionally upgrade before object/apply smoke. Cleanup preview mode snapshots the desired graph before/after and fails if a preview mutates state. Explicit cleanup apply mode also snapshots the graph and verifies visit-counter object/binding desired state is gone without removing pre-existing containers. The default mode does not mutate starbase2 objects.
+The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, verifies DNS/Caddy with a `Host: api.visit-counter.leostera.test` request, and can optionally preview rollback. Mutating modes require a current daemon that advertises safe delete/rollback capabilities, and real upgrade smoke verifies those capabilities after the upgrade completes. `UPGRADE_ONLY=1` exits after the upgrade/idempotency path and container preservation guard, which is the safest way to intentionally upgrade before object/apply smoke. `CLEANUP_ONLY=1` skips object creation/binding and exits after cleanup preview/apply plus the container preservation guard. Cleanup preview mode snapshots the desired graph before/after and fails if a preview mutates state. Explicit cleanup apply mode also snapshots the graph and verifies visit-counter object/binding desired state is gone without removing pre-existing containers. The default mode does not mutate starbase2 objects.
 
 ## Local fallback smoke test
 
