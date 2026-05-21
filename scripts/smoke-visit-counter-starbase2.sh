@@ -174,6 +174,30 @@ write_artifact_index() {
   )
 }
 
+write_artifact_root_readme() {
+  if [ -z "$ARTIFACT_ROOT" ]; then
+    return
+  fi
+  cat >"$ARTIFACT_ROOT/README.txt" <<'EOF'
+Visit-counter staged smoke artifact root
+
+Each subdirectory is one smoke stage, named by resolved mode from summary.txt.
+Review every captured stage with:
+  find . -name checksums.sha256 -print -execdir shasum -a 256 -c checksums.sha256 \;
+  find . -name 'containers-before.txt' -execdir diff -u containers-before.txt containers-after.txt \;
+EOF
+}
+
+write_artifact_root_index() {
+  if [ -z "$ARTIFACT_ROOT" ]; then
+    return
+  fi
+  (
+    cd "$ARTIFACT_ROOT"
+    find . -mindepth 1 -maxdepth 2 -type f -print | sed 's#^./##' | sort >index.txt
+  )
+}
+
 write_artifact_checksums() {
   if [ -z "$ARTIFACT_DIR" ]; then
     return
@@ -196,6 +220,8 @@ write_artifacts() {
   write_artifact_index
   write_artifact_checksums
   write_artifact_index
+  write_artifact_root_readme
+  write_artifact_root_index
 }
 cleanup() {
   rm -f "$before_file" "$after_file" "$before_graph_file" "$after_graph_file"
