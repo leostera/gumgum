@@ -29,6 +29,7 @@ impl ProviderReconciler {
                 )
                 .await
             }
+            Capability::Queue => super::redpanda::ensure(plan).await,
             Capability::Secret => Ok(super::secret::provider_actions(plan)),
             _ => Ok(plan.actions.clone()),
         }
@@ -54,6 +55,7 @@ impl ProviderReconciler {
                 )
                 .await
             }
+            Capability::Queue => super::redpanda::delete(plan).await,
             _ => Ok(vec![format!(
                 "removed desired {} object {}; provider cleanup is not implemented yet",
                 plan.capability, plan.name

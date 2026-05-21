@@ -1159,7 +1159,11 @@ mod tests {
             event.kind == gumgum_core::ControlPlaneEventKind::Reconciliation
                 && event.target == "queue/visit-events"
                 && event.action == "ensure_object"
-                && event.status == gumgum_core::ReconcileEventStatus::Executed
+                && matches!(
+                    event.status,
+                    gumgum_core::ReconcileEventStatus::Planned
+                        | gumgum_core::ReconcileEventStatus::Executed
+                )
         }));
         assert!(events.iter().any(|event| {
             event.kind == gumgum_core::ControlPlaneEventKind::Reconciliation

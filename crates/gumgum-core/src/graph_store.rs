@@ -1355,6 +1355,14 @@ fn binding_values(
                 (format!("{binding}_FORCE_PATH_STYLE"), "true".to_owned()),
             ]
         }
+        Capability::Queue => vec![
+            (
+                binding.to_owned(),
+                format!("kafka://{dns}:9092/{}", crate::sanitize_name(name)),
+            ),
+            (format!("{binding}_BROKERS"), format!("{dns}:9092")),
+            (format!("{binding}_TOPIC"), crate::sanitize_name(name)),
+        ],
         _ => vec![(binding.to_owned(), binding_value(kind, name, dns))],
     }
 }
@@ -1650,6 +1658,32 @@ mod tests {
             "gumgum-local-dev".to_owned()
         )));
         assert!(env.contains(&("UPLOADS_FORCE_PATH_STYLE".to_owned(), "true".to_owned())));
+        store
+            .materialize_object(&GlobalObject {
+                capability: Capability::Queue,
+                name: "visit-events".to_owned(),
+                namespace: "peekaboo".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_binding(&WorkerBinding {
+                capability: Capability::Queue,
+                object_name: "visit-events".to_owned(),
+                worker: "api".to_owned(),
+                binding: "VISIT_EVENTS_QUEUE".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+        let env = store.binding_env("api").unwrap();
+        assert!(env.contains(&(
+            "VISIT_EVENTS_QUEUE_BROKERS".to_owned(),
+            "visit-events.queue.leostera.dev:9092".to_owned()
+        )));
+        assert!(env.contains(&(
+            "VISIT_EVENTS_QUEUE_TOPIC".to_owned(),
+            "visit-events".to_owned()
+        )));
 
         let first = DesiredDeploy {
             worker: "api".to_owned(),

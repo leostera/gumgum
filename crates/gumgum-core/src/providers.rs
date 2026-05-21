@@ -185,6 +185,23 @@ mod tests {
     }
 
     #[test]
+    fn queue_provider_reconciler_is_scoped_to_redpanda_topic() {
+        let plan = object_provider_plan(
+            Capability::Queue,
+            "visit-events",
+            "visit-events.queue.example.test",
+        );
+
+        assert_eq!(plan.provider.provider, "redpanda.main");
+        assert_eq!(plan.provider.container, "gumgum-provider-redpanda-main");
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| action == "ensure topic visit-events exists")
+        );
+    }
+
+    #[test]
     fn blob_provider_delete_plan_is_scoped_to_minio_bucket() {
         let plan = object_provider_plan(
             Capability::Blob,
