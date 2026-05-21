@@ -4,7 +4,8 @@ use crate::{
     ServerUpgradeArgs, StatusArgs, config_command, print_value, progress,
 };
 use gumgum_api::{
-    GraphReport, PingReport, ProviderConfigureRequest, ProviderStatusReport, ServerListReport,
+    DaemonVersionReport, GraphReport, PingReport, ProviderConfigureRequest, ProviderStatusReport,
+    ServerListReport,
 };
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DaemonPingReport, ErrorCode, GumgumError, GumgumInstaller,
@@ -58,6 +59,18 @@ pub(crate) async fn server(
         Some(ServerSubcommand::Ping(args)) => {
             let report = ping_host(&args.host).await?;
             print_value(json, &report)
+        }
+        Some(ServerSubcommand::Capabilities) => {
+            let name = required_server_name(server.name, "capabilities")?;
+            let server = find_server(&name)?;
+            let report = ServerClient::new(server.host).version().await?;
+            if json {
+                print_value(true, &report);
+            } else {
+                for line in capability_lines(&report) {
+                    println!("{line}");
+                }
+            }
         }
         Some(ServerSubcommand::BootProviders) => {
             let name = required_server_name(server.name, "boot-providers")?;
@@ -235,6 +248,48 @@ async fn upgrade_server(
     })
 }
 
+fn capability_lines(report: &DaemonVersionReport) -> Vec<String> {
+    let mut lines = vec![format!("gumgumd {} ({})", report.version, report.git_sha)];
+    lines.push(format!("target: {}", report.target));
+    lines.push("capabilities:".to_owned());
+    lines.extend(report.capabilities.iter().map(|capability| {
+        let marker = if required_visit_counter_capabilities().contains(&capability.as_str()) {
+            "*"
+        } else {
+            "-"
+        };
+        format!("  {marker} {capability}")
+    }));
+    let missing = missing_visit_counter_capabilities(&report.capabilities);
+    if missing.is_empty() {
+        lines.push("visit-counter readiness: ok".to_owned());
+    } else {
+        lines.push(format!(
+            "visit-counter readiness: missing {}",
+            missing.join(", ")
+        ));
+        lines.push("next: gumgum --dry-run server <name> upgrade".to_owned());
+    }
+    lines
+}
+
+fn missing_visit_counter_capabilities(capabilities: &[String]) -> Vec<&'static str> {
+    required_visit_counter_capabilities()
+        .into_iter()
+        .filter(|required| !capabilities.iter().any(|capability| capability == required))
+        .collect()
+}
+
+fn required_visit_counter_capabilities() -> Vec<&'static str> {
+    vec![
+        "events",
+        "rollback_revision_id",
+        "binding_delete",
+        "object_delete",
+        "deployment_delete",
+    ]
+}
+
 fn server_upgrade_actions(dry_run: bool) -> Vec<String> {
     let mut actions = vec![
         "ssh into server".to_owned(),
@@ -389,6 +444,22 @@ fn version_report() -> VersionReport {
 mod tests {
     use super::*;
     use gumgum_core::{Capability, GraphEdge, GraphNode, ProviderStatus};
+
+    #[test]
+    fn capability_lines_explain_visit_counter_readiness() {
+        let report = DaemonVersionReport {
+            ok: true,
+            version: "0.1.0".to_owned(),
+            git_sha: "abc123".to_owned(),
+            target: "x86_64".to_owned(),
+            capabilities: vec!["events".to_owned()],
+        };
+
+        let lines = capability_lines(&report);
+
+        assert!(lines.contains(&"visit-counter readiness: missing rollback_revision_id, binding_delete, object_delete, deployment_delete".to_owned()));
+        assert!(lines.contains(&"next: gumgum --dry-run server <name> upgrade".to_owned()));
+    }
 
     #[test]
     fn server_upgrade_actions_explain_dry_run_safety() {

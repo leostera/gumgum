@@ -46,7 +46,8 @@ Use the repository smoke harness when intentionally exercising the real host. It
 # safest default: print object/binding commands and run only deploy dry-run
 scripts/smoke-visit-counter-starbase2.sh
 
-# verify daemon compatibility before any mutation
+# inspect daemon capabilities and verify compatibility before any mutation
+gumgum server starbase2 capabilities
 REQUIRE_CURRENT_DAEMON=1 scripts/smoke-visit-counter-starbase2.sh
 
 # create/bind objects intentionally, but still only dry-run deploy

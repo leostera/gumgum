@@ -306,6 +306,7 @@ pub(crate) struct ServerCommand {
 pub(crate) enum ServerSubcommand {
     List,
     Ping(PingArgs),
+    Capabilities,
     BootProviders,
     Config(ServerConfigArgs),
     Credentials(ServerCredentialsArgs),

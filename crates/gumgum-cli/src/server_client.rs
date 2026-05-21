@@ -1,9 +1,9 @@
 use gumgum_api::{
-    AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DeployApplyReport,
-    DeployRequest, DeploymentDeleteRequest, DeploymentRevisionsReport, EnvReport, EventsReport,
-    GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest, ProviderBootReport,
-    ProviderConfigureReport, ProviderConfigureRequest, ProviderCredentialsInitReport,
-    ProviderStatusReport, RollbackReport, RollbackRequest,
+    AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DaemonVersionReport,
+    DeployApplyReport, DeployRequest, DeploymentDeleteRequest, DeploymentRevisionsReport,
+    EnvReport, EventsReport, GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport,
+    ObjectRequest, ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
+    ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
 
@@ -19,6 +19,10 @@ impl ServerClient {
             host: host.into(),
             http: reqwest::Client::new(),
         }
+    }
+
+    pub(crate) async fn version(&self) -> gumgum_core::Result<DaemonVersionReport> {
+        self.get_json("/v0/version", "version").await
     }
 
     pub(crate) async fn graph(&self) -> gumgum_core::Result<GraphReport> {
