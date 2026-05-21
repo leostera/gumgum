@@ -783,17 +783,13 @@ async fn deploy_reconciliation_plan(
         let store = GraphStore::new(graph_path);
         let old_graph = store.load_desired_graph()?;
         let mut new_graph = old_graph.clone();
-        new_graph.nodes.insert(DesiredGraphNode::Worker {
-            name: request.worker.clone(),
+        new_graph.nodes.insert(DesiredGraphNode::Deployment {
+            worker: request.worker.clone(),
             image: request.image.clone(),
-        });
-        new_graph.nodes.insert(DesiredGraphNode::Container {
-            name: request.container.clone(),
-            image: request.image.clone(),
-        });
-        new_graph.nodes.insert(DesiredGraphNode::Route {
-            host: request.route.clone(),
-            target_container: request.container.clone(),
+            container: request.container.clone(),
+            route: request.route.clone(),
+            port: request.port,
+            health: request.health.clone(),
         });
         Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
     })

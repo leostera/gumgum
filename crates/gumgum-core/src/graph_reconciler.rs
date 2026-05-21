@@ -20,6 +20,14 @@ pub enum DesiredGraphNode {
         name: String,
         image: String,
     },
+    Deployment {
+        worker: String,
+        image: String,
+        container: String,
+        route: String,
+        port: u16,
+        health: String,
+    },
     Route {
         host: String,
         target_container: String,
@@ -43,6 +51,7 @@ impl DesiredGraphNode {
             Self::Provider { name, .. } => format!("provider/{name}"),
             Self::Worker { name, .. } => format!("worker/{name}"),
             Self::Container { name, .. } => format!("container/{name}"),
+            Self::Deployment { worker, .. } => format!("deployment/{worker}"),
             Self::Route { host, .. } => format!("route/{host}"),
             Self::Binding { worker, name, .. } => format!("binding/{worker}/{name}"),
             Self::Object {
@@ -79,6 +88,14 @@ pub enum GraphReconcileAction {
     EnsureContainer {
         name: String,
         image: String,
+    },
+    EnsureDeploy {
+        worker: String,
+        image: String,
+        container: String,
+        route: String,
+        port: u16,
+        health: String,
     },
     EnsureRoute {
         host: String,
@@ -134,6 +151,21 @@ fn ensure_action(node: &DesiredGraphNode) -> GraphReconcileAction {
         DesiredGraphNode::Container { name, image } => GraphReconcileAction::EnsureContainer {
             name: name.clone(),
             image: image.clone(),
+        },
+        DesiredGraphNode::Deployment {
+            worker,
+            image,
+            container,
+            route,
+            port,
+            health,
+        } => GraphReconcileAction::EnsureDeploy {
+            worker: worker.clone(),
+            image: image.clone(),
+            container: container.clone(),
+            route: route.clone(),
+            port: *port,
+            health: health.clone(),
         },
         DesiredGraphNode::Route {
             host,

@@ -81,6 +81,7 @@ impl GraphActionPlanner {
             _ => None,
         });
         let deploy_step = steps.iter().find_map(|step| match &step.target {
+            GraphExecutionTarget::DeployRuntime { .. } => Some(step.clone()),
             GraphExecutionTarget::ContainerRuntime { container, image } => {
                 Some(GraphExecutionStep {
                     action: step.action.clone(),
@@ -354,6 +355,25 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 image: image.clone(),
             },
             description: format!("ensure container {name} runs image {image}"),
+        },
+        GraphReconcileAction::EnsureDeploy {
+            worker,
+            image,
+            container,
+            route,
+            port,
+            health,
+        } => GraphExecutionStep {
+            action: action.clone(),
+            target: GraphExecutionTarget::DeployRuntime {
+                worker: Some(worker.clone()),
+                container: container.clone(),
+                image: image.clone(),
+                route: Some(route.clone()),
+                port: Some(*port),
+                health: Some(health.clone()),
+            },
+            description: format!("ensure deploy runtime for {worker} runs image {image}"),
         },
         GraphReconcileAction::EnsureRoute {
             host,

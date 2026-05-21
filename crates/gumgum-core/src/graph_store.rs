@@ -511,7 +511,7 @@ impl GraphStore {
     ) -> Result<()> {
         let mut stmt = conn
             .prepare(
-                "SELECT worker, image, container, route FROM desired_deployments ORDER BY worker",
+                "SELECT worker, image, container, route, port, health FROM desired_deployments ORDER BY worker",
             )
             .map_err(|source| self.error("could not query desired deployments", source))?;
         let rows = stmt
@@ -521,23 +521,21 @@ impl GraphStore {
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, u16>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             })
             .map_err(|source| self.error("could not read desired deployments", source))?;
         for row in rows {
-            let (worker, image, container, route) =
+            let (worker, image, container, route, port, health) =
                 row.map_err(|source| self.error("could not decode desired deployment", source))?;
-            nodes.push(DesiredGraphNode::Worker {
-                name: worker,
-                image: image.clone(),
-            });
-            nodes.push(DesiredGraphNode::Container {
-                name: container.clone(),
+            nodes.push(DesiredGraphNode::Deployment {
+                worker,
                 image,
-            });
-            nodes.push(DesiredGraphNode::Route {
-                host: route,
-                target_container: container,
+                container,
+                route,
+                port,
+                health,
             });
         }
         Ok(())
@@ -1005,9 +1003,13 @@ mod tests {
             name: "DATABASE_URL".to_owned(),
             object: "db/main".to_owned(),
         }));
-        assert!(desired.nodes.contains(&DesiredGraphNode::Route {
-            host: "api.peekaboo.leostera.test".to_owned(),
-            target_container: "gumgum-dev-leostera-peekaboo-api".to_owned(),
+        assert!(desired.nodes.contains(&DesiredGraphNode::Deployment {
+            worker: "api".to_owned(),
+            image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
+            container: "gumgum-dev-leostera-peekaboo-api".to_owned(),
+            route: "api.peekaboo.leostera.test".to_owned(),
+            port: 3000,
+            health: "/healthz".to_owned(),
         }));
         let desired = store.load_desired_graph().unwrap();
         assert!(desired.nodes.contains(&DesiredGraphNode::Provider {
