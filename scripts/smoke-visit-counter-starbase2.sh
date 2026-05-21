@@ -12,6 +12,7 @@ RUN_SETUP=${RUN_SETUP:-0}
 VERIFY_SETUP_IDEMPOTENCY=${VERIFY_SETUP_IDEMPOTENCY:-0}
 VERIFY_UPGRADE_IDEMPOTENCY=${VERIFY_UPGRADE_IDEMPOTENCY:-0}
 VERIFY_CLEANUP_PREVIEW=${VERIFY_CLEANUP_PREVIEW:-0}
+APPLY_CLEANUP=${APPLY_CLEANUP:-0}
 VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
 
 before_file=$(mktemp)
@@ -71,6 +72,17 @@ assert_graph_unchanged() {
   fi
 }
 
+assert_visit_resources_absent() {
+  local graph_file="$1"
+  local unexpected
+  unexpected=$(grep -E 'visit-requests|visit-events|user-counters|object/db/visits|DATABASE_URL|USER_COUNTERS|VISIT_REQUESTS_BUCKET|VISIT_EVENTS_QUEUE' "$graph_file" || true)
+  if [ -n "$unexpected" ]; then
+    echo "error: cleanup left visit-counter object/binding desired state:" >&2
+    echo "$unexpected" >&2
+    exit 1
+  fi
+}
+
 plan_gumgum() {
   echo "+ gumgum $*"
 }
@@ -85,6 +97,10 @@ run_object_step() {
 
 if [ "$APPLY" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
   echo "error: APPLY=1 requires APPLY_OBJECTS=1 so deploy bindings exist intentionally" >&2
+  exit 1
+fi
+if [ "$APPLY_CLEANUP" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
+  echo "error: APPLY_CLEANUP=1 requires APPLY_OBJECTS=1 to make destructive cleanup explicit" >&2
   exit 1
 fi
 
@@ -116,20 +132,38 @@ run_object_step bucket bind visit-requests --host "$HOST" --to worker --as VISIT
 run_object_step queue bind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE
 run_object_step queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE
 
-if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ]; then
+if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
   capture_graph "$before_graph_file"
-  run_gumgum db unbind visits --host "$HOST" --to worker --as DATABASE_URL --preview
-  run_gumgum kv unbind user-counters --host "$HOST" --to api --as USER_COUNTERS --preview
-  run_gumgum bucket unbind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET --preview
-  run_gumgum bucket unbind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET --preview
-  run_gumgum queue unbind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE --preview
-  run_gumgum queue unbind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE --preview
-  run_gumgum db delete visits --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
-  run_gumgum kv delete user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
-  run_gumgum bucket delete visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
-  run_gumgum queue delete visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
+  preview_flag="--preview"
+  if [ "$APPLY_CLEANUP" = "1" ]; then
+    preview_flag=""
+  fi
+  # shellcheck disable=SC2086
+  run_gumgum db unbind visits --host "$HOST" --to worker --as DATABASE_URL $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum kv unbind user-counters --host "$HOST" --to api --as USER_COUNTERS $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum bucket unbind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum bucket unbind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum queue unbind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum queue unbind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum db delete visits --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum kv delete user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum bucket delete visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
+  # shellcheck disable=SC2086
+  run_gumgum queue delete visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
   capture_graph "$after_graph_file"
-  assert_graph_unchanged
+  if [ "$APPLY_CLEANUP" = "1" ]; then
+    assert_visit_resources_absent "$after_graph_file"
+  else
+    assert_graph_unchanged
+  fi
 fi
 
 if [ "$APPLY" = "1" ]; then
@@ -151,4 +185,4 @@ popd >/dev/null
 
 container_delta_guard
 
-echo "visit-counter smoke completed; APPLY_OBJECTS=$APPLY_OBJECTS APPLY=$APPLY; pre-existing containers preserved"
+echo "visit-counter smoke completed; APPLY_OBJECTS=$APPLY_OBJECTS APPLY=$APPLY APPLY_CLEANUP=$APPLY_CLEANUP; pre-existing containers preserved"
