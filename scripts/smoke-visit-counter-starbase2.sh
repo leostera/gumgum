@@ -113,6 +113,7 @@ Key files:
   checksums.sha256        integrity checksums for captured files
   containers-before.txt   remote containers before the smoke stage
   containers-after.txt    remote containers after the smoke stage
+  commands.txt            gumgum commands executed or planned by the harness
   deploy-dry-run.txt      dry-run deploy plan output, when captured
   deploy.txt              apply deploy output, when captured
   gumgum-visit-counter-response.txt  route curl response, when deploy applies
@@ -192,8 +193,15 @@ container_delta_guard() {
   fi
 }
 
+record_gumgum_command() {
+  if [ -n "$ARTIFACT_DIR" ]; then
+    echo "+ gumgum $*" >>"$ARTIFACT_DIR/commands.txt"
+  fi
+}
+
 run_gumgum() {
   echo "+ gumgum $*"
+  record_gumgum_command "$@"
   # shellcheck disable=SC2086
   $GUMGUM "$@"
 }
@@ -261,6 +269,7 @@ require_daemon_capabilities() {
 
 plan_gumgum() {
   echo "+ gumgum $*"
+  record_gumgum_command "$@"
 }
 
 run_object_step() {
