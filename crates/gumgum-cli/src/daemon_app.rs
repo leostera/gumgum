@@ -265,7 +265,7 @@ async fn daemon_create_object(
         GraphExecutionContext {
             object_plan: Some(provider_plan.clone()),
             provider_credentials,
-            graph_path: None,
+            graph_path: Some((*state.graph_path).clone()),
         },
     )
     .await
@@ -386,7 +386,14 @@ async fn daemon_configure_provider(
                     config.capability,
                 ));
             }
-            match GraphActionExecutor::execute_steps(&steps, GraphExecutionContext::default()).await
+            match GraphActionExecutor::execute_steps(
+                &steps,
+                GraphExecutionContext {
+                    graph_path: Some((*state.graph_path).clone()),
+                    ..GraphExecutionContext::default()
+                },
+            )
+            .await
             {
                 Ok(actions) => Json(ProviderConfigureReport {
                     ok: true,

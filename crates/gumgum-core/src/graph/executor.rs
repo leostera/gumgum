@@ -200,60 +200,7 @@ impl GraphActionExecutor {
         steps: &[GraphExecutionStep],
         context: GraphExecutionContext,
     ) -> crate::Result<Vec<String>> {
-        let mut actions = Vec::new();
-        let mut container_runtime_seen = false;
-        for step in steps {
-            match &step.target {
-                GraphExecutionTarget::Provider { name, capability } => {
-                    actions.extend(Self::execute_provider(name.as_str(), *capability).await?);
-                }
-                GraphExecutionTarget::ObjectProvider { .. } => {
-                    if let Some(plan) = &context.object_plan {
-                        actions.extend(
-                            Self::execute_object_plan(plan, context.provider_credentials.clone())
-                                .await?,
-                        );
-                    } else {
-                        actions.push(format!("planned {}", step.description));
-                    }
-                }
-                GraphExecutionTarget::ContainerRuntime { .. }
-                | GraphExecutionTarget::DeployRuntime { .. } => {
-                    if container_runtime_seen {
-                        actions.push(
-                            "container runtime already reconciled for this graph execution"
-                                .to_owned(),
-                        );
-                        continue;
-                    }
-                    container_runtime_seen = true;
-                    if let Some(graph_path) = &context.graph_path {
-                        let Some(request) = step.target.deploy_request() else {
-                            actions.push(format!("planned {}", step.description));
-                            continue;
-                        };
-                        let (changed, mut deploy_actions) =
-                            crate::ContainerReconciler::new(graph_path.clone())
-                                .reconcile(&request)
-                                .await?;
-                        if !changed && deploy_actions.is_empty() {
-                            deploy_actions
-                                .push("container already matches desired state".to_owned());
-                        }
-                        actions.extend(deploy_actions);
-                    } else {
-                        actions.push(format!("planned {}", step.description));
-                    }
-                }
-                GraphExecutionTarget::WorkerRuntime { .. }
-                | GraphExecutionTarget::Gateway { .. }
-                | GraphExecutionTarget::GraphStore { .. }
-                | GraphExecutionTarget::Removal { .. } => {
-                    actions.push(format!("planned {}", step.description));
-                }
-            }
-        }
-        Ok(actions)
+        GraphExecutionSession::new(context).execute(steps).await
     }
 
     pub async fn execute_provider_steps(
@@ -298,6 +245,123 @@ impl GraphActionExecutor {
     }
 }
 
+struct GraphExecutionSession {
+    context: GraphExecutionContext,
+    container_runtime_seen: bool,
+}
+
+impl GraphExecutionSession {
+    fn new(context: GraphExecutionContext) -> Self {
+        Self {
+            context,
+            container_runtime_seen: false,
+        }
+    }
+
+    async fn execute(mut self, steps: &[GraphExecutionStep]) -> crate::Result<Vec<String>> {
+        let mut actions = Vec::new();
+        for step in steps {
+            self.record(
+                crate::ReconcileEventStatus::Planned,
+                step,
+                step.description.clone(),
+            )?;
+            match self.execute_step(step).await {
+                Ok(step_actions) => {
+                    self.record(
+                        crate::ReconcileEventStatus::Executed,
+                        step,
+                        step_actions.join("; "),
+                    )?;
+                    actions.extend(step_actions);
+                }
+                Err(error) => {
+                    self.record(
+                        crate::ReconcileEventStatus::Failed,
+                        step,
+                        error.to_report().message.clone(),
+                    )?;
+                    return Err(error);
+                }
+            }
+        }
+        Ok(actions)
+    }
+
+    async fn execute_step(&mut self, step: &GraphExecutionStep) -> crate::Result<Vec<String>> {
+        match &step.target {
+            GraphExecutionTarget::Provider { name, capability } => {
+                GraphActionExecutor::execute_provider(name.as_str(), *capability).await
+            }
+            GraphExecutionTarget::ObjectProvider { .. } => {
+                if let Some(plan) = &self.context.object_plan {
+                    GraphActionExecutor::execute_object_plan(
+                        plan,
+                        self.context.provider_credentials.clone(),
+                    )
+                    .await
+                } else {
+                    Ok(vec![format!("planned {}", step.description)])
+                }
+            }
+            GraphExecutionTarget::ContainerRuntime { .. }
+            | GraphExecutionTarget::DeployRuntime { .. } => self.execute_deploy_step(step).await,
+            GraphExecutionTarget::WorkerRuntime { .. }
+            | GraphExecutionTarget::Gateway { .. }
+            | GraphExecutionTarget::GraphStore { .. }
+            | GraphExecutionTarget::Removal { .. } => {
+                Ok(vec![format!("planned {}", step.description)])
+            }
+        }
+    }
+
+    async fn execute_deploy_step(
+        &mut self,
+        step: &GraphExecutionStep,
+    ) -> crate::Result<Vec<String>> {
+        if self.container_runtime_seen {
+            return Ok(vec![
+                "container runtime already reconciled for this graph execution".to_owned(),
+            ]);
+        }
+        self.container_runtime_seen = true;
+        if let Some(graph_path) = &self.context.graph_path {
+            let Some(request) = step.target.deploy_request() else {
+                return Ok(vec![format!("planned {}", step.description)]);
+            };
+            let (changed, mut deploy_actions) = crate::ContainerReconciler::new(graph_path.clone())
+                .reconcile(&request)
+                .await?;
+            if !changed && deploy_actions.is_empty() {
+                deploy_actions.push("container already matches desired state".to_owned());
+            }
+            Ok(deploy_actions)
+        } else {
+            Ok(vec![format!("planned {}", step.description)])
+        }
+    }
+
+    fn record(
+        &self,
+        status: crate::ReconcileEventStatus,
+        step: &GraphExecutionStep,
+        message: String,
+    ) -> crate::Result<()> {
+        let Some(graph_path) = &self.context.graph_path else {
+            return Ok(());
+        };
+        crate::GraphStore::new(graph_path.clone()).record_reconcile_event(
+            &crate::NewReconcileEvent {
+                status,
+                target: step.target.event_target(),
+                action: step.action.event_action(),
+                message,
+            },
+        )?;
+        Ok(())
+    }
+}
+
 impl GraphExecutionTarget {
     fn deploy_request(&self) -> Option<DeployRequest> {
         match self {
@@ -317,6 +381,40 @@ impl GraphExecutionTarget {
                 health: health.to_string(),
             }),
             _ => None,
+        }
+    }
+
+    fn event_target(&self) -> String {
+        match self {
+            Self::Provider { name, .. } => format!("provider/{name}"),
+            Self::WorkerRuntime { worker, .. } => format!("worker/{worker}"),
+            Self::ContainerRuntime { container, .. } => format!("container/{container}"),
+            Self::DeployRuntime {
+                worker: Some(worker),
+                ..
+            } => format!("deployment/{worker}"),
+            Self::DeployRuntime { container, .. } => format!("container/{container}"),
+            Self::Gateway { host, .. } => format!("route/{host}"),
+            Self::ObjectProvider {
+                capability, name, ..
+            } => format!("{capability}/{name}"),
+            Self::GraphStore { node } => node.clone(),
+            Self::Removal { id } => id.clone(),
+        }
+    }
+}
+
+impl GraphReconcileAction {
+    fn event_action(&self) -> String {
+        match self {
+            Self::EnsureProvider { .. } => "ensure_provider".to_owned(),
+            Self::EnsureWorker { .. } => "ensure_worker".to_owned(),
+            Self::EnsureContainer { .. } => "ensure_container".to_owned(),
+            Self::EnsureDeploy { .. } => "ensure_deploy".to_owned(),
+            Self::EnsureRoute { .. } => "ensure_route".to_owned(),
+            Self::EnsureBinding { .. } => "ensure_binding".to_owned(),
+            Self::EnsureObject { .. } => "ensure_object".to_owned(),
+            Self::RemoveNode { .. } => "remove_node".to_owned(),
         }
     }
 }
@@ -466,6 +564,42 @@ mod tests {
             .unwrap();
 
         assert_eq!(actions, vec!["configured manual provider manual.main"]);
+    }
+
+    #[tokio::test]
+    async fn executor_records_planned_and_executed_events_when_graph_path_is_present() {
+        let graph_path = std::env::temp_dir().join(format!(
+            "gumgum-executor-events-{}.sqlite",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let step = GraphActionPlanner::ensure_provider_step(
+            ProviderName::new("manual.main").unwrap(),
+            Capability::Manual,
+        );
+
+        let actions = GraphActionExecutor::execute_steps(
+            &[step],
+            GraphExecutionContext {
+                graph_path: Some(graph_path.clone()),
+                ..GraphExecutionContext::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(actions, vec!["configured manual provider manual.main"]);
+        let events = crate::GraphStore::new(graph_path.clone())
+            .list_reconcile_events(10)
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].status, crate::ReconcileEventStatus::Executed);
+        assert_eq!(events[0].target, "provider/manual.main");
+        assert_eq!(events[0].action, "ensure_provider");
+        assert_eq!(events[1].status, crate::ReconcileEventStatus::Planned);
+        let _ = std::fs::remove_file(graph_path);
     }
 
     #[test]
