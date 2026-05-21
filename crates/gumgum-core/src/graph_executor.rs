@@ -25,6 +25,8 @@ pub enum GraphExecutionTarget {
         container: String,
         image: String,
         route: Option<String>,
+        port: Option<u16>,
+        health: Option<String>,
     },
     Gateway {
         host: String,
@@ -87,6 +89,8 @@ impl GraphActionPlanner {
                         container: container.clone(),
                         image: image.clone(),
                         route: route.clone(),
+                        port: None,
+                        health: None,
                     },
                     description: format!(
                         "ensure deploy runtime for {} runs image {}",
@@ -160,11 +164,14 @@ impl GraphActionPlanner {
         container: impl Into<String>,
         image: impl Into<String>,
         route: impl Into<String>,
+        port: u16,
+        health: impl Into<String>,
     ) -> GraphExecutionStep {
         let worker = worker.into();
         let container = container.into();
         let image = image.into();
         let route = route.into();
+        let health = health.into();
         GraphExecutionStep {
             action: GraphReconcileAction::EnsureContainer {
                 name: container.clone(),
@@ -175,6 +182,8 @@ impl GraphActionPlanner {
                 container,
                 image: image.clone(),
                 route: Some(route),
+                port: Some(port),
+                health: Some(health),
             },
             description: format!("ensure deploy runtime for {worker} runs image {image}"),
         }
@@ -223,12 +232,18 @@ impl GraphActionExecutor {
                         continue;
                     }
                     container_runtime_seen = true;
-                    if let (Some(graph_path), Some(request)) =
-                        (&context.graph_path, &context.deploy_request)
-                    {
+                    if let Some(graph_path) = &context.graph_path {
+                        let request = context
+                            .deploy_request
+                            .clone()
+                            .or_else(|| deploy_request_from_target(&step.target));
+                        let Some(request) = request else {
+                            actions.push(format!("planned {}", step.description));
+                            continue;
+                        };
                         let (changed, mut deploy_actions) =
                             crate::ContainerReconciler::new(graph_path.clone())
-                                .reconcile(request)
+                                .reconcile(&request)
                                 .await?;
                         if !changed && deploy_actions.is_empty() {
                             deploy_actions
@@ -290,6 +305,27 @@ impl GraphActionExecutor {
         credentials: Option<ProviderCredentials>,
     ) -> crate::Result<Vec<String>> {
         crate::providers::ProviderReconciler::ensure_with_credentials(plan, credentials).await
+    }
+}
+
+fn deploy_request_from_target(target: &GraphExecutionTarget) -> Option<DeployRequest> {
+    match target {
+        GraphExecutionTarget::DeployRuntime {
+            worker: Some(worker),
+            container,
+            image,
+            route: Some(route),
+            port: Some(port),
+            health: Some(health),
+        } => Some(DeployRequest {
+            worker: worker.clone(),
+            image: image.clone(),
+            container: container.clone(),
+            route: route.clone(),
+            port: *port,
+            health: health.clone(),
+        }),
+        _ => None,
     }
 }
 
@@ -529,6 +565,8 @@ mod tests {
             "gumgum-api",
             "ghcr.io/acme/api:v1",
             "api.example.test",
+            3000,
+            "/healthz",
         );
 
         assert!(matches!(
@@ -537,8 +575,10 @@ mod tests {
                 worker: Some(ref worker),
                 ref container,
                 route: Some(ref route),
+                port: Some(3000),
+                health: Some(ref health),
                 ..
-            } if worker == "api" && container == "gumgum-api" && route == "api.example.test"
+            } if worker == "api" && container == "gumgum-api" && route == "api.example.test" && health == "/healthz"
         ));
     }
 

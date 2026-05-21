@@ -745,6 +745,8 @@ async fn daemon_deploy(
             request.container.clone(),
             request.image.clone(),
             request.route.clone(),
+            request.port,
+            request.health.clone(),
         ));
     }
     let deploy_context = GraphExecutionContext {
