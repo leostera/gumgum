@@ -19,7 +19,7 @@ DB_PATH = Path(os.environ.get("VISIT_COUNTER_DB_PATH", STATE_DIR / "visits.sqlit
 DATABASE_URL = os.environ.get("DATABASE_URL")
 POLL_SECONDS = float(os.environ.get("VISIT_COUNTER_POLL_SECONDS", "1"))
 MIGRATIONS_DIR = Path(os.environ.get("VISIT_COUNTER_MIGRATIONS_DIR", "/app/migrations"))
-LOCAL_MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
+LOCAL_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 
 
 class VisitStore(Protocol):
