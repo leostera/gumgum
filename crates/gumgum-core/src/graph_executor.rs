@@ -1,4 +1,4 @@
-use crate::{Capability, GraphReconcileAction};
+use crate::{Capability, DesiredGraph, GraphReconcileAction, GraphReconciler};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -35,11 +35,32 @@ pub struct GraphExecutionStep {
     pub description: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct GraphReconciliationPlan {
+    pub actions: Vec<GraphReconcileAction>,
+    pub steps: Vec<GraphExecutionStep>,
+}
+
+impl GraphReconciliationPlan {
+    pub fn is_empty(&self) -> bool {
+        self.actions.is_empty()
+    }
+}
+
 pub struct GraphActionPlanner;
 
 impl GraphActionPlanner {
     pub fn plan(actions: &[GraphReconcileAction]) -> Vec<GraphExecutionStep> {
         actions.iter().map(plan_action).collect()
+    }
+
+    pub fn plan_transition(
+        old_graph: &DesiredGraph,
+        new_graph: &DesiredGraph,
+    ) -> GraphReconciliationPlan {
+        let actions = GraphReconciler::reconcile(old_graph, new_graph);
+        let steps = Self::plan(&actions);
+        GraphReconciliationPlan { actions, steps }
     }
 }
 
@@ -114,6 +135,32 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn planner_builds_full_transition_plan_from_graph_diff() {
+        let old_graph = DesiredGraph::default();
+        let new_graph = DesiredGraph::new([
+            crate::DesiredGraphNode::Provider {
+                name: "vaultwarden.main".to_owned(),
+                capability: Capability::Secret,
+            },
+            crate::DesiredGraphNode::Object {
+                capability: Capability::Secret,
+                name: "stripe-api-key".to_owned(),
+                provider: "vaultwarden.main".to_owned(),
+            },
+        ]);
+
+        let plan = GraphActionPlanner::plan_transition(&old_graph, &new_graph);
+
+        assert_eq!(plan.actions.len(), 2);
+        assert_eq!(plan.steps.len(), 2);
+        assert!(plan.steps.iter().any(|step| matches!(
+            step.target,
+            GraphExecutionTarget::Provider { ref name, capability: Capability::Secret }
+                if name == "vaultwarden.main"
+        )));
+    }
 
     #[test]
     fn planner_routes_provider_actions_to_provider_executor_target() {

@@ -16,7 +16,9 @@ pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
-pub use graph_executor::{GraphActionPlanner, GraphExecutionStep, GraphExecutionTarget};
+pub use graph_executor::{
+    GraphActionPlanner, GraphExecutionStep, GraphExecutionTarget, GraphReconciliationPlan,
+};
 pub use graph_reconciler::{DesiredGraph, DesiredGraphNode, GraphReconcileAction, GraphReconciler};
 pub use graph_store::{
     DeploymentRevision, DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, object_dns,
