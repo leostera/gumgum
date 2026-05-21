@@ -2,6 +2,7 @@ pub mod config_store;
 pub mod container_reconciler;
 pub mod daemon_health;
 pub mod deployment;
+pub mod graph_executor;
 pub mod graph_reconciler;
 pub mod graph_store;
 pub mod manifest;
@@ -15,6 +16,7 @@ pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
+pub use graph_executor::{GraphActionPlanner, GraphExecutionStep, GraphExecutionTarget};
 pub use graph_reconciler::{DesiredGraph, DesiredGraphNode, GraphReconcileAction, GraphReconciler};
 pub use graph_store::{
     DeploymentRevision, DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, object_dns,
