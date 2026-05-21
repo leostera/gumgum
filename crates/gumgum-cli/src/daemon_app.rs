@@ -731,7 +731,7 @@ async fn daemon_deploy(
     let path = (*state.graph_path).clone();
     let reconcile_path = path.clone();
     let store = GraphStore::new(path.clone());
-    let reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
+    let mut reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
     let request_for_db = desired_from_deploy_request(request.clone());
     let materialized =
         tokio::task::spawn_blocking(move || store.materialize_deploy(&request_for_db))
@@ -739,6 +739,12 @@ async fn daemon_deploy(
             .ok()
             .and_then(Result::ok)
             .unwrap_or(false);
+    if reconciliation_steps.is_empty() {
+        reconciliation_steps.push(GraphActionPlanner::ensure_container_step(
+            request.container.clone(),
+            request.image.clone(),
+        ));
+    }
     let deploy_context = GraphExecutionContext {
         object_plan: None,
         provider_credentials: None,

@@ -93,6 +93,16 @@ impl GraphActionPlanner {
             provider: provider.into(),
         })
     }
+
+    pub fn ensure_container_step(
+        name: impl Into<String>,
+        image: impl Into<String>,
+    ) -> GraphExecutionStep {
+        plan_action(&GraphReconcileAction::EnsureContainer {
+            name: name.into(),
+            image: image.into(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -411,6 +421,19 @@ mod tests {
 
         assert_eq!(actions[0], "configured manual provider manual.main");
         assert!(actions[1].contains("planned ensure route api.example.test"));
+    }
+
+    #[test]
+    fn planner_can_synthesize_idempotent_container_step() {
+        let step = GraphActionPlanner::ensure_container_step("api", "ghcr.io/acme/api:v1");
+
+        assert_eq!(
+            step.target,
+            GraphExecutionTarget::ContainerRuntime {
+                container: "api".to_owned(),
+                image: "ghcr.io/acme/api:v1".to_owned(),
+            }
+        );
     }
 
     #[tokio::test]
