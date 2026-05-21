@@ -7,7 +7,11 @@ TEST_DOMAIN=${TEST_DOMAIN:-leostera.test}
 GUMGUM=${GUMGUM:-cargo run -q -p gumgum-cli --bin gumgum --}
 EXAMPLE_DIR=${EXAMPLE_DIR:-examples/visit-counter}
 APPLY=${APPLY:-0}
+APPLY_OBJECTS=${APPLY_OBJECTS:-0}
 RUN_SETUP=${RUN_SETUP:-0}
+VERIFY_SETUP_IDEMPOTENCY=${VERIFY_SETUP_IDEMPOTENCY:-0}
+VERIFY_CLEANUP_PREVIEW=${VERIFY_CLEANUP_PREVIEW:-0}
+VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
 
 before_file=$(mktemp)
 after_file=$(mktemp)
@@ -47,25 +51,58 @@ run_gumgum() {
   $GUMGUM "$@"
 }
 
+plan_gumgum() {
+  echo "+ gumgum $*"
+}
+
+run_object_step() {
+  if [ "$APPLY_OBJECTS" = "1" ]; then
+    run_gumgum "$@"
+  else
+    plan_gumgum "$@"
+  fi
+}
+
+if [ "$APPLY" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
+  echo "error: APPLY=1 requires APPLY_OBJECTS=1 so deploy bindings exist intentionally" >&2
+  exit 1
+fi
+
 remote_containers >"$before_file"
 
 if [ "$RUN_SETUP" = "1" ]; then
   run_gumgum setup "$HOST" --root-domain "$ROOT_DOMAIN" --test-domain "$TEST_DOMAIN"
+  if [ "$VERIFY_SETUP_IDEMPOTENCY" = "1" ]; then
+    run_gumgum setup "$HOST" --root-domain "$ROOT_DOMAIN" --test-domain "$TEST_DOMAIN"
+  fi
 fi
 
 pushd "$EXAMPLE_DIR" >/dev/null
 
-run_gumgum db create visits --host "$HOST" --root-domain "$ROOT_DOMAIN"
-run_gumgum kv create user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN"
-run_gumgum bucket create visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN"
-run_gumgum queue create visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN"
+run_object_step db create visits --host "$HOST" --root-domain "$ROOT_DOMAIN"
+run_object_step kv create user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN"
+run_object_step bucket create visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN"
+run_object_step queue create visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN"
 
-run_gumgum db bind visits --host "$HOST" --to worker --as DATABASE_URL
-run_gumgum kv bind user-counters --host "$HOST" --to api --as USER_COUNTERS
-run_gumgum bucket bind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET
-run_gumgum bucket bind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET
-run_gumgum queue bind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE
-run_gumgum queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE
+run_object_step db bind visits --host "$HOST" --to worker --as DATABASE_URL
+run_object_step kv bind user-counters --host "$HOST" --to api --as USER_COUNTERS
+run_object_step bucket bind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET
+run_object_step bucket bind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET
+run_object_step queue bind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE
+run_object_step queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE
+
+if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ]; then
+  run_gumgum db unbind visits --host "$HOST" --to worker --as DATABASE_URL --preview
+  run_gumgum kv unbind user-counters --host "$HOST" --to api --as USER_COUNTERS --preview
+  run_gumgum bucket unbind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET --preview
+  run_gumgum bucket unbind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET --preview
+  run_gumgum queue unbind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE --preview
+  run_gumgum queue unbind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE --preview
+  run_gumgum db delete visits --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
+  run_gumgum kv delete user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
+  run_gumgum bucket delete visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
+  run_gumgum queue delete visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
+fi
 
 if [ "$APPLY" = "1" ]; then
   run_gumgum deploy --host "$HOST"
@@ -73,6 +110,9 @@ if [ "$APPLY" = "1" ]; then
   curl -fsS -H "Host: api.visit-counter.${TEST_DOMAIN}" "http://${HOST}/" >/tmp/gumgum-visit-counter-response.txt
   grep -q "Hello visitor" /tmp/gumgum-visit-counter-response.txt
   run_gumgum events --host "$HOST" --limit 20
+  if [ "$VERIFY_ROLLBACK_PREVIEW" = "1" ]; then
+    run_gumgum rollback --host "$HOST" --worker api --preview || true
+  fi
   run_gumgum logs --host "$HOST" api --tail 20 || true
   run_gumgum logs --host "$HOST" worker --tail 20 || true
 else
@@ -83,4 +123,4 @@ popd >/dev/null
 
 container_delta_guard
 
-echo "visit-counter smoke completed; APPLY=$APPLY; pre-existing containers preserved"
+echo "visit-counter smoke completed; APPLY_OBJECTS=$APPLY_OBJECTS APPLY=$APPLY; pre-existing containers preserved"
