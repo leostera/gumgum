@@ -241,13 +241,13 @@ pub struct DoctorCheck {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct GraphNode {
+pub struct PresentationGraphNode {
     pub id: String,
     pub kind: String,
     pub label: String,
 }
 
-impl GraphNode {
+impl PresentationGraphNode {
     pub fn new(id: impl Into<String>, kind: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -258,13 +258,13 @@ impl GraphNode {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct GraphEdge {
+pub struct PresentationGraphEdge {
     pub from: String,
     pub to: String,
     pub kind: String,
 }
 
-impl GraphEdge {
+impl PresentationGraphEdge {
     pub fn new(from: impl Into<String>, to: impl Into<String>, kind: impl Into<String>) -> Self {
         Self {
             from: from.into(),
@@ -275,10 +275,14 @@ impl GraphEdge {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct Graph {
-    pub nodes: Vec<GraphNode>,
-    pub edges: Vec<GraphEdge>,
+pub struct PresentationGraph {
+    pub nodes: Vec<PresentationGraphNode>,
+    pub edges: Vec<PresentationGraphEdge>,
 }
+
+pub type Graph = PresentationGraph;
+pub type GraphNode = PresentationGraphNode;
+pub type GraphEdge = PresentationGraphEdge;
 
 pub fn render_mermaid_graph(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
     let mut graph = "graph TD\n".to_owned();
@@ -514,7 +518,7 @@ impl PlanGraph {
     }
 }
 
-impl Graph {
+impl PresentationGraph {
     pub fn new() -> Self {
         Self::default()
     }
