@@ -1,7 +1,7 @@
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest,
-    DeploymentRevisionsReport, EnvReport, GraphReport, LogsReport, ObjectReport, ObjectRequest,
-    ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
+    DeploymentRevisionsReport, EnvReport, EventsReport, GraphReport, LogsReport, ObjectReport,
+    ObjectRequest, ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
     ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
@@ -152,6 +152,11 @@ impl ServerClient {
 
     pub(crate) async fn logs(&self, container: &str, tail: u32) -> gumgum_core::Result<LogsReport> {
         self.get_json(&format!("/v0/logs/{container}?tail={tail}"), "logs")
+            .await
+    }
+
+    pub(crate) async fn events(&self, limit: u32) -> gumgum_core::Result<EventsReport> {
+        self.get_json(&format!("/v0/events?limit={limit}"), "events")
             .await
     }
 

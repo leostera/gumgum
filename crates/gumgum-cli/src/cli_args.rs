@@ -25,6 +25,7 @@ pub(crate) enum Command {
     Info(InfoArgs),
     Rollback(RollbackArgs),
     Logs(LogsArgs),
+    Events(EventsArgs),
     Graph(GraphArgs),
     Db(ObjectArgs),
     Kv(ObjectArgs),
@@ -188,6 +189,14 @@ pub(crate) struct LogsArgs {
     pub(crate) host: Option<String>,
     #[arg(long, default_value_t = 100)]
     pub(crate) tail: u32,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct EventsArgs {
+    #[arg(long)]
+    pub(crate) host: Option<String>,
+    #[arg(long, default_value_t = 50)]
+    pub(crate) limit: u32,
 }
 
 #[derive(Debug, Args)]

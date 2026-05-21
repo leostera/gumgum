@@ -5,6 +5,7 @@ mod daemon_app;
 mod deploy_command;
 mod deploy_executor;
 mod env_command;
+mod events_command;
 mod graph_command;
 mod graph_presenter;
 mod init_command;
@@ -24,6 +25,7 @@ use config_command::config_command;
 use daemon_app::DaemonApp;
 use deploy_command::{deploy, print_deploy_output};
 use env_command::env;
+use events_command::events;
 use graph_command::graph;
 use gumgum_api::SetupPlan;
 use gumgum_core::{
@@ -79,6 +81,9 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         }
         Command::Logs(args) => {
             logs(args, cli.json).await?;
+        }
+        Command::Events(args) => {
+            events(args, cli.json).await?;
         }
         Command::Graph(args) => {
             graph(args, cli.json).await?;
