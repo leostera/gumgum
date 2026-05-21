@@ -1106,6 +1106,140 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn object_and_binding_mutations_record_activity_and_reconciliation_events() {
+        let path = temp_graph_path("object-binding-events");
+        let state = DaemonState {
+            graph_path: Arc::new(path.clone()),
+        };
+
+        let Json(object_report) = daemon_create_object(
+            State(state.clone()),
+            Json(ObjectRequest {
+                capability: gumgum_core::Capability::Queue,
+                name: "visit-events".to_owned(),
+                namespace: "root".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+                password: None,
+            }),
+        )
+        .await;
+        assert!(object_report.ok);
+
+        let Json(binding_report) = daemon_create_binding(
+            State(state.clone()),
+            Json(BindingRequest {
+                capability: gumgum_core::Capability::Queue,
+                object_name: "visit-events".to_owned(),
+                worker: "api".to_owned(),
+                binding: "VISIT_EVENTS_QUEUE".to_owned(),
+                access: "read-write".to_owned(),
+            }),
+        )
+        .await;
+        assert!(binding_report.ok);
+
+        let events = GraphStore::new(path.clone())
+            .list_reconcile_events(20)
+            .unwrap();
+        assert!(events.iter().any(|event| {
+            event.kind == gumgum_core::ControlPlaneEventKind::Mutation
+                && event.target == "object/queue/visit-events"
+                && event.action == "object.upsert"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == gumgum_core::ControlPlaneEventKind::Mutation
+                && event.target == "binding/api/VISIT_EVENTS_QUEUE"
+                && event.action == "binding.upsert"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == gumgum_core::ControlPlaneEventKind::Reconciliation
+                && event.target == "queue/visit-events"
+                && event.action == "ensure_object"
+                && event.status == gumgum_core::ReconcileEventStatus::Executed
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == gumgum_core::ControlPlaneEventKind::Reconciliation
+                && event.target == "binding/api/VISIT_EVENTS_QUEUE"
+                && event.action == "ensure_binding"
+                && event.status == gumgum_core::ReconcileEventStatus::Executed
+        }));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn delete_previews_explain_object_and_binding_plans_without_mutating() {
+        let path = temp_graph_path("delete-previews");
+        let store = GraphStore::new(path.clone());
+        store
+            .materialize_object(&gumgum_core::GlobalObject {
+                capability: gumgum_core::Capability::Queue,
+                name: "visit-events".to_owned(),
+                namespace: "root".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_binding(&gumgum_core::WorkerBinding {
+                capability: gumgum_core::Capability::Queue,
+                object_name: "visit-events".to_owned(),
+                worker: "api".to_owned(),
+                binding: "VISIT_EVENTS_QUEUE".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+        let before_events = store.list_reconcile_events(20).unwrap().len();
+        let state = DaemonState {
+            graph_path: Arc::new(path.clone()),
+        };
+
+        let Json(binding_report) = daemon_delete_binding(
+            State(state.clone()),
+            Json(BindingDeleteRequest {
+                capability: gumgum_core::Capability::Queue,
+                object_name: "visit-events".to_owned(),
+                worker: "api".to_owned(),
+                binding: "VISIT_EVENTS_QUEUE".to_owned(),
+                preview: true,
+            }),
+        )
+        .await;
+        assert!(binding_report.ok);
+        assert_eq!(binding_report.message, "binding delete preview");
+        assert!(!binding_report.reconciliation_steps.is_empty());
+        assert_eq!(
+            binding_report.binding_actions,
+            vec!["preview only; no bindings changed"]
+        );
+
+        let Json(object_report) = daemon_delete_object(
+            State(state),
+            Json(ObjectDeleteRequest {
+                capability: gumgum_core::Capability::Queue,
+                name: "visit-events".to_owned(),
+                namespace: "root".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+                preview: true,
+            }),
+        )
+        .await;
+        assert!(object_report.ok);
+        assert_eq!(object_report.message, "object delete preview");
+        assert!(!object_report.reconciliation_steps.is_empty());
+        assert_eq!(
+            object_report.provider_actions,
+            vec!["preview only; no objects changed"]
+        );
+        assert_eq!(
+            GraphStore::new(path.clone())
+                .list_reconcile_events(20)
+                .unwrap()
+                .len(),
+            before_events
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
     async fn daemon_events_lists_newest_reconciliation_events() {
         let path = temp_graph_path("events-list");
         let store = GraphStore::new(path.clone());
