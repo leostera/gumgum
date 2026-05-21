@@ -12,8 +12,8 @@ use gumgum_api::{
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy,
-    DesiredGraphNode, ErrorCode, GlobalObject, GraphActionPlanner, GraphStore, GumgumError,
-    LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph,
+    DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject, GraphActionPlanner, GraphStore,
+    GumgumError, LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph,
     not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -319,8 +319,16 @@ async fn daemon_configure_provider(
         request.vault,
     );
     let plan = provider_configure_plan((*state.graph_path).clone(), &config).await;
-    match ConfigStore::from_home_env().and_then(|store| store.save_provider_config(&config)) {
-        Ok(()) => match ProviderReconciler::ensure_configured_provider(&config).await {
+    let persist_result = ConfigStore::from_home_env()
+        .and_then(|store| store.save_provider_config(&config))
+        .and_then(|_| {
+            GraphStore::new((*state.graph_path).clone()).materialize_provider(&DesiredProvider {
+                name: config.provider.clone(),
+                capability: config.capability,
+            })
+        });
+    match persist_result {
+        Ok(_) => match ProviderReconciler::ensure_configured_provider(&config).await {
             Ok(actions) => Json(ProviderConfigureReport {
                 ok: true,
                 message: "provider configured and reconciled".to_owned(),

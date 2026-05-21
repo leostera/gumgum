@@ -41,6 +41,12 @@ pub struct WorkerBinding {
     pub access: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DesiredProvider {
+    pub name: String,
+    pub capability: Capability,
+}
+
 #[derive(Clone, Debug)]
 pub struct GraphStore {
     path: PathBuf,
@@ -65,7 +71,12 @@ impl GraphStore {
         }
         let conn = self.open()?;
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS desired_deployments (
+            "CREATE TABLE IF NOT EXISTS desired_providers (
+                name TEXT PRIMARY KEY,
+                capability TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS desired_deployments (
                 worker TEXT PRIMARY KEY,
                 image TEXT NOT NULL,
                 container TEXT NOT NULL,
@@ -146,6 +157,7 @@ impl GraphStore {
                 capability: Capability::Kv,
             },
         ];
+        self.load_desired_providers(&conn, &mut nodes)?;
         self.load_desired_deployments(&conn, &mut nodes)?;
         self.load_desired_objects(&conn, &mut nodes)?;
         self.load_desired_bindings(&conn, &mut nodes)?;
@@ -170,10 +182,26 @@ impl GraphStore {
             GraphEdge::new("gumgumd", "provider/postgres.main", "owns"),
             GraphEdge::new("gumgumd", "provider/redis.main", "owns"),
         ];
+        self.load_providers(&conn, &mut nodes, &mut edges)?;
         self.load_deployments(&conn, &mut nodes, &mut edges)?;
         self.load_objects(&conn, &mut nodes, &mut edges)?;
         self.load_bindings(&conn, &mut nodes, &mut edges)?;
         Ok((nodes, edges))
+    }
+
+    pub fn materialize_provider(&self, provider: &DesiredProvider) -> Result<bool> {
+        self.init()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO desired_providers (name, capability, updated_at)
+             VALUES (?1, ?2, CURRENT_TIMESTAMP)
+             ON CONFLICT(name) DO UPDATE SET
+               capability=excluded.capability,
+               updated_at=CURRENT_TIMESTAMP",
+            params![provider.name, provider.capability.to_string()],
+        )
+        .map_err(|source| self.error("could not materialize provider", source))?;
+        Ok(true)
     }
 
     pub fn materialize_object(&self, object: &GlobalObject) -> Result<bool> {
@@ -452,6 +480,30 @@ impl GraphStore {
         Ok(env)
     }
 
+    fn load_desired_providers(
+        &self,
+        conn: &Connection,
+        nodes: &mut Vec<DesiredGraphNode>,
+    ) -> Result<()> {
+        let mut stmt = conn
+            .prepare("SELECT name, capability FROM desired_providers ORDER BY name")
+            .map_err(|source| self.error("could not query desired providers", source))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|source| self.error("could not read desired providers", source))?;
+        for row in rows {
+            let (name, capability) =
+                row.map_err(|source| self.error("could not decode desired provider", source))?;
+            nodes.push(DesiredGraphNode::Provider {
+                name,
+                capability: Capability::from_str(&capability).unwrap_or(Capability::Manual),
+            });
+        }
+        Ok(())
+    }
+
     fn load_desired_deployments(
         &self,
         conn: &Connection,
@@ -546,6 +598,34 @@ impl GraphStore {
                 name: binding,
                 object: format!("{kind}/{name}"),
             });
+        }
+        Ok(())
+    }
+
+    fn load_providers(
+        &self,
+        conn: &Connection,
+        nodes: &mut Vec<GraphNode>,
+        edges: &mut Vec<GraphEdge>,
+    ) -> Result<()> {
+        let mut stmt = conn
+            .prepare("SELECT name, capability FROM desired_providers ORDER BY name")
+            .map_err(|source| self.error("could not query graph providers", source))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|source| self.error("could not read graph providers", source))?;
+        for row in rows {
+            let (name, capability) =
+                row.map_err(|source| self.error("could not decode graph provider", source))?;
+            let id = format!("provider/{name}");
+            nodes.push(GraphNode::new(
+                &id,
+                "provider",
+                format!("{name} ({capability})"),
+            ));
+            edges.push(GraphEdge::new("gumgumd", &id, "owns"));
         }
         Ok(())
     }
@@ -905,6 +985,12 @@ mod tests {
         ));
 
         let desired = store.load_desired_graph().unwrap();
+        store
+            .materialize_provider(&DesiredProvider {
+                name: "vaultwarden.main".to_owned(),
+                capability: Capability::Secret,
+            })
+            .unwrap();
         assert!(desired.nodes.contains(&DesiredGraphNode::Provider {
             name: "postgres.main".to_owned(),
             capability: Capability::Db,
@@ -923,6 +1009,19 @@ mod tests {
             host: "api.peekaboo.leostera.test".to_owned(),
             target_container: "gumgum-dev-leostera-peekaboo-api".to_owned(),
         }));
+        let desired = store.load_desired_graph().unwrap();
+        assert!(desired.nodes.contains(&DesiredGraphNode::Provider {
+            name: "vaultwarden.main".to_owned(),
+            capability: Capability::Secret,
+        }));
+        let (nodes, edges) = store.load_graph().unwrap();
+        assert!(has_node(&nodes, "provider/vaultwarden.main", "provider"));
+        assert!(has_edge(
+            &edges,
+            "gumgumd",
+            "provider/vaultwarden.main",
+            "owns"
+        ));
         let _ = fs::remove_file(store.path);
     }
 

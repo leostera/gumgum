@@ -21,7 +21,8 @@ pub use graph_executor::{
 };
 pub use graph_reconciler::{DesiredGraph, DesiredGraphNode, GraphReconcileAction, GraphReconciler};
 pub use graph_store::{
-    DeploymentRevision, DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, object_dns,
+    DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject, GraphStore, WorkerBinding,
+    object_dns,
 };
 pub use manifest::{
     Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,
