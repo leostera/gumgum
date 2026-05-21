@@ -1,6 +1,7 @@
 use crate::{
     Capability, ContainerName, DeployRequest, DesiredGraph, GraphReconcileAction, GraphReconciler,
-    HealthPath, ImageName, ObjectProviderPlan, Port, ProviderCredentials, RouteHost, WorkerId,
+    HealthPath, ImageName, ObjectName, ObjectProviderPlan, Port, ProviderCredentials, ProviderName,
+    RouteHost, WorkerId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -9,7 +10,7 @@ use std::path::PathBuf;
 #[serde(rename_all = "snake_case", tag = "target")]
 pub enum GraphExecutionTarget {
     Provider {
-        name: String,
+        name: ProviderName,
         capability: Capability,
     },
     WorkerRuntime {
@@ -34,8 +35,8 @@ pub enum GraphExecutionTarget {
     },
     ObjectProvider {
         capability: Capability,
-        name: String,
-        provider: String,
+        name: ObjectName,
+        provider: ProviderName,
     },
     GraphStore {
         node: String,
@@ -133,25 +134,19 @@ impl GraphActionPlanner {
         GraphReconciliationPlan { actions, steps }
     }
 
-    pub fn ensure_provider_step(
-        name: impl Into<String>,
-        capability: Capability,
-    ) -> GraphExecutionStep {
-        plan_action(&GraphReconcileAction::EnsureProvider {
-            name: name.into(),
-            capability,
-        })
+    pub fn ensure_provider_step(name: ProviderName, capability: Capability) -> GraphExecutionStep {
+        plan_action(&GraphReconcileAction::EnsureProvider { name, capability })
     }
 
     pub fn ensure_object_step(
         capability: Capability,
-        name: impl Into<String>,
-        provider: impl Into<String>,
+        name: ObjectName,
+        provider: ProviderName,
     ) -> GraphExecutionStep {
         plan_action(&GraphReconcileAction::EnsureObject {
             capability,
-            name: name.into(),
-            provider: provider.into(),
+            name,
+            provider,
         })
     }
 
@@ -211,7 +206,7 @@ impl GraphActionExecutor {
         for step in steps {
             match &step.target {
                 GraphExecutionTarget::Provider { name, capability } => {
-                    actions.extend(Self::execute_provider(name, *capability).await?);
+                    actions.extend(Self::execute_provider(name.as_str(), *capability).await?);
                 }
                 GraphExecutionTarget::ObjectProvider { .. } => {
                     if let Some(plan) = &context.object_plan {
@@ -427,13 +422,13 @@ mod tests {
         let old_graph = DesiredGraph::default();
         let new_graph = DesiredGraph::new([
             crate::DesiredGraphNode::Provider {
-                name: "vaultwarden.main".to_owned(),
+                name: ProviderName::new("vaultwarden.main").unwrap(),
                 capability: Capability::Secret,
             },
             crate::DesiredGraphNode::Object {
                 capability: Capability::Secret,
-                name: "stripe-api-key".to_owned(),
-                provider: "vaultwarden.main".to_owned(),
+                name: ObjectName::new("stripe-api-key").unwrap(),
+                provider: ProviderName::new("vaultwarden.main").unwrap(),
             },
         ]);
 
@@ -444,18 +439,21 @@ mod tests {
         assert!(plan.steps.iter().any(|step| matches!(
             step.target,
             GraphExecutionTarget::Provider { ref name, capability: Capability::Secret }
-                if name == "vaultwarden.main"
+                if name.as_str() == "vaultwarden.main"
         )));
     }
 
     #[test]
     fn planner_can_synthesize_idempotent_provider_step() {
-        let step = GraphActionPlanner::ensure_provider_step("vaultwarden.main", Capability::Secret);
+        let step = GraphActionPlanner::ensure_provider_step(
+            ProviderName::new("vaultwarden.main").unwrap(),
+            Capability::Secret,
+        );
 
         assert_eq!(
             step.target,
             GraphExecutionTarget::Provider {
-                name: "vaultwarden.main".to_owned(),
+                name: ProviderName::new("vaultwarden.main").unwrap(),
                 capability: Capability::Secret,
             }
         );
@@ -478,20 +476,20 @@ mod tests {
     fn planner_routes_provider_actions_to_provider_executor_target() {
         let steps = GraphActionPlanner::plan(&[
             GraphReconcileAction::EnsureProvider {
-                name: "vaultwarden.main".to_owned(),
+                name: ProviderName::new("vaultwarden.main").unwrap(),
                 capability: Capability::Secret,
             },
             GraphReconcileAction::EnsureObject {
                 capability: Capability::Blob,
-                name: "uploads".to_owned(),
-                provider: "minio.main".to_owned(),
+                name: ObjectName::new("uploads").unwrap(),
+                provider: ProviderName::new("minio.main").unwrap(),
             },
         ]);
 
         assert_eq!(
             steps[0].target,
             GraphExecutionTarget::Provider {
-                name: "vaultwarden.main".to_owned(),
+                name: ProviderName::new("vaultwarden.main").unwrap(),
                 capability: Capability::Secret,
             }
         );
@@ -499,23 +497,26 @@ mod tests {
             steps[1].target,
             GraphExecutionTarget::ObjectProvider {
                 capability: Capability::Blob,
-                name: "uploads".to_owned(),
-                provider: "minio.main".to_owned(),
+                name: ObjectName::new("uploads").unwrap(),
+                provider: ProviderName::new("minio.main").unwrap(),
             }
         );
     }
 
     #[test]
     fn planner_can_synthesize_idempotent_object_step() {
-        let step =
-            GraphActionPlanner::ensure_object_step(Capability::Blob, "uploads", "minio.main");
+        let step = GraphActionPlanner::ensure_object_step(
+            Capability::Blob,
+            ObjectName::new("uploads").unwrap(),
+            ProviderName::new("minio.main").unwrap(),
+        );
 
         assert_eq!(
             step.target,
             GraphExecutionTarget::ObjectProvider {
                 capability: Capability::Blob,
-                name: "uploads".to_owned(),
-                provider: "minio.main".to_owned(),
+                name: ObjectName::new("uploads").unwrap(),
+                provider: ProviderName::new("minio.main").unwrap(),
             }
         );
     }
@@ -530,8 +531,8 @@ mod tests {
 
         let step = GraphActionPlanner::ensure_object_step(
             Capability::Secret,
-            "stripe-api-key",
-            "onepassword.main",
+            ObjectName::new("stripe-api-key").unwrap(),
+            ProviderName::new("onepassword.main").unwrap(),
         );
         let actions = GraphActionExecutor::execute_object_provider_steps(&[step], &plan, None)
             .await
@@ -548,7 +549,7 @@ mod tests {
     async fn generic_executor_dispatches_provider_and_plans_runtime_targets() {
         let steps = GraphActionPlanner::plan(&[
             GraphReconcileAction::EnsureProvider {
-                name: "manual.main".to_owned(),
+                name: ProviderName::new("manual.main").unwrap(),
                 capability: Capability::Manual,
             },
             GraphReconcileAction::EnsureRoute {

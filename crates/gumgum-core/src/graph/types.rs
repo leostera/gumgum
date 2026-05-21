@@ -257,6 +257,94 @@ impl TryFrom<&str> for HealthPath {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ProviderName(String);
+
+impl ProviderName {
+    pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
+        let value = value.as_ref().trim().to_owned();
+        if value.is_empty() {
+            return Err(invalid_graph_value("provider name must not be empty"));
+        }
+        if value.chars().any(char::is_whitespace) {
+            return Err(invalid_graph_value(
+                "provider name must not contain whitespace",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ProviderName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for ProviderName {
+    type Error = GumgumError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for ProviderName {
+    type Error = GumgumError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ObjectName(String);
+
+impl ObjectName {
+    pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
+        let value = value.as_ref().trim().to_owned();
+        if value.is_empty() {
+            return Err(invalid_graph_value("object name must not be empty"));
+        }
+        if value.chars().any(char::is_whitespace) {
+            return Err(invalid_graph_value(
+                "object name must not contain whitespace",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ObjectName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for ObjectName {
+    type Error = GumgumError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for ObjectName {
+    type Error = GumgumError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
 fn invalid_graph_value(message: &'static str) -> GumgumError {
     GumgumError::structured(Subsystem::Config, ErrorCode::InvalidArgs, message).build()
 }
@@ -304,6 +392,20 @@ mod tests {
         assert!(HealthPath::new("healthz").is_err());
         assert!(HealthPath::new("/health z").is_err());
         assert!(HealthPath::new(" ").is_err());
+    }
+
+    #[test]
+    fn provider_and_object_names_reject_empty_or_whitespace() {
+        assert_eq!(
+            ProviderName::new(" vaultwarden.main ").unwrap().as_str(),
+            "vaultwarden.main"
+        );
+        assert_eq!(
+            ObjectName::new(" peekaboo-assets ").unwrap().as_str(),
+            "peekaboo-assets"
+        );
+        assert!(ProviderName::new("bad provider").is_err());
+        assert!(ObjectName::new(" ").is_err());
     }
 
     #[test]

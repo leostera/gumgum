@@ -255,8 +255,10 @@ async fn daemon_create_object(
     if execution_steps.is_empty() {
         execution_steps.push(GraphActionPlanner::ensure_object_step(
             capability,
-            request.name.clone(),
-            provider.clone(),
+            gumgum_core::ObjectName::new(&request.name)
+                .unwrap_or_else(|_| gumgum_core::ObjectName::new("object").unwrap()),
+            gumgum_core::ProviderName::new(&provider)
+                .unwrap_or_else(|_| gumgum_core::ProviderName::new("provider.local").unwrap()),
         ));
     }
     let provider_actions = GraphActionExecutor::execute_steps(
@@ -305,8 +307,8 @@ async fn object_reconciliation_plan(
         let mut new_graph = old_graph.clone();
         new_graph.nodes.insert(DesiredGraphNode::Object {
             capability,
-            name,
-            provider,
+            name: gumgum_core::ObjectName::new(&name)?,
+            provider: gumgum_core::ProviderName::new(&provider)?,
         });
         Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
     })
@@ -380,7 +382,9 @@ async fn daemon_configure_provider(
             let mut steps = plan.unwrap_or_default();
             if steps.is_empty() {
                 steps.push(GraphActionPlanner::ensure_provider_step(
-                    config.provider.clone(),
+                    gumgum_core::ProviderName::new(&config.provider).unwrap_or_else(|_| {
+                        gumgum_core::ProviderName::new("provider.local").unwrap()
+                    }),
                     config.capability,
                 ));
             }
@@ -422,7 +426,7 @@ async fn provider_configure_plan(
         let old_graph = store.load_desired_graph()?;
         let mut new_graph = old_graph.clone();
         new_graph.nodes.insert(DesiredGraphNode::Provider {
-            name: config.provider,
+            name: gumgum_core::ProviderName::new(&config.provider)?,
             capability: config.capability,
         });
         Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)

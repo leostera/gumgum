@@ -1,4 +1,7 @@
-use crate::{Capability, ContainerName, HealthPath, ImageName, Port, RouteHost, WorkerId};
+use crate::{
+    Capability, ContainerName, HealthPath, ImageName, ObjectName, Port, ProviderName, RouteHost,
+    WorkerId,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -9,7 +12,7 @@ pub enum DesiredGraphNode {
         name: String,
     },
     Provider {
-        name: String,
+        name: ProviderName,
         capability: Capability,
     },
     Worker {
@@ -39,8 +42,8 @@ pub enum DesiredGraphNode {
     },
     Object {
         capability: Capability,
-        name: String,
-        provider: String,
+        name: ObjectName,
+        provider: ProviderName,
     },
 }
 
@@ -78,7 +81,7 @@ impl DesiredGraph {
 #[serde(rename_all = "snake_case", tag = "action")]
 pub enum GraphReconcileAction {
     EnsureProvider {
-        name: String,
+        name: ProviderName,
         capability: Capability,
     },
     EnsureWorker {
@@ -108,8 +111,8 @@ pub enum GraphReconcileAction {
     },
     EnsureObject {
         capability: Capability,
-        name: String,
-        provider: String,
+        name: ObjectName,
+        provider: ProviderName,
     },
     RemoveNode {
         id: String,
@@ -137,7 +140,7 @@ impl GraphReconciler {
 fn ensure_action(node: &DesiredGraphNode) -> GraphReconcileAction {
     match node {
         DesiredGraphNode::Daemon { name } => GraphReconcileAction::EnsureProvider {
-            name: name.clone(),
+            name: ProviderName::new(name).unwrap_or_else(|_| ProviderName::new("daemon").unwrap()),
             capability: Capability::Manual,
         },
         DesiredGraphNode::Provider { name, capability } => GraphReconcileAction::EnsureProvider {
@@ -204,7 +207,7 @@ mod tests {
         let old_graph = DesiredGraph::default();
         let new_graph = DesiredGraph::new([
             DesiredGraphNode::Provider {
-                name: "vaultwarden.main".to_owned(),
+                name: ProviderName::new("vaultwarden.main").unwrap(),
                 capability: Capability::Secret,
             },
             DesiredGraphNode::Worker {
@@ -221,7 +224,7 @@ mod tests {
 
         assert_eq!(actions.len(), 3);
         assert!(actions.contains(&GraphReconcileAction::EnsureProvider {
-            name: "vaultwarden.main".to_owned(),
+            name: ProviderName::new("vaultwarden.main").unwrap(),
             capability: Capability::Secret
         }));
         assert!(actions.contains(&GraphReconcileAction::EnsureWorker {

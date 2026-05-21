@@ -1,6 +1,7 @@
 use crate::{
     Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge, GraphNode,
-    GumgumError, HealthPath, ImageName, Port, Result, RouteHost, Subsystem, WorkerId,
+    GumgumError, HealthPath, ImageName, ObjectName, Port, ProviderName, Result, RouteHost,
+    Subsystem, WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -137,23 +138,23 @@ impl GraphStore {
                 name: "gumgumd".to_owned(),
             },
             DesiredGraphNode::Provider {
-                name: "registry.platform".to_owned(),
+                name: ProviderName::new("registry.platform")?,
                 capability: Capability::Manual,
             },
             DesiredGraphNode::Provider {
-                name: "dnsmasq.platform".to_owned(),
+                name: ProviderName::new("dnsmasq.platform")?,
                 capability: Capability::Manual,
             },
             DesiredGraphNode::Provider {
-                name: "caddy.gateway".to_owned(),
+                name: ProviderName::new("caddy.gateway")?,
                 capability: Capability::Manual,
             },
             DesiredGraphNode::Provider {
-                name: "postgres.main".to_owned(),
+                name: ProviderName::new("postgres.main")?,
                 capability: Capability::Db,
             },
             DesiredGraphNode::Provider {
-                name: "redis.main".to_owned(),
+                name: ProviderName::new("redis.main")?,
                 capability: Capability::Kv,
             },
         ];
@@ -497,7 +498,7 @@ impl GraphStore {
             let (name, capability) =
                 row.map_err(|source| self.error("could not decode desired provider", source))?;
             nodes.push(DesiredGraphNode::Provider {
-                name,
+                name: ProviderName::new(&name)?,
                 capability: Capability::from_str(&capability).unwrap_or(Capability::Manual),
             });
         }
@@ -563,8 +564,8 @@ impl GraphStore {
                 row.map_err(|source| self.error("could not decode desired object", source))?;
             nodes.push(DesiredGraphNode::Object {
                 capability: Capability::from_str(&kind).unwrap_or(Capability::Manual),
-                name,
-                provider,
+                name: ObjectName::new(&name)?,
+                provider: ProviderName::new(&provider)?,
             });
         }
         Ok(())
@@ -990,13 +991,13 @@ mod tests {
             })
             .unwrap();
         assert!(desired.nodes.contains(&DesiredGraphNode::Provider {
-            name: "postgres.main".to_owned(),
+            name: ProviderName::new("postgres.main").unwrap(),
             capability: Capability::Db,
         }));
         assert!(desired.nodes.contains(&DesiredGraphNode::Object {
             capability: Capability::Db,
-            name: "main".to_owned(),
-            provider: "postgres.main".to_owned(),
+            name: ObjectName::new("main").unwrap(),
+            provider: ProviderName::new("postgres.main").unwrap(),
         }));
         assert!(desired.nodes.contains(&DesiredGraphNode::Binding {
             worker: "api".to_owned(),
@@ -1013,7 +1014,7 @@ mod tests {
         }));
         let desired = store.load_desired_graph().unwrap();
         assert!(desired.nodes.contains(&DesiredGraphNode::Provider {
-            name: "vaultwarden.main".to_owned(),
+            name: ProviderName::new("vaultwarden.main").unwrap(),
             capability: Capability::Secret,
         }));
         let (nodes, edges) = store.load_graph().unwrap();
