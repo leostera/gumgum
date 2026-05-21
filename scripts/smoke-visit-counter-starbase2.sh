@@ -8,6 +8,7 @@ GUMGUM=${GUMGUM:-cargo run -q -p gumgum-cli --bin gumgum --}
 EXAMPLE_DIR=${EXAMPLE_DIR:-examples/visit-counter}
 APPLY=${APPLY:-0}
 APPLY_OBJECTS=${APPLY_OBJECTS:-0}
+OBJECTS_ONLY=${OBJECTS_ONLY:-0}
 DEPLOY_ONLY=${DEPLOY_ONLY:-0}
 RUN_SETUP=${RUN_SETUP:-0}
 VERIFY_SETUP_IDEMPOTENCY=${VERIFY_SETUP_IDEMPOTENCY:-0}
@@ -123,6 +124,18 @@ if [ "$APPLY" = "1" ] && [ "$APPLY_OBJECTS" != "1" ] && [ "$DEPLOY_ONLY" != "1" 
   echo "error: APPLY=1 requires APPLY_OBJECTS=1 or DEPLOY_ONLY=1 so deploy bindings exist intentionally" >&2
   exit 1
 fi
+if [ "$OBJECTS_ONLY" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
+  echo "error: OBJECTS_ONLY=1 requires APPLY_OBJECTS=1 so object mutations are explicit" >&2
+  exit 1
+fi
+if [ "$OBJECTS_ONLY" = "1" ] && [ "$DEPLOY_ONLY" = "1" ]; then
+  echo "error: OBJECTS_ONLY=1 and DEPLOY_ONLY=1 cannot be combined" >&2
+  exit 1
+fi
+if [ "$OBJECTS_ONLY" = "1" ] && [ "$CLEANUP_ONLY" = "1" ]; then
+  echo "error: OBJECTS_ONLY=1 and CLEANUP_ONLY=1 cannot be combined" >&2
+  exit 1
+fi
 if [ "$DEPLOY_ONLY" = "1" ] && [ "$CLEANUP_ONLY" = "1" ]; then
   echo "error: DEPLOY_ONLY=1 and CLEANUP_ONLY=1 cannot be combined" >&2
   exit 1
@@ -187,6 +200,13 @@ if [ "$CLEANUP_ONLY" != "1" ] && [ "$DEPLOY_ONLY" != "1" ]; then
   run_object_step bucket bind visit-requests --host "$HOST" --to worker --as VISIT_REQUESTS_BUCKET
   run_object_step queue bind visit-events --host "$HOST" --to api --as VISIT_EVENTS_QUEUE
   run_object_step queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE
+fi
+
+if [ "$OBJECTS_ONLY" = "1" ]; then
+  popd >/dev/null
+  container_delta_guard
+  echo "visit-counter smoke objects-only completed; APPLY_OBJECTS=$APPLY_OBJECTS; pre-existing containers preserved"
+  exit 0
 fi
 
 if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
