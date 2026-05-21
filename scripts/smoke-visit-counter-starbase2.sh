@@ -84,7 +84,11 @@ smoke_mode() {
   if [ "$SETUP_ONLY" = "1" ]; then
     echo "setup-only"
   elif [ "$UPGRADE_ONLY" = "1" ]; then
-    echo "upgrade-only"
+    if [ "$APPLY_UPGRADE" = "1" ]; then
+      echo "upgrade-only-apply"
+    else
+      echo "upgrade-only-dry-run"
+    fi
   elif [ "$OBJECTS_ONLY" = "1" ]; then
     echo "objects-only"
   elif [ "$DEPLOY_ONLY" = "1" ]; then
@@ -103,6 +107,8 @@ smoke_mode() {
     fi
   elif [ "$APPLY" = "1" ]; then
     echo "full-apply"
+  elif [ "$REQUIRE_CURRENT_DAEMON" = "1" ]; then
+    echo "current-daemon-check"
   else
     echo "default-dry-run"
   fi
