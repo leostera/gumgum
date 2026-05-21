@@ -22,6 +22,21 @@ pub(crate) fn handles_config(config: &ProviderConfig) -> bool {
         && matches!(config.kind.as_str(), "vaultwarden" | "bitwarden")
 }
 
+pub fn actions(safe_name: &str, _dns: &str) -> Vec<String> {
+    vec![
+        "ensure vaultwarden.main provider is running".to_owned(),
+        format!("map secret {safe_name} through vaultwarden.main"),
+        "do not materialize secret values in the graph".to_owned(),
+    ]
+}
+
+pub fn connection_examples(name: &str, _dns: &str) -> Vec<String> {
+    vec![
+        format!("bw get item {name}"),
+        format!("bitwarden://gumgum/{name}"),
+    ]
+}
+
 pub(crate) async fn ensure() -> crate::Result<Vec<String>> {
     let provider = spec();
     ensure_network().await?;

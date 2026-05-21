@@ -1,10 +1,36 @@
-use crate::sanitize_name;
+use crate::{Capability, sanitize_name};
 use tokio::process::Command as TokioCommand;
 
 use super::docker::{
     created_provider_actions, ensure_network, inspect, run_provider_command, start_existing,
 };
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
+
+pub fn spec() -> ProviderSpec {
+    ProviderSpec {
+        capability: Capability::Blob,
+        provider: "minio.main".to_owned(),
+        container: "gumgum-provider-minio-main".to_owned(),
+        image: "minio/minio:latest".to_owned(),
+        port: 9000,
+        protocol: "s3".to_owned(),
+    }
+}
+
+pub(crate) fn actions(safe_name: &str, dns: &str) -> Vec<String> {
+    vec![
+        "ensure minio.main provider is running".to_owned(),
+        format!("ensure bucket {safe_name} exists"),
+        format!("publish DNS {dns} to minio.main"),
+    ]
+}
+
+pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<String> {
+    vec![
+        format!("aws --endpoint-url http://{dns}:9000 s3 mb s3://{name}"),
+        format!("S3_ENDPOINT=http://{dns}:9000 S3_BUCKET={name}"),
+    ]
+}
 
 pub(crate) async fn ensure(
     plan: &ObjectProviderPlan,

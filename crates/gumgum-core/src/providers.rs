@@ -1,8 +1,10 @@
 pub mod docker;
 pub mod minio;
+pub mod observability;
 pub mod postgres;
 pub mod reconciler;
 pub mod redis;
+pub mod redpanda;
 pub mod secret;
 pub mod specs;
 pub mod types;
@@ -144,6 +146,24 @@ mod tests {
             plan.actions
                 .iter()
                 .any(|action| action == "ensure bucket uploads exists")
+        );
+    }
+
+    #[test]
+    fn vaultwarden_module_owns_secret_provider_details() {
+        let spec = vaultwarden::spec();
+        assert_eq!(spec.provider, "vaultwarden.main");
+        assert_eq!(spec.container, "gumgum-provider-vaultwarden-main");
+        assert_eq!(spec.protocol, "bitwarden-compatible");
+        assert!(
+            vaultwarden::actions("stripe-api-key", "stripe.secret.example.test")
+                .iter()
+                .any(|action| action.contains("vaultwarden.main"))
+        );
+        assert!(
+            vaultwarden::connection_examples("stripe-api-key", "stripe.secret.example.test")
+                .iter()
+                .any(|example| example.contains("bw get item"))
         );
     }
 
