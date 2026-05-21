@@ -239,6 +239,9 @@ async fn upgrade_server(
     GumgumInstaller::run_remote_setup(&target, &setup, quiet).await?;
     progress(quiet, "checking upgraded gumgumd health");
     DaemonHealthClient::wait_for_ping(&setup.host).await?;
+    progress(quiet, "checking visit-counter smoke capabilities");
+    let version = ServerClient::new(setup.host.clone()).version().await?;
+    require_visit_counter_readiness(&server.name, &version)?;
     Ok(ServerUpgradeReport {
         ok: true,
         name: server.name,
@@ -323,6 +326,7 @@ fn server_upgrade_actions(dry_run: bool) -> Vec<String> {
         "run published GumGum.dev installer".to_owned(),
         "restart gumgumd via remote setup".to_owned(),
         "check gumgumd health".to_owned(),
+        "verify visit-counter smoke capabilities".to_owned(),
     ];
     if dry_run {
         actions.insert(0, "preview only; no ssh command will run".to_owned());
@@ -519,6 +523,10 @@ mod tests {
         assert_eq!(
             server_upgrade_actions(true)[0],
             "preview only; no ssh command will run"
+        );
+        assert!(
+            server_upgrade_actions(true)
+                .contains(&"verify visit-counter smoke capabilities".to_owned())
         );
         assert!(
             !server_upgrade_actions(false)

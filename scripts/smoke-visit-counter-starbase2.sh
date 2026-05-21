@@ -141,6 +141,7 @@ if [ "$VERIFY_UPGRADE_IDEMPOTENCY" = "1" ]; then
   if [ "$APPLY_UPGRADE" = "1" ]; then
     run_gumgum server "$HOST" upgrade
     run_gumgum server "$HOST" upgrade
+    require_daemon_capabilities events rollback_revision_id binding_delete object_delete deployment_delete
   else
     run_gumgum --dry-run server "$HOST" upgrade
     run_gumgum --dry-run server "$HOST" upgrade
