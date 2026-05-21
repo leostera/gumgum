@@ -93,6 +93,45 @@ impl ReconcileEventId {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ControlPlaneEventKind {
+    Mutation,
+    Reconciliation,
+}
+
+impl ControlPlaneEventKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mutation => "mutation",
+            Self::Reconciliation => "reconciliation",
+        }
+    }
+}
+
+impl std::fmt::Display for ControlPlaneEventKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ControlPlaneEventKind {
+    type Err = GumgumError;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "mutation" => Ok(Self::Mutation),
+            "reconciliation" => Ok(Self::Reconciliation),
+            _ => Err(GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::InvalidArgs,
+                "unknown control plane event kind",
+            )
+            .build()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReconcileEventStatus {
     Planned,
     Executed,
@@ -136,6 +175,7 @@ impl FromStr for ReconcileEventStatus {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ReconcileEvent {
     pub id: ReconcileEventId,
+    pub kind: ControlPlaneEventKind,
     pub status: ReconcileEventStatus,
     pub target: String,
     pub action: String,
@@ -145,6 +185,7 @@ pub struct ReconcileEvent {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct NewReconcileEvent {
+    pub kind: ControlPlaneEventKind,
     pub status: ReconcileEventStatus,
     pub target: String,
     pub action: String,
@@ -336,6 +377,7 @@ impl GraphStore {
             );
             CREATE TABLE IF NOT EXISTS reconciliation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL DEFAULT 'reconciliation',
                 status TEXT NOT NULL,
                 target TEXT NOT NULL,
                 action TEXT NOT NULL,
@@ -343,7 +385,12 @@ impl GraphStore {
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );",
         )
-        .map_err(|source| self.error("could not initialize graph database", source))
+        .map_err(|source| self.error("could not initialize graph database", source))?;
+        let _ = self.open()?.execute(
+            "ALTER TABLE reconciliation_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'reconciliation'",
+            [],
+        );
+        Ok(())
     }
 
     pub fn load_desired_graph(&self) -> Result<DesiredGraph> {
@@ -385,9 +432,10 @@ impl GraphStore {
         self.init()?;
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO reconciliation_events (status, target, action, message, created_at)
-             VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)",
+            "INSERT INTO reconciliation_events (kind, status, target, action, message, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)",
             params![
+                event.kind.to_string(),
                 event.status.to_string(),
                 event.target,
                 event.action,
@@ -398,13 +446,28 @@ impl GraphStore {
         Ok(ReconcileEventId::new(conn.last_insert_rowid()))
     }
 
+    pub fn record_activity_event(
+        &self,
+        target: impl Into<String>,
+        action: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<ReconcileEventId> {
+        self.record_reconcile_event(&NewReconcileEvent {
+            kind: ControlPlaneEventKind::Mutation,
+            status: ReconcileEventStatus::Executed,
+            target: target.into(),
+            action: action.into(),
+            message: message.into(),
+        })
+    }
+
     pub fn list_reconcile_events(&self, limit: u32) -> Result<Vec<ReconcileEvent>> {
         self.init()?;
         let conn = self.open()?;
         let limit = limit.clamp(1, 500);
         let mut stmt = conn
             .prepare(
-                "SELECT id, status, target, action, message, created_at
+                "SELECT id, kind, status, target, action, message, created_at
                  FROM reconciliation_events
                  ORDER BY id DESC
                  LIMIT ?1",
@@ -412,23 +475,26 @@ impl GraphStore {
             .map_err(|source| self.error("could not query reconciliation events", source))?;
         let rows = stmt
             .query_map(params![limit], |row| {
-                let status: String = row.get(1)?;
+                let kind: String = row.get(1)?;
+                let status: String = row.get(2)?;
                 Ok((
                     row.get::<_, i64>(0)?,
+                    kind,
                     status,
-                    row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             })
             .map_err(|source| self.error("could not read reconciliation events", source))?;
         let mut events = Vec::new();
         for row in rows {
-            let (id, status, target, action, message, created_at) =
+            let (id, kind, status, target, action, message, created_at) =
                 row.map_err(|source| self.error("could not decode reconciliation event", source))?;
             events.push(ReconcileEvent {
                 id: ReconcileEventId::new(id),
+                kind: ControlPlaneEventKind::from_str(&kind)?,
                 status: ReconcileEventStatus::from_str(&status)?,
                 target,
                 action,
@@ -476,6 +542,14 @@ impl GraphStore {
             params![provider.name, provider.capability.to_string()],
         )
         .map_err(|source| self.error("could not materialize provider", source))?;
+        self.record_activity_event(
+            format!("provider/{}", provider.name),
+            "provider.upsert",
+            format!(
+                "saved desired {} provider {}",
+                provider.capability, provider.name
+            ),
+        )?;
         Ok(true)
     }
 
@@ -504,6 +578,16 @@ impl GraphStore {
             .map_err(|source| self.error("could not delete object", source))?;
         tx.commit()
             .map_err(|source| self.error("could not commit object delete transaction", source))?;
+        if changed > 0 {
+            self.record_activity_event(
+                format!("object/{}/{}", object.capability, object.name),
+                "object.delete",
+                format!(
+                    "deleted desired {} object {}",
+                    object.capability, object.name
+                ),
+            )?;
+        }
         Ok(changed > 0)
     }
 
@@ -526,6 +610,11 @@ impl GraphStore {
             params![kind, object.name, object.namespace, object.root_domain, dns, provider],
         )
         .map_err(|source| self.error("could not materialize object", source))?;
+        self.record_activity_event(
+            format!("object/{}/{}", object.capability, object.name),
+            "object.upsert",
+            format!("saved desired {} object {}", object.capability, object.name),
+        )?;
         Ok(true)
     }
 
@@ -551,6 +640,11 @@ impl GraphStore {
             params![object_kind, object_name, field, env_name, secret_ref, value],
         )
         .map_err(|source| self.error("could not materialize object secret", source))?;
+        self.record_activity_event(
+            format!("object/{object_kind}/{object_name}"),
+            "object_secret.upsert",
+            format!("saved secret field {field} for {object_kind} object {object_name}"),
+        )?;
         Ok(true)
     }
 
@@ -594,6 +688,16 @@ impl GraphStore {
                 ],
             )
             .map_err(|source| self.error("could not delete binding", source))?;
+        if changed > 0 {
+            self.record_activity_event(
+                format!("binding/{}/{}", binding.worker, binding.binding),
+                "binding.delete",
+                format!(
+                    "deleted binding {} from worker {}",
+                    binding.binding, binding.worker
+                ),
+            )?;
+        }
         Ok(changed > 0)
     }
 
@@ -617,6 +721,14 @@ impl GraphStore {
             ],
         )
         .map_err(|source| self.error("could not materialize binding", source))?;
+        self.record_activity_event(
+            format!("binding/{}/{}", binding.worker, binding.binding),
+            "binding.upsert",
+            format!(
+                "saved binding {} for worker {}",
+                binding.binding, binding.worker
+            ),
+        )?;
         Ok(true)
     }
 
@@ -667,6 +779,13 @@ impl GraphStore {
                 params![worker],
             )
             .map_err(|source| self.error("could not delete desired deployment", source))?;
+        if changed > 0 {
+            self.record_activity_event(
+                format!("deployment/{worker}"),
+                "deployment.delete",
+                format!("deleted desired deployment {worker}"),
+            )?;
+        }
         Ok(changed > 0)
     }
 
@@ -707,6 +826,11 @@ impl GraphStore {
         .map_err(|source| self.error("could not materialize deployment", source))?;
         tx.commit()
             .map_err(|source| self.error("could not commit graph transaction", source))?;
+        self.record_activity_event(
+            format!("deployment/{}", request.worker),
+            "deployment.upsert",
+            format!("saved desired deployment {}", request.worker),
+        )?;
         Ok(true)
     }
 
@@ -1298,6 +1422,7 @@ mod tests {
         let store = temp_store("reconcile-events");
         let first = store
             .record_reconcile_event(&NewReconcileEvent {
+                kind: ControlPlaneEventKind::Reconciliation,
                 status: ReconcileEventStatus::Planned,
                 target: "provider/vaultwarden.main".to_owned(),
                 action: "ensure provider".to_owned(),
@@ -1306,6 +1431,7 @@ mod tests {
             .unwrap();
         let second = store
             .record_reconcile_event(&NewReconcileEvent {
+                kind: ControlPlaneEventKind::Reconciliation,
                 status: ReconcileEventStatus::Executed,
                 target: "provider/vaultwarden.main".to_owned(),
                 action: "ensure provider".to_owned(),
@@ -1317,9 +1443,31 @@ mod tests {
         let events = store.list_reconcile_events(10).unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].id, second);
+        assert_eq!(events[0].kind, ControlPlaneEventKind::Reconciliation);
         assert_eq!(events[0].status, ReconcileEventStatus::Executed);
         assert_eq!(events[1].id, first);
         assert_eq!(events[1].status, ReconcileEventStatus::Planned);
+        let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
+    fn desired_state_mutations_are_recorded_as_activity_events() {
+        let store = temp_store("activity-events");
+        store
+            .materialize_object(&GlobalObject {
+                capability: Capability::Db,
+                name: "main".to_owned(),
+                namespace: "peekaboo".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+            })
+            .unwrap();
+
+        let events = store.list_reconcile_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, ControlPlaneEventKind::Mutation);
+        assert_eq!(events[0].status, ReconcileEventStatus::Executed);
+        assert_eq!(events[0].target, "object/db/main");
+        assert_eq!(events[0].action, "object.upsert");
         let _ = fs::remove_file(store.path);
     }
 

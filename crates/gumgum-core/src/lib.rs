@@ -22,9 +22,9 @@ pub use graph::{
     ImageName, ObjectName, ObjectRef, Port, ProviderName, RouteHost, WorkerId,
 };
 pub use graph_store::{
-    DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject, GraphStore,
-    NewReconcileEvent, ReconcileEvent, ReconcileEventId, ReconcileEventStatus, WorkerBinding,
-    object_dns,
+    ControlPlaneEventKind, DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject,
+    GraphStore, NewReconcileEvent, ReconcileEvent, ReconcileEventId, ReconcileEventStatus,
+    WorkerBinding, object_dns,
 };
 pub use manifest::{
     Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,

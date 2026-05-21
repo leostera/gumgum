@@ -393,6 +393,7 @@ impl GraphExecutionSession {
         };
         crate::GraphStore::new(graph_path.clone()).record_reconcile_event(
             &crate::NewReconcileEvent {
+                kind: crate::ControlPlaneEventKind::Reconciliation,
                 status,
                 target: step.target.event_target(),
                 action: step.action.event_action(),

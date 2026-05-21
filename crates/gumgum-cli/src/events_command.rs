@@ -6,13 +6,14 @@ pub(crate) async fn events(args: EventsArgs, json: bool) -> gumgum_core::Result<
     if json {
         print_value(true, &report);
     } else if report.events.is_empty() {
-        println!("no reconciliation events recorded");
+        println!("no control-plane events recorded");
     } else {
         for event in report.events {
             println!(
-                "#{} {} {} {} - {}",
+                "#{} {} {} {} {} - {}",
                 event.id.get(),
                 event.created_at,
+                event.kind,
                 event.status,
                 event.target,
                 event.message
