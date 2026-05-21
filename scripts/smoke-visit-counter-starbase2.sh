@@ -29,6 +29,7 @@ ARTIFACT_DIR=${ARTIFACT_DIR:-}
 print_plan() {
   cat <<'EOF'
 recommended intentional starbase2 sequence:
+  0. export ARTIFACT_DIR=/tmp/visit-counter-smoke-$(date -u +%Y%m%dT%H%M%SZ)
   1. scripts/smoke-visit-counter-starbase2.sh
   2. REQUIRE_CURRENT_DAEMON=1 scripts/smoke-visit-counter-starbase2.sh
   3. RUN_SETUP=1 VERIFY_SETUP_IDEMPOTENCY=1 SETUP_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
@@ -39,6 +40,7 @@ recommended intentional starbase2 sequence:
   8. DEPLOY_ONLY=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
   9. OBSERVE_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
  10. CLEANUP_ONLY=1 APPLY_CLEANUP=1 scripts/smoke-visit-counter-starbase2.sh
+ 11. cd "$ARTIFACT_DIR" && shasum -a 256 -c checksums.sha256
 EOF
 }
 

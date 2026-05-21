@@ -46,6 +46,7 @@ Use the repository smoke harness when intentionally exercising the real host. It
 # show staged smoke modes and the recommended intentional sequence
 scripts/smoke-visit-counter-starbase2.sh --help
 scripts/smoke-visit-counter-starbase2.sh --plan
+# --plan includes an ARTIFACT_DIR export and checksum verification step for apply evidence
 
 # safest default: print object/binding commands and run only deploy dry-run
 scripts/smoke-visit-counter-starbase2.sh
