@@ -2,6 +2,7 @@ pub mod config_store;
 pub mod container_reconciler;
 pub mod daemon_health;
 pub mod deployment;
+pub mod graph_reconciler;
 pub mod graph_store;
 pub mod manifest;
 pub mod platform;
@@ -14,6 +15,7 @@ pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
+pub use graph_reconciler::{DesiredGraph, DesiredGraphNode, GraphReconcileAction, GraphReconciler};
 pub use graph_store::{
     DeploymentRevision, DesiredDeploy, GlobalObject, GraphStore, WorkerBinding, object_dns,
 };
@@ -560,7 +562,7 @@ fn topological_levels(
     levels
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
     Db,
