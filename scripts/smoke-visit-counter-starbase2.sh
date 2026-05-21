@@ -11,6 +11,7 @@ APPLY_OBJECTS=${APPLY_OBJECTS:-0}
 OBJECTS_ONLY=${OBJECTS_ONLY:-0}
 DEPLOY_ONLY=${DEPLOY_ONLY:-0}
 RUN_SETUP=${RUN_SETUP:-0}
+SETUP_ONLY=${SETUP_ONLY:-0}
 VERIFY_SETUP_IDEMPOTENCY=${VERIFY_SETUP_IDEMPOTENCY:-0}
 VERIFY_UPGRADE_IDEMPOTENCY=${VERIFY_UPGRADE_IDEMPOTENCY:-0}
 APPLY_UPGRADE=${APPLY_UPGRADE:-0}
@@ -148,6 +149,18 @@ if [ "$CLEANUP_ONLY" = "1" ] && [ "$VERIFY_CLEANUP_PREVIEW" != "1" ] && [ "$APPL
   echo "error: CLEANUP_ONLY=1 requires VERIFY_CLEANUP_PREVIEW=1 or APPLY_CLEANUP=1" >&2
   exit 1
 fi
+if [ "$VERIFY_SETUP_IDEMPOTENCY" = "1" ] && [ "$RUN_SETUP" != "1" ]; then
+  echo "error: VERIFY_SETUP_IDEMPOTENCY=1 requires RUN_SETUP=1" >&2
+  exit 1
+fi
+if [ "$SETUP_ONLY" = "1" ] && [ "$RUN_SETUP" != "1" ]; then
+  echo "error: SETUP_ONLY=1 requires RUN_SETUP=1" >&2
+  exit 1
+fi
+if [ "$SETUP_ONLY" = "1" ] && [ "$UPGRADE_ONLY" = "1" ]; then
+  echo "error: SETUP_ONLY=1 and UPGRADE_ONLY=1 cannot be combined" >&2
+  exit 1
+fi
 if [ "$APPLY_UPGRADE" = "1" ] && [ "$VERIFY_UPGRADE_IDEMPOTENCY" != "1" ]; then
   echo "error: APPLY_UPGRADE=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1 so real upgrades run the explicit idempotency path" >&2
   exit 1
@@ -167,6 +180,12 @@ if [ "$RUN_SETUP" = "1" ]; then
   if [ "$VERIFY_SETUP_IDEMPOTENCY" = "1" ]; then
     run_gumgum setup "$HOST" --root-domain "$ROOT_DOMAIN" --test-domain "$TEST_DOMAIN"
   fi
+fi
+
+if [ "$SETUP_ONLY" = "1" ]; then
+  container_delta_guard
+  echo "visit-counter smoke setup-only completed; RUN_SETUP=$RUN_SETUP VERIFY_SETUP_IDEMPOTENCY=$VERIFY_SETUP_IDEMPOTENCY; pre-existing containers preserved"
+  exit 0
 fi
 
 if [ "$VERIFY_UPGRADE_IDEMPOTENCY" = "1" ]; then
