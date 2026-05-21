@@ -62,6 +62,16 @@ impl GraphActionPlanner {
         let steps = Self::plan(&actions);
         GraphReconciliationPlan { actions, steps }
     }
+
+    pub fn ensure_provider_step(
+        name: impl Into<String>,
+        capability: Capability,
+    ) -> GraphExecutionStep {
+        plan_action(&GraphReconcileAction::EnsureProvider {
+            name: name.into(),
+            capability,
+        })
+    }
 }
 
 pub struct GraphActionExecutor;
@@ -188,6 +198,23 @@ mod tests {
             GraphExecutionTarget::Provider { ref name, capability: Capability::Secret }
                 if name == "vaultwarden.main"
         )));
+    }
+
+    #[test]
+    fn planner_can_synthesize_idempotent_provider_step() {
+        let step = GraphActionPlanner::ensure_provider_step("vaultwarden.main", Capability::Secret);
+
+        assert_eq!(
+            step.target,
+            GraphExecutionTarget::Provider {
+                name: "vaultwarden.main".to_owned(),
+                capability: Capability::Secret,
+            }
+        );
+        assert_eq!(
+            step.description,
+            "ensure provider vaultwarden.main exists and is running"
+        );
     }
 
     #[tokio::test]

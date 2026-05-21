@@ -330,7 +330,13 @@ async fn daemon_configure_provider(
         });
     match persist_result {
         Ok(_) => {
-            let steps = plan.unwrap_or_default();
+            let mut steps = plan.unwrap_or_default();
+            if steps.is_empty() {
+                steps.push(GraphActionPlanner::ensure_provider_step(
+                    config.provider.clone(),
+                    config.capability,
+                ));
+            }
             match GraphActionExecutor::execute_provider_steps(&steps).await {
                 Ok(actions) => Json(ProviderConfigureReport {
                     ok: true,
