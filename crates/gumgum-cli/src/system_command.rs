@@ -3,7 +3,9 @@ use crate::{
     ServerCommand, ServerCredentialsSubcommand, ServerProvidersSubcommand, ServerSubcommand,
     ServerUpgradeArgs, StatusArgs, config_command, print_value, progress,
 };
-use gumgum_api::{PingReport, ProviderConfigureRequest, ProviderStatusReport, ServerListReport};
+use gumgum_api::{
+    GraphReport, PingReport, ProviderConfigureRequest, ProviderStatusReport, ServerListReport,
+};
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DaemonPingReport, ErrorCode, GumgumError, GumgumInstaller,
     ServerRecord, SetupTarget, Subsystem, not_configured_status,
@@ -14,10 +16,18 @@ use std::str::FromStr;
 pub(crate) async fn status(args: StatusArgs, json: bool) -> gumgum_core::Result<()> {
     if let Some(host) = args.host {
         let report = ping_host(&host).await?;
-        print_value(json, &report)
+        if json {
+            print_value(true, &report)
+        } else {
+            print_status_summary(&host, &report).await?;
+        }
     } else if let Some(server) = ConfigStore::from_home_env()?.load_default_server()? {
         let report = ping_host(&server.host).await?;
-        print_value(json, &report)
+        if json {
+            print_value(true, &report)
+        } else {
+            print_status_summary(&server.host, &report).await?;
+        }
     } else {
         print_value(json, &not_configured_status())
     }
@@ -228,18 +238,94 @@ fn print_server_list(servers: &[ServerRecord]) {
 }
 
 fn print_provider_status_report(report: &ProviderStatusReport) {
-    println!("Providers ({}):", report.providers.len());
+    for line in provider_status_lines(report) {
+        println!("{line}");
+    }
+}
+
+async fn print_status_summary(host: &str, ping: &PingReport) -> gumgum_core::Result<()> {
+    let providers = ServerClient::new(host).providers().await.ok();
+    let graph = ServerClient::new(host).graph().await.ok();
+    for line in status_summary_lines(ping, providers.as_ref(), graph.as_ref()) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn provider_status_lines(report: &ProviderStatusReport) -> Vec<String> {
+    let running = report
+        .providers
+        .iter()
+        .filter(|provider| provider.running)
+        .count();
+    let mut lines = vec![format!(
+        "Providers: {running}/{} running",
+        report.providers.len()
+    )];
     for provider in &report.providers {
-        println!(
-            "{} {} container={} image={} port={} running={}",
+        lines.push(format!(
+            "  - {} {} container={} image={} port={} running={}",
             provider.capability,
             provider.provider,
             provider.container,
             provider.image,
             provider.port,
             provider.running
-        );
+        ));
     }
+    lines
+}
+
+fn status_summary_lines(
+    ping: &PingReport,
+    providers: Option<&ProviderStatusReport>,
+    graph: Option<&GraphReport>,
+) -> Vec<String> {
+    let mut lines = vec![format!(
+        "gumgumd: {} ({})",
+        if ping.ok { "healthy" } else { "unhealthy" },
+        ping.health_url
+    )];
+    if let Some(service_active) = ping.service_active {
+        lines.push(format!("service: active={service_active}"));
+    }
+    if let Some(providers) = providers {
+        lines.extend(provider_status_lines(providers));
+        if providers.providers.iter().any(|provider| !provider.running) {
+            lines.push(
+                "provider warning: one or more providers are down; gumgumd is still responding"
+                    .to_owned(),
+            );
+        }
+    } else {
+        lines.push("Providers: unavailable (gumgumd health still responded)".to_owned());
+    }
+    if let Some(graph) = graph {
+        let workers = graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == "worker")
+            .count();
+        let routes = graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == "route")
+            .count();
+        let objects = graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == "object")
+            .count();
+        lines.push(format!(
+            "Desired graph: workers={workers} routes={routes} objects={objects}"
+        ));
+        for route in graph.nodes.iter().filter(|node| node.kind == "route") {
+            lines.push(format!("  - route {}", route.label));
+        }
+    } else {
+        lines.push("Desired graph: unavailable".to_owned());
+    }
+    lines
 }
 
 async fn ping_host(host: &str) -> gumgum_core::Result<PingReport> {
@@ -270,5 +356,57 @@ fn version_report() -> VersionReport {
         version: option_env!("GUMGUM_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
         git_sha: option_env!("GUMGUM_BUILD_SHA").unwrap_or("unknown"),
         target: option_env!("GUMGUM_BUILD_TARGET").unwrap_or("unknown"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gumgum_core::{Capability, GraphEdge, GraphNode, ProviderStatus};
+
+    #[test]
+    fn status_summary_includes_provider_route_and_down_warning() {
+        let ping = PingReport {
+            ok: true,
+            host: "starbase2".to_owned(),
+            health_url: "http://starbase2:7777/healthz".to_owned(),
+            service_active: Some(true),
+            health: serde_json::json!({"ok": true}),
+        };
+        let providers = ProviderStatusReport {
+            ok: true,
+            providers: vec![ProviderStatus {
+                capability: Capability::Db,
+                provider: "postgres.main".to_owned(),
+                container: "gumgum-postgres".to_owned(),
+                image: "postgres:16".to_owned(),
+                port: 5432,
+                running: false,
+            }],
+            message: "provider statuses".to_owned(),
+        };
+        let graph = GraphReport {
+            ok: true,
+            format: "json".to_owned(),
+            graph: String::new(),
+            nodes: vec![
+                GraphNode::new("worker/api", "worker", "api"),
+                GraphNode::new(
+                    "route/api.visit-counter.leostera.test",
+                    "route",
+                    "api.visit-counter.leostera.test",
+                ),
+                GraphNode::new("object/db/visits", "object", "visits"),
+            ],
+            edges: Vec::<GraphEdge>::new(),
+        };
+
+        let lines = status_summary_lines(&ping, Some(&providers), Some(&graph));
+
+        assert!(lines.contains(&"gumgumd: healthy (http://starbase2:7777/healthz)".to_owned()));
+        assert!(lines.contains(&"Providers: 0/1 running".to_owned()));
+        assert!(lines.iter().any(|line| line.contains("provider warning")));
+        assert!(lines.contains(&"Desired graph: workers=1 routes=1 objects=1".to_owned()));
+        assert!(lines.contains(&"  - route api.visit-counter.leostera.test".to_owned()));
     }
 }

@@ -1382,6 +1382,14 @@ fn binding_values(
             (format!("{binding}_BROKERS"), format!("{dns}:9092")),
             (format!("{binding}_TOPIC"), crate::sanitize_name(name)),
         ],
+        Capability::Observability => vec![
+            (binding.to_owned(), format!("http://{dns}:4317")),
+            (
+                "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
+                format!("http://{dns}:4317"),
+            ),
+            ("OTEL_SERVICE_NAME".to_owned(), crate::sanitize_name(name)),
+        ],
         _ => vec![(binding.to_owned(), binding_value(kind, name, dns))],
     }
 }
@@ -1767,6 +1775,23 @@ mod tests {
         assert_eq!(previous.port, first.port);
         assert_eq!(previous.health, first.health);
         let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
+    fn observability_binding_projects_otel_env() {
+        let env = binding_values(
+            "observability",
+            "TELEMETRY",
+            "visit-counter",
+            "otel.platform",
+            None,
+        );
+
+        assert!(env.contains(&(
+            "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
+            "http://otel.platform:4317".to_owned()
+        )));
+        assert!(env.contains(&("OTEL_SERVICE_NAME".to_owned(), "visit-counter".to_owned())));
     }
 
     #[test]
