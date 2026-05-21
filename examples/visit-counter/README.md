@@ -43,6 +43,9 @@ gumgum --dry-run publish api
 Use the repository smoke harness when intentionally exercising the real host. It snapshots remote containers before/after and fails if any pre-existing container disappears.
 
 ```bash
+# show staged smoke modes
+scripts/smoke-visit-counter-starbase2.sh --help
+
 # safest default: print object/binding commands and run only deploy dry-run
 scripts/smoke-visit-counter-starbase2.sh
 

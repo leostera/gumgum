@@ -21,6 +21,27 @@ APPLY_CLEANUP=${APPLY_CLEANUP:-0}
 CLEANUP_ONLY=${CLEANUP_ONLY:-0}
 VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
 REQUIRE_CURRENT_DAEMON=${REQUIRE_CURRENT_DAEMON:-0}
+HELP=${HELP:-0}
+
+print_help() {
+  cat <<'EOF'
+visit-counter starbase2 smoke modes:
+  default: non-mutating object command printout + deploy dry-run
+  REQUIRE_CURRENT_DAEMON=1: fail unless gumgumd advertises visit-counter-safe capabilities
+  RUN_SETUP=1 VERIFY_SETUP_IDEMPOTENCY=1 SETUP_ONLY=1: run setup twice, then stop
+  VERIFY_UPGRADE_IDEMPOTENCY=1 UPGRADE_ONLY=1: dry-run upgrade twice, then stop
+  VERIFY_UPGRADE_IDEMPOTENCY=1 APPLY_UPGRADE=1 UPGRADE_ONLY=1: apply upgrade twice, verify capabilities, then stop
+  APPLY_OBJECTS=1 OBJECTS_ONLY=1: create/bind objects, then stop before deploy
+  DEPLOY_ONLY=1 APPLY=1: deploy/curl using existing desired object/binding state
+  CLEANUP_ONLY=1 VERIFY_CLEANUP_PREVIEW=1: preview cleanup without creating objects
+  CLEANUP_ONLY=1 APPLY_CLEANUP=1: apply cleanup without creating objects
+EOF
+}
+
+if [ "$HELP" = "1" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  print_help
+  exit 0
+fi
 
 before_file=$(mktemp)
 after_file=$(mktemp)
