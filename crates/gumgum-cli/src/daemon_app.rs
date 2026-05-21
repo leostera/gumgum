@@ -1105,6 +1105,44 @@ mod tests {
         store.deployment_revisions("api", 10).unwrap()
     }
 
+    #[tokio::test]
+    async fn daemon_events_lists_newest_reconciliation_events() {
+        let path = temp_graph_path("events-list");
+        let store = GraphStore::new(path.clone());
+        store
+            .record_reconcile_event(&gumgum_core::NewReconcileEvent {
+                status: gumgum_core::ReconcileEventStatus::Planned,
+                target: "provider/manual.main".to_owned(),
+                action: "ensure_provider".to_owned(),
+                message: "plan provider".to_owned(),
+            })
+            .unwrap();
+        store
+            .record_reconcile_event(&gumgum_core::NewReconcileEvent {
+                status: gumgum_core::ReconcileEventStatus::Executed,
+                target: "provider/manual.main".to_owned(),
+                action: "ensure_provider".to_owned(),
+                message: "configured provider".to_owned(),
+            })
+            .unwrap();
+        let state = DaemonState {
+            graph_path: Arc::new(path.clone()),
+        };
+
+        let Json(report) = daemon_events(State(state), Query(EventsQuery { limit: Some(1) })).await;
+
+        assert!(report.ok);
+        assert_eq!(report.message, "1 reconciliation event(s)");
+        assert_eq!(report.events.len(), 1);
+        assert_eq!(
+            report.events[0].status,
+            gumgum_core::ReconcileEventStatus::Executed
+        );
+        assert_eq!(report.events[0].target, "provider/manual.main");
+        assert_eq!(report.events[0].message, "configured provider");
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn daemon_version_report_advertises_rollback_revision_capabilities() {
         let report = daemon_version_report();
