@@ -1,4 +1,7 @@
-use crate::{Capability, DesiredGraph, GraphReconcileAction, GraphReconciler};
+use crate::{
+    Capability, DesiredGraph, GraphReconcileAction, GraphReconciler, ObjectProviderPlan,
+    ProviderCredentials,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -19,6 +22,11 @@ pub enum GraphExecutionTarget {
     Gateway {
         host: String,
         target_container: String,
+    },
+    ObjectProvider {
+        capability: Capability,
+        name: String,
+        provider: String,
     },
     GraphStore {
         node: String,
@@ -100,6 +108,13 @@ impl GraphActionExecutor {
             _ => Ok(vec![format!("configured {capability} provider {name}")]),
         }
     }
+
+    pub async fn execute_object_plan(
+        plan: &ObjectProviderPlan,
+        credentials: Option<ProviderCredentials>,
+    ) -> crate::Result<Vec<String>> {
+        crate::providers::ProviderReconciler::ensure_with_credentials(plan, credentials).await
+    }
 }
 
 fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
@@ -156,9 +171,10 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
             provider,
         } => GraphExecutionStep {
             action: action.clone(),
-            target: GraphExecutionTarget::Provider {
-                name: provider.clone(),
+            target: GraphExecutionTarget::ObjectProvider {
                 capability: *capability,
+                name: name.clone(),
+                provider: provider.clone(),
             },
             description: format!("ensure {capability} object {name} is materialized by {provider}"),
         },
@@ -249,10 +265,30 @@ mod tests {
         );
         assert_eq!(
             steps[1].target,
-            GraphExecutionTarget::Provider {
-                name: "minio.main".to_owned(),
+            GraphExecutionTarget::ObjectProvider {
                 capability: Capability::Blob,
+                name: "uploads".to_owned(),
+                provider: "minio.main".to_owned(),
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn executor_routes_object_plan_to_provider_reconciler() {
+        let plan = crate::object_provider_plan(
+            Capability::Secret,
+            "stripe-api-key",
+            "stripe.secret.example.test",
+        );
+
+        let actions = GraphActionExecutor::execute_object_plan(&plan, None)
+            .await
+            .unwrap();
+
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.contains("no secret value stored"))
         );
     }
 

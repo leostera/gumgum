@@ -245,7 +245,7 @@ async fn daemon_create_object(
     .and_then(Result::ok)
     .unwrap_or(false);
     let provider_actions =
-        ProviderReconciler::ensure_with_credentials(&provider_plan, provider_credentials)
+        GraphActionExecutor::execute_object_plan(&provider_plan, provider_credentials)
             .await
             .unwrap_or_else(|error| {
                 vec![format!(
