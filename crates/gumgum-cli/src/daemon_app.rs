@@ -13,9 +13,9 @@ use gumgum_api::{
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy,
     DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject, GraphActionExecutor,
-    GraphActionPlanner, GraphStore, GumgumError, LocalPlatform, ProviderReconciler, Subsystem,
-    WorkerBinding, affected_subgraph, not_configured_status, object_dns, object_provider_plan,
-    render_mermaid_graph,
+    GraphActionPlanner, GraphExecutionContext, GraphStore, GumgumError, LocalPlatform,
+    ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph, not_configured_status,
+    object_dns, object_provider_plan, render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -259,10 +259,12 @@ async fn daemon_create_object(
             provider.clone(),
         ));
     }
-    let provider_actions = GraphActionExecutor::execute_object_provider_steps(
+    let provider_actions = GraphActionExecutor::execute_steps(
         &execution_steps,
-        &provider_plan,
-        provider_credentials,
+        GraphExecutionContext {
+            object_plan: Some(provider_plan.clone()),
+            provider_credentials,
+        },
     )
     .await
     .unwrap_or_else(|error| {
@@ -380,7 +382,8 @@ async fn daemon_configure_provider(
                     config.capability,
                 ));
             }
-            match GraphActionExecutor::execute_provider_steps(&steps).await {
+            match GraphActionExecutor::execute_steps(&steps, GraphExecutionContext::default()).await
+            {
                 Ok(actions) => Json(ProviderConfigureReport {
                     ok: true,
                     message: "provider configured and reconciled".to_owned(),
