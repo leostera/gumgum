@@ -330,3 +330,144 @@ pub(crate) struct ServerUpgradeArgs {
     #[arg(long)]
     pub(crate) user: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bucket_command_grammar_covers_create_bind_delete_unbind() {
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "bucket", "create", "visit-requests"])
+                .unwrap()
+                .command,
+            Command::Bucket(ObjectArgs {
+                command: ObjectCommand::Create(CreateObjectArgs { ref name, .. })
+            }) if name == "visit-requests"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "bucket",
+                "bind",
+                "visit-requests",
+                "--to",
+                "api",
+                "--as",
+                "VISIT_REQUESTS_BUCKET",
+                "--access",
+                "read-only",
+            ])
+            .unwrap()
+            .command,
+            Command::Bucket(ObjectArgs {
+                command: ObjectCommand::Bind(BindObjectArgs {
+                    ref name,
+                    to: Some(ref to),
+                    ref binding,
+                    ref access,
+                    ..
+                })
+            }) if name == "visit-requests" && to == "api" && binding == "VISIT_REQUESTS_BUCKET" && access == "read-only"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "bucket", "delete", "visit-requests", "--preview"])
+                .unwrap()
+                .command,
+            Command::Bucket(ObjectArgs {
+                command: ObjectCommand::Delete(DeleteObjectArgs { ref name, preview: true, .. })
+            }) if name == "visit-requests"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "bucket",
+                "unbind",
+                "visit-requests",
+                "--to",
+                "worker",
+                "--as",
+                "VISIT_REQUESTS_BUCKET",
+                "--preview",
+            ])
+            .unwrap()
+            .command,
+            Command::Bucket(ObjectArgs {
+                command: ObjectCommand::Unbind(UnbindObjectArgs {
+                    ref name,
+                    to: Some(ref to),
+                    ref binding,
+                    preview: true,
+                    ..
+                })
+            }) if name == "visit-requests" && to == "worker" && binding == "VISIT_REQUESTS_BUCKET"
+        ));
+    }
+
+    #[test]
+    fn queue_command_grammar_covers_create_bind_delete_unbind() {
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "queue", "create", "visit-events"])
+                .unwrap()
+                .command,
+            Command::Queue(ObjectArgs {
+                command: ObjectCommand::Create(CreateObjectArgs { ref name, .. })
+            }) if name == "visit-events"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "queue",
+                "bind",
+                "visit-events",
+                "--to",
+                "api",
+                "--as",
+                "VISIT_EVENTS_QUEUE",
+            ])
+            .unwrap()
+            .command,
+            Command::Queue(ObjectArgs {
+                command: ObjectCommand::Bind(BindObjectArgs {
+                    ref name,
+                    to: Some(ref to),
+                    ref binding,
+                    ref access,
+                    ..
+                })
+            }) if name == "visit-events" && to == "api" && binding == "VISIT_EVENTS_QUEUE" && access == "read-write"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "queue", "delete", "visit-events", "--preview"])
+                .unwrap()
+                .command,
+            Command::Queue(ObjectArgs {
+                command: ObjectCommand::Delete(DeleteObjectArgs { ref name, preview: true, .. })
+            }) if name == "visit-events"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "queue",
+                "unbind",
+                "visit-events",
+                "--to",
+                "worker",
+                "--as",
+                "VISIT_EVENTS_QUEUE",
+                "--preview",
+            ])
+            .unwrap()
+            .command,
+            Command::Queue(ObjectArgs {
+                command: ObjectCommand::Unbind(UnbindObjectArgs {
+                    ref name,
+                    to: Some(ref to),
+                    ref binding,
+                    preview: true,
+                    ..
+                })
+            }) if name == "visit-events" && to == "worker" && binding == "VISIT_EVENTS_QUEUE"
+        ));
+    }
+}
