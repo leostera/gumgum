@@ -79,6 +79,7 @@ fn deploy_report_lines(report: &DeployReport) -> Vec<String> {
     for level in &report.plan_graph.execution_levels {
         lines.push(format!("  - {}", level.join(", ")));
     }
+    lines.extend(deploy_impact_lines(report));
     if !report.dry_run {
         lines.push(report.message.clone());
     }
@@ -88,7 +89,7 @@ fn deploy_report_lines(report: &DeployReport) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gumgum_core::PlanGraph;
+    use gumgum_core::{PlanGraph, PlanNode};
 
     #[test]
     fn deploy_lines_include_health_status_url() {
@@ -116,6 +117,75 @@ mod tests {
         );
         assert!(lines.contains(&"deployed api; health verified".to_owned()));
     }
+
+    #[test]
+    fn deploy_lines_explain_impact_and_rollback() {
+        let mut plan_graph = PlanGraph::default();
+        plan_graph.nodes.push(PlanNode::new(
+            "worker/api",
+            "worker",
+            "api",
+            "build and push worker image",
+        ));
+        let report = DeployReport {
+            ok: true,
+            dry_run: true,
+            path: "api/gumgum.toml".to_owned(),
+            worker: "api".to_owned(),
+            host: Some("starbase2".to_owned()),
+            build_context: Some("api".to_owned()),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            port: 3000,
+            routes: vec!["api.visit-counter.leostera.test".to_owned()],
+            health_url: Some("http://api.visit-counter.leostera.test/healthz".to_owned()),
+            plan: Vec::new(),
+            plan_graph,
+            message: String::new(),
+        };
+
+        let lines = deploy_report_lines(&report);
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("will touch: worker:api"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("will not touch: unrelated containers"))
+        );
+        assert!(lines.contains(&"  rollback: gumgum rollback --worker api --preview".to_owned()));
+    }
+}
+
+fn deploy_impact_lines(report: &DeployReport) -> Vec<String> {
+    let mut lines = vec!["Impact:".to_owned()];
+    if report.plan_graph.nodes.is_empty() {
+        lines.push("  will touch: worker manifest only".to_owned());
+    } else {
+        let touched = report
+            .plan_graph
+            .nodes
+            .iter()
+            .map(|node| format!("{}:{} ({})", node.kind, node.label, node.action))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("  will touch: {touched}"));
+    }
+    lines.push(
+        "  will not touch: unrelated containers, providers, or objects outside this plan"
+            .to_owned(),
+    );
+    lines.push(
+        "  risk: image build/push, container replacement, route and health verification".to_owned(),
+    );
+    lines.push(format!(
+        "  rollback: gumgum rollback --worker {} --preview",
+        report.worker
+    ));
+    lines
 }
 
 fn connection_examples(kind: &str, name: &str, dns: &str) -> Vec<String> {
