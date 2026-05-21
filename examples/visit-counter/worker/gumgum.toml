@@ -1,0 +1,33 @@
+[worker]
+name = "visit-counter-worker"
+image = "./Dockerfile"
+build_context = "."
+command = "uv run visit-counter-worker"
+health = "/healthz"
+
+[[database]]
+name = "visits"
+dns = "visits.db.leostera.dev"
+binding = "DATABASE_URL"
+access = "read-write"
+
+[[bucket]]
+name = "visit-requests"
+dns = "visit-requests.blob.leostera.dev"
+binding = "VISIT_REQUESTS_BUCKET"
+access = "read-only"
+
+[[queue]]
+name = "visit-events"
+dns = "visit-events.queue.leostera.dev"
+binding = "VISIT_EVENTS_QUEUE"
+access = "read-write"
+
+[observability]
+enabled = true
+
+[limits]
+cpus = 0.5
+memory_mb = 256
+pids = 128
+restart = "unless-stopped"

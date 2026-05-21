@@ -82,6 +82,8 @@ pub struct WorkerManifest {
     #[serde(default)]
     pub bucket: Vec<ObjectBinding>,
     #[serde(default)]
+    pub queue: Vec<ObjectBinding>,
+    #[serde(default)]
     pub observability: Option<Observability>,
     #[serde(default)]
     pub limits: Option<Limits>,

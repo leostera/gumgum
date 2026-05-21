@@ -166,6 +166,7 @@ mod tests {
             database: Vec::new(),
             kv: Vec::new(),
             bucket: Vec::new(),
+            queue: Vec::new(),
             observability: None,
             limits: None,
         }
