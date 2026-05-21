@@ -225,7 +225,7 @@ async fn run_remote_deploy(
         .as_deref()
         .unwrap_or_else(|| manifest.worker.build_context.as_deref().unwrap_or("."));
     let host = &server.host;
-    let local_image = report.image.replacen("127.0.0.1", "localhost", 1);
+    let local_image = local_push_image(&report.image);
     let route = deploy_route(report, server);
 
     wait_for_remote_registry(host, quiet).await?;
@@ -261,16 +261,23 @@ async fn run_remote_deploy(
         quiet,
     )
     .await;
-    if build_result.is_ok() {
+    let push_result = if build_result.is_ok() {
         progress(quiet, "pushing image to GumGum.dev registry");
-        run_command_streaming(
-            TokioCommand::new("docker").arg("push").arg(&local_image),
-            quiet,
+        Some(
+            run_command_streaming(
+                TokioCommand::new("docker").arg("push").arg(&local_image),
+                quiet,
+            )
+            .await,
         )
-        .await?;
-    }
+    } else {
+        None
+    };
     let _ = tunnel.kill().await;
     build_result?;
+    if let Some(push_result) = push_result {
+        push_result?;
+    }
 
     progress(
         quiet,
@@ -312,6 +319,10 @@ async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Resul
     );
     let script = "for i in $(seq 1 20); do if docker inspect -f '{{.State.Running}}' gumgum-registry 2>/dev/null | grep -q true; then exit 0; fi; sleep 0.5; done; echo 'gumgum-registry is not running; is gumgumd active?' >&2; exit 1";
     run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await
+}
+
+fn local_push_image(image: &str) -> String {
+    image.replacen("127.0.0.1", "localhost", 1)
 }
 
 fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> String {
@@ -360,6 +371,51 @@ async fn verify_route(
             server.host
         ))
         .build())
+    }
+}
+
+#[cfg(test)]
+mod deploy_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn local_registry_image_uses_tunnel_loopback_for_push() {
+        assert_eq!(
+            local_push_image("127.0.0.1:55000/dev.leostera/root/api:gg1"),
+            "localhost:55000/dev.leostera/root/api:gg1"
+        );
+    }
+
+    #[test]
+    fn deploy_route_prefers_manifest_route() {
+        let report = DeployReport {
+            ok: true,
+            dry_run: false,
+            path: "api/gumgum.toml".to_owned(),
+            worker: "api".to_owned(),
+            host: Some("starbase2".to_owned()),
+            build_context: Some("api".to_owned()),
+            image: "127.0.0.1:55000/dev.leostera/root/api:gg1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            port: 3000,
+            routes: vec!["api.visit-counter.leostera.test".to_owned()],
+            health_url: None,
+            plan: Vec::new(),
+            plan_graph: PlanGraph::default(),
+            message: String::new(),
+        };
+        let server = ServerRecord {
+            name: "starbase2".to_owned(),
+            host: "starbase2".to_owned(),
+            root_domain: "leostera.dev".to_owned(),
+            test_domain: "leostera.test".to_owned(),
+            health_url: "http://starbase2:4747/health".to_owned(),
+        };
+
+        assert_eq!(
+            deploy_route(&report, &server),
+            "api.visit-counter.leostera.test"
+        );
     }
 }
 

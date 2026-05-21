@@ -35,6 +35,21 @@ gumgum logs api
 gumgum logs worker
 ```
 
+## Safe starbase2 smoke
+
+Use the repository smoke harness when intentionally exercising the real host. It snapshots remote containers before/after and fails if any pre-existing container disappears.
+
+```bash
+# dry-run deploy by default
+scripts/smoke-visit-counter-starbase2.sh
+
+# apply intentionally; setup is still opt-in
+APPLY=1 scripts/smoke-visit-counter-starbase2.sh
+RUN_SETUP=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
+```
+
+The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, and verifies the Caddy route with a `Host: api.visit-counter.leostera.test` request.
+
 ## Local fallback smoke test
 
 ```bash
