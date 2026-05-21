@@ -264,6 +264,8 @@ async fn daemon_create_object(
         GraphExecutionContext {
             object_plan: Some(provider_plan.clone()),
             provider_credentials,
+            deploy_request: None,
+            graph_path: None,
         },
     )
     .await
@@ -737,15 +739,20 @@ async fn daemon_deploy(
             .ok()
             .and_then(Result::ok)
             .unwrap_or(false);
-    let (changed, actions) = ContainerReconciler::new(reconcile_path)
-        .reconcile(&core_deploy_request(&request))
+    let deploy_context = GraphExecutionContext {
+        object_plan: None,
+        provider_credentials: None,
+        deploy_request: Some(core_deploy_request(&request)),
+        graph_path: Some(reconcile_path),
+    };
+    let actions = GraphActionExecutor::execute_steps(&reconciliation_steps, deploy_context)
         .await
-        .unwrap_or_else(|error| {
-            (
-                false,
-                vec![format!("reconcile failed: {}", error.to_report().message)],
-            )
-        });
+        .unwrap_or_else(|error| vec![format!("reconcile failed: {}", error.to_report().message)]);
+    let changed = actions.iter().any(|action| {
+        action.starts_with("pull ")
+            || action.starts_with("recreate ")
+            || action.starts_with("project ")
+    });
     Json(DeployApplyReport {
         ok: materialized,
         worker: request.worker,

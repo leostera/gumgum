@@ -1,8 +1,9 @@
 use crate::{
-    Capability, DesiredGraph, GraphReconcileAction, GraphReconciler, ObjectProviderPlan,
-    ProviderCredentials,
+    Capability, DeployRequest, DesiredGraph, GraphReconcileAction, GraphReconciler,
+    ObjectProviderPlan, ProviderCredentials,
 };
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "target")]
@@ -98,6 +99,8 @@ impl GraphActionPlanner {
 pub struct GraphExecutionContext {
     pub object_plan: Option<ObjectProviderPlan>,
     pub provider_credentials: Option<ProviderCredentials>,
+    pub deploy_request: Option<DeployRequest>,
+    pub graph_path: Option<PathBuf>,
 }
 
 pub struct GraphActionExecutor;
@@ -123,8 +126,24 @@ impl GraphActionExecutor {
                         actions.push(format!("planned {}", step.description));
                     }
                 }
+                GraphExecutionTarget::ContainerRuntime { .. } => {
+                    if let (Some(graph_path), Some(request)) =
+                        (&context.graph_path, &context.deploy_request)
+                    {
+                        let (changed, mut deploy_actions) =
+                            crate::ContainerReconciler::new(graph_path.clone())
+                                .reconcile(request)
+                                .await?;
+                        if !changed && deploy_actions.is_empty() {
+                            deploy_actions
+                                .push("container already matches desired state".to_owned());
+                        }
+                        actions.extend(deploy_actions);
+                    } else {
+                        actions.push(format!("planned {}", step.description));
+                    }
+                }
                 GraphExecutionTarget::WorkerRuntime { .. }
-                | GraphExecutionTarget::ContainerRuntime { .. }
                 | GraphExecutionTarget::Gateway { .. }
                 | GraphExecutionTarget::GraphStore { .. }
                 | GraphExecutionTarget::Removal { .. } => {
@@ -163,6 +182,8 @@ impl GraphActionExecutor {
             GraphExecutionContext {
                 object_plan: Some(plan.clone()),
                 provider_credentials: credentials,
+                deploy_request: None,
+                graph_path: None,
             },
         )
         .await
@@ -390,6 +411,23 @@ mod tests {
 
         assert_eq!(actions[0], "configured manual provider manual.main");
         assert!(actions[1].contains("planned ensure route api.example.test"));
+    }
+
+    #[tokio::test]
+    async fn generic_executor_plans_container_without_runtime_context() {
+        let steps = GraphActionPlanner::plan(&[GraphReconcileAction::EnsureContainer {
+            name: "api".to_owned(),
+            image: "ghcr.io/acme/api:v1".to_owned(),
+        }]);
+
+        let actions = GraphActionExecutor::execute_steps(&steps, GraphExecutionContext::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            actions,
+            vec!["planned ensure container api runs image ghcr.io/acme/api:v1"]
+        );
     }
 
     #[test]
