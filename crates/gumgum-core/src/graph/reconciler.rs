@@ -117,6 +117,10 @@ pub enum GraphReconcileAction {
     RemoveNode {
         id: GraphNodeId,
     },
+    RemoveDeploy {
+        worker: WorkerId,
+        container: ContainerName,
+    },
 }
 
 pub struct GraphReconciler;
@@ -131,12 +135,24 @@ impl GraphReconciler {
             actions.push(ensure_action(node));
         }
         for node in old_graph.nodes.difference(&new_graph.nodes) {
-            actions.push(GraphReconcileAction::RemoveNode {
-                id: GraphNodeId::new(node.id())
-                    .unwrap_or_else(|_| GraphNodeId::new("unknown").unwrap()),
-            });
+            actions.push(remove_action(node));
         }
         actions
+    }
+}
+
+fn remove_action(node: &DesiredGraphNode) -> GraphReconcileAction {
+    match node {
+        DesiredGraphNode::Deployment {
+            worker, container, ..
+        } => GraphReconcileAction::RemoveDeploy {
+            worker: worker.clone(),
+            container: container.clone(),
+        },
+        _ => GraphReconcileAction::RemoveNode {
+            id: GraphNodeId::new(node.id())
+                .unwrap_or_else(|_| GraphNodeId::new("unknown").unwrap()),
+        },
     }
 }
 
@@ -242,6 +258,27 @@ mod tests {
             host: RouteHost::new("api.example.test").unwrap(),
             target_container: ContainerName::new("api").unwrap()
         }));
+    }
+
+    #[test]
+    fn graph_reconciler_emits_deploy_removal_with_runtime_target_details() {
+        let old_graph = DesiredGraph::new([DesiredGraphNode::Deployment {
+            worker: WorkerId::new("api").unwrap(),
+            image: ImageName::new("ghcr.io/acme/api:v1").unwrap(),
+            container: ContainerName::new("gumgum-api").unwrap(),
+            route: RouteHost::new("api.example.test").unwrap(),
+            port: Port::new(3000).unwrap(),
+            health: HealthPath::new("/healthz").unwrap(),
+        }]);
+        let new_graph = DesiredGraph::default();
+
+        assert_eq!(
+            GraphReconciler::reconcile(&old_graph, &new_graph),
+            vec![GraphReconcileAction::RemoveDeploy {
+                worker: WorkerId::new("api").unwrap(),
+                container: ContainerName::new("gumgum-api").unwrap(),
+            }]
+        );
     }
 
     #[test]

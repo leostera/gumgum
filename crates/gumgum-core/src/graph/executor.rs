@@ -43,6 +43,7 @@ pub enum GraphExecutionTarget {
     },
     Removal {
         id: GraphNodeId,
+        container: Option<ContainerName>,
     },
 }
 
@@ -302,10 +303,10 @@ impl GraphExecutionSession {
             | GraphExecutionTarget::DeployRuntime { .. } => self.execute_deploy_step(step).await,
             GraphExecutionTarget::WorkerRuntime { .. }
             | GraphExecutionTarget::Gateway { .. }
-            | GraphExecutionTarget::GraphStore { .. }
-            | GraphExecutionTarget::Removal { .. } => {
+            | GraphExecutionTarget::GraphStore { .. } => {
                 Ok(vec![format!("planned {}", step.description)])
             }
+            GraphExecutionTarget::Removal { .. } => self.execute_removal_step(step).await,
         }
     }
 
@@ -332,6 +333,38 @@ impl GraphExecutionSession {
             Ok(deploy_actions)
         } else {
             Ok(vec![format!("planned {}", step.description)])
+        }
+    }
+
+    async fn execute_removal_step(&self, step: &GraphExecutionStep) -> crate::Result<Vec<String>> {
+        let GraphExecutionTarget::Removal {
+            container: Some(container),
+            ..
+        } = &step.target
+        else {
+            return Ok(vec![format!("planned {}", step.description)]);
+        };
+        let output = tokio::process::Command::new("docker")
+            .arg("rm")
+            .arg("-f")
+            .arg(container.as_str())
+            .output()
+            .await
+            .map_err(|source| {
+                crate::GumgumError::structured(
+                    crate::Subsystem::Setup,
+                    crate::ErrorCode::Io,
+                    "could not remove deployment container",
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })?;
+        if output.status.success() {
+            Ok(vec![format!("removed deployment container {container}")])
+        } else {
+            Ok(vec![format!(
+                "deployment container {container} was already absent"
+            )])
         }
     }
 
@@ -393,7 +426,7 @@ impl GraphExecutionTarget {
                 capability, name, ..
             } => format!("{capability}/{name}"),
             Self::GraphStore { node } => node.clone(),
-            Self::Removal { id } => id.to_string(),
+            Self::Removal { id, .. } => id.to_string(),
         }
     }
 }
@@ -409,6 +442,7 @@ impl GraphReconcileAction {
             Self::EnsureBinding { .. } => "ensure_binding".to_owned(),
             Self::EnsureObject { .. } => "ensure_object".to_owned(),
             Self::RemoveNode { .. } => "remove_node".to_owned(),
+            Self::RemoveDeploy { .. } => "remove_deploy".to_owned(),
         }
     }
 }
@@ -495,8 +529,20 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
         },
         GraphReconcileAction::RemoveNode { id } => GraphExecutionStep {
             action: action.clone(),
-            target: GraphExecutionTarget::Removal { id: id.clone() },
+            target: GraphExecutionTarget::Removal {
+                id: id.clone(),
+                container: None,
+            },
             description: format!("remove graph node {id}"),
+        },
+        GraphReconcileAction::RemoveDeploy { worker, container } => GraphExecutionStep {
+            action: action.clone(),
+            target: GraphExecutionTarget::Removal {
+                id: GraphNodeId::new(format!("deployment/{worker}"))
+                    .unwrap_or_else(|_| GraphNodeId::new("deployment/unknown").unwrap()),
+                container: Some(container.clone()),
+            },
+            description: format!("remove deployment {worker} and container {container}"),
         },
     }
 }
