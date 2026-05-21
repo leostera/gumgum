@@ -17,7 +17,6 @@ pub(crate) struct Cli {
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     Status(StatusArgs),
-    Doctor,
     Version,
     Config(ConfigArgs),
     Init(InitArgs),
@@ -34,7 +33,6 @@ pub(crate) enum Command {
     Secret(ObjectArgs),
     Setup(SetupArgs),
     Server(ServerCommand),
-    Schema(SchemaCommand),
     Daemon,
 }
 
@@ -292,16 +290,4 @@ pub(crate) struct ServerProviderConfigureArgs {
 pub(crate) struct ServerUpgradeArgs {
     #[arg(long)]
     pub(crate) user: Option<String>,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct SchemaCommand {
-    #[command(subcommand)]
-    pub(crate) command: SchemaSubcommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum SchemaSubcommand {
-    Validate { path: Option<PathBuf> },
-    Explain,
 }

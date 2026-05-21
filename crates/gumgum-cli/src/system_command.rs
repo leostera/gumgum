@@ -1,17 +1,14 @@
 use crate::server_client::ServerClient;
 use crate::{
-    SchemaCommand, SchemaSubcommand, ServerCommand, ServerCredentialsSubcommand,
-    ServerProvidersSubcommand, ServerSubcommand, ServerUpgradeArgs, StatusArgs, config_command,
-    print_value, progress,
+    ServerCommand, ServerCredentialsSubcommand, ServerProvidersSubcommand, ServerSubcommand,
+    ServerUpgradeArgs, StatusArgs, config_command, print_value, progress,
 };
 use gumgum_api::{PingReport, ProviderConfigureRequest, ProviderStatusReport, ServerListReport};
 use gumgum_core::{
-    ConfigStore, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport, ErrorCode,
-    GumgumError, GumgumInstaller, ServerRecord, SetupTarget, Subsystem, not_configured_status,
-    validate_path,
+    ConfigStore, DaemonHealthClient, DaemonPingReport, ErrorCode, GumgumError, GumgumInstaller,
+    ServerRecord, SetupTarget, Subsystem, not_configured_status,
 };
 use serde::Serialize;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 pub(crate) async fn status(args: StatusArgs, json: bool) -> gumgum_core::Result<()> {
@@ -27,25 +24,6 @@ pub(crate) async fn status(args: StatusArgs, json: bool) -> gumgum_core::Result<
     Ok(())
 }
 
-pub(crate) fn doctor(json: bool) {
-    let report = DoctorReport {
-        ok: true,
-        checks: vec![
-            DoctorCheck {
-                name: "cli".to_owned(),
-                ok: true,
-                message: "gumgum CLI is installed".to_owned(),
-            },
-            DoctorCheck {
-                name: "daemon".to_owned(),
-                ok: true,
-                message: "daemon check skipped until setup is implemented".to_owned(),
-            },
-        ],
-    };
-    print_value(json, &report)
-}
-
 pub(crate) fn version(json: bool) {
     print_value(json, &version_report());
 }
@@ -57,7 +35,11 @@ pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Re
                 ok: true,
                 servers: ConfigStore::from_home_env()?.load_servers()?,
             };
-            print_value(json, &report)
+            if json {
+                print_value(true, &report);
+            } else {
+                print_server_list(&report.servers);
+            }
         }
         Some(ServerSubcommand::Ping(args)) => {
             let report = ping_host(&args.host).await?;
@@ -131,7 +113,11 @@ pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Re
                 ok: true,
                 servers: ConfigStore::from_home_env()?.load_servers()?,
             };
-            print_value(json, &report)
+            if json {
+                print_value(true, &report);
+            } else {
+                print_server_list(&report.servers);
+            }
         }
         None => {
             return Err(GumgumError::structured(
@@ -142,25 +128,6 @@ pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Re
             .next_command("gumgum server list")
             .next_command("gumgum server <name> upgrade")
             .build());
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn schema(schema: SchemaCommand, json: bool) -> gumgum_core::Result<()> {
-    match schema.command {
-        SchemaSubcommand::Validate { path } => {
-            let path = path.unwrap_or_else(|| PathBuf::from("gumgum.toml"));
-            let report = validate_path(&path)?;
-            print_value(json, &report)
-        }
-        SchemaSubcommand::Explain => {
-            let explanation = SchemaExplanation {
-                ok: true,
-                schemas: vec!["workspace", "worker"],
-                message: "v0 supports [workspace] and [worker] manifests".to_owned(),
-            };
-            print_value(json, &explanation)
         }
     }
     Ok(())
@@ -245,6 +212,21 @@ async fn upgrade_server(
     })
 }
 
+fn print_server_list(servers: &[ServerRecord]) {
+    if servers.is_empty() {
+        println!("No GumGum.dev servers configured.");
+        println!("Run: gumgum setup <host> --root-domain <domain>");
+        return;
+    }
+    println!("{:<18} {:<16} {:<20} HEALTH", "NAME", "HOST", "ROOT DOMAIN");
+    for server in servers {
+        println!(
+            "{:<18} {:<16} {:<20} {}",
+            server.name, server.host, server.root_domain, server.health_url
+        );
+    }
+}
+
 fn print_provider_status_report(report: &ProviderStatusReport) {
     println!("Providers ({}):", report.providers.len());
     for provider in &report.providers {
@@ -289,11 +271,4 @@ fn version_report() -> VersionReport {
         git_sha: option_env!("GUMGUM_BUILD_SHA").unwrap_or("unknown"),
         target: option_env!("GUMGUM_BUILD_TARGET").unwrap_or("unknown"),
     }
-}
-
-#[derive(Debug, Serialize)]
-struct SchemaExplanation {
-    ok: bool,
-    schemas: Vec<&'static str>,
-    message: String,
 }

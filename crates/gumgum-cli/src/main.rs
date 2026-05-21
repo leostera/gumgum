@@ -34,7 +34,7 @@ use logs_command::logs;
 use object_command::object_command;
 use project_command::{info, rollback};
 use setup_command::{install_gumgumd, resolve_setup};
-use system_command::{doctor, schema, server, status, version};
+use system_command::{server, status, version};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -55,7 +55,6 @@ async fn main() -> Result<()> {
 async fn run(cli: Cli) -> gumgum_core::Result<()> {
     match cli.command {
         Command::Status(args) => status(args, cli.json).await?,
-        Command::Doctor => doctor(cli.json),
         Command::Version => version(cli.json),
         Command::Config(args) => {
             let report = config_command(None, args.command)?;
@@ -119,7 +118,6 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         }
         Command::Daemon => DaemonApp::new().run().await?,
         Command::Server(args) => server(args, cli.json).await?,
-        Command::Schema(args) => schema(args, cli.json)?,
     }
     Ok(())
 }
