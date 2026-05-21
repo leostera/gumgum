@@ -27,6 +27,7 @@ PLAN=${PLAN:-0}
 ARTIFACT_DIR=${ARTIFACT_DIR:-}
 ARTIFACT_ROOT=${ARTIFACT_ROOT:-}
 SMOKE_STATUS=running
+SMOKE_EXIT_CODE=0
 
 print_plan() {
   cat <<'EOF'
@@ -135,6 +136,7 @@ root_domain=$ROOT_DOMAIN
 test_domain=$TEST_DOMAIN
 artifact_dir=$ARTIFACT_DIR
 status=$SMOKE_STATUS
+exit_code=$SMOKE_EXIT_CODE
 apply_objects=$APPLY_OBJECTS
 apply=$APPLY
 objects_only=$OBJECTS_ONLY
@@ -234,6 +236,7 @@ write_artifacts() {
 
 finish_artifacts() {
   SMOKE_STATUS=success
+  SMOKE_EXIT_CODE=0
   write_artifacts
 }
 
@@ -245,6 +248,7 @@ on_exit() {
   local status=$?
   if [ "$status" -ne 0 ]; then
     SMOKE_STATUS=failed
+    SMOKE_EXIT_CODE=$status
     write_artifacts || true
   fi
   cleanup
