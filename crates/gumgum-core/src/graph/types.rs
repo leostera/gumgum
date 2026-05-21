@@ -210,6 +210,53 @@ impl TryFrom<&str> for RouteHost {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct HealthPath(String);
+
+impl HealthPath {
+    pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
+        let value = value.as_ref().trim().to_owned();
+        if value.is_empty() {
+            return Err(invalid_graph_value("health path must not be empty"));
+        }
+        if !value.starts_with('/') {
+            return Err(invalid_graph_value("health path must start with /"));
+        }
+        if value.chars().any(char::is_whitespace) {
+            return Err(invalid_graph_value(
+                "health path must not contain whitespace",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for HealthPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for HealthPath {
+    type Error = GumgumError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for HealthPath {
+    type Error = GumgumError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
 fn invalid_graph_value(message: &'static str) -> GumgumError {
     GumgumError::structured(Subsystem::Config, ErrorCode::InvalidArgs, message).build()
 }
@@ -249,6 +296,14 @@ mod tests {
         );
         assert!(RouteHost::new("localhost").is_err());
         assert!(RouteHost::new("bad host.test").is_err());
+    }
+
+    #[test]
+    fn health_path_requires_absolute_path_without_whitespace() {
+        assert_eq!(HealthPath::new(" /healthz ").unwrap().as_str(), "/healthz");
+        assert!(HealthPath::new("healthz").is_err());
+        assert!(HealthPath::new("/health z").is_err());
+        assert!(HealthPath::new(" ").is_err());
     }
 
     #[test]

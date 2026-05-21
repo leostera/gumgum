@@ -1,4 +1,4 @@
-use crate::{Capability, ContainerName, ImageName, Port, RouteHost, WorkerId};
+use crate::{Capability, ContainerName, HealthPath, ImageName, Port, RouteHost, WorkerId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -26,7 +26,7 @@ pub enum DesiredGraphNode {
         container: ContainerName,
         route: RouteHost,
         port: Port,
-        health: String,
+        health: HealthPath,
     },
     Route {
         host: String,
@@ -95,7 +95,7 @@ pub enum GraphReconcileAction {
         container: ContainerName,
         route: RouteHost,
         port: Port,
-        health: String,
+        health: HealthPath,
     },
     EnsureRoute {
         host: String,

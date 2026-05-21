@@ -1,6 +1,6 @@
 use crate::{
     Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge, GraphNode,
-    GumgumError, ImageName, Port, Result, RouteHost, Subsystem, WorkerId,
+    GumgumError, HealthPath, ImageName, Port, Result, RouteHost, Subsystem, WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -535,7 +535,7 @@ impl GraphStore {
                 container: ContainerName::new(&container)?,
                 route: RouteHost::new(&route)?,
                 port: Port::new(port)?,
-                health,
+                health: HealthPath::new(&health)?,
             });
         }
         Ok(())
@@ -1009,7 +1009,7 @@ mod tests {
             container: ContainerName::new("gumgum-dev-leostera-peekaboo-api").unwrap(),
             route: RouteHost::new("api.peekaboo.leostera.test").unwrap(),
             port: Port::new(3000).unwrap(),
-            health: "/healthz".to_owned(),
+            health: HealthPath::new("/healthz").unwrap(),
         }));
         let desired = store.load_desired_graph().unwrap();
         assert!(desired.nodes.contains(&DesiredGraphNode::Provider {

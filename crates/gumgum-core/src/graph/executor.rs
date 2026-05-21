@@ -1,6 +1,6 @@
 use crate::{
     Capability, ContainerName, DeployRequest, DesiredGraph, GraphReconcileAction, GraphReconciler,
-    ImageName, ObjectProviderPlan, Port, ProviderCredentials, RouteHost, WorkerId,
+    HealthPath, ImageName, ObjectProviderPlan, Port, ProviderCredentials, RouteHost, WorkerId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -26,7 +26,7 @@ pub enum GraphExecutionTarget {
         image: ImageName,
         route: Option<RouteHost>,
         port: Option<Port>,
-        health: Option<String>,
+        health: Option<HealthPath>,
     },
     Gateway {
         host: String,
@@ -171,9 +171,8 @@ impl GraphActionPlanner {
         image: ImageName,
         route: RouteHost,
         port: Port,
-        health: impl Into<String>,
+        health: HealthPath,
     ) -> GraphExecutionStep {
-        let health = health.into();
         GraphExecutionStep {
             action: GraphReconcileAction::EnsureContainer {
                 name: container.to_string(),
@@ -325,7 +324,7 @@ fn deploy_request_from_target(target: &GraphExecutionTarget) -> Option<DeployReq
             container: container.to_string(),
             route: route.to_string(),
             port: port.get(),
-            health: health.clone(),
+            health: health.to_string(),
         }),
         _ => None,
     }
@@ -587,7 +586,7 @@ mod tests {
             ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             RouteHost::new("api.example.test").unwrap(),
             Port::new(3000).unwrap(),
-            "/healthz",
+            HealthPath::new("/healthz").unwrap(),
         );
 
         assert!(matches!(
@@ -599,7 +598,7 @@ mod tests {
                 port: Some(port),
                 health: Some(ref health),
                 ..
-            } if worker.as_str() == "api" && container.as_str() == "gumgum-api" && route.as_str() == "api.example.test" && port.get() == 3000 && health == "/healthz"
+            } if worker.as_str() == "api" && container.as_str() == "gumgum-api" && route.as_str() == "api.example.test" && port.get() == 3000 && health.as_str() == "/healthz"
         ));
     }
 
@@ -611,7 +610,7 @@ mod tests {
             ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             RouteHost::new("api.example.test").unwrap(),
             Port::new(3000).unwrap(),
-            "/healthz",
+            HealthPath::new("/healthz").unwrap(),
         );
         let actions = GraphActionExecutor::execute_steps(
             &[step],

@@ -751,7 +751,8 @@ async fn daemon_deploy(
                 .unwrap_or_else(|_| gumgum_core::RouteHost::new("invalid.local").unwrap()),
             gumgum_core::Port::new(request.port)
                 .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
-            request.health.clone(),
+            gumgum_core::HealthPath::new(&request.health)
+                .unwrap_or_else(|_| gumgum_core::HealthPath::new("/healthz").unwrap()),
         ));
     }
     let deploy_context = GraphExecutionContext {
@@ -799,7 +800,8 @@ async fn deploy_reconciliation_plan(
                 .unwrap_or_else(|_| gumgum_core::RouteHost::new("invalid.local").unwrap()),
             port: gumgum_core::Port::new(request.port)
                 .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
-            health: request.health.clone(),
+            health: gumgum_core::HealthPath::new(&request.health)
+                .unwrap_or_else(|_| gumgum_core::HealthPath::new("/healthz").unwrap()),
         });
         Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
     })
