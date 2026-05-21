@@ -14,6 +14,13 @@ impl ProviderReconciler {
         credentials: Option<ProviderCredentials>,
     ) -> crate::Result<Vec<String>> {
         match plan.capability {
+            Capability::Db => {
+                super::postgres::ensure_object(
+                    plan,
+                    credentials.unwrap_or_else(ProviderCredentials::postgres_local_dev),
+                )
+                .await
+            }
             Capability::Kv => super::redis::ensure(&plan.provider).await,
             Capability::Blob => {
                 super::minio::ensure(

@@ -81,6 +81,25 @@ mod tests {
     }
 
     #[test]
+    fn db_provider_reconciler_is_scoped_to_postgres_container() {
+        let plan = object_provider_plan(Capability::Db, "visits", "visits.db.example.test");
+
+        assert_eq!(plan.provider.container, "gumgum-provider-postgres-main");
+        assert_eq!(plan.provider.image, "postgres:16-alpine");
+        assert_eq!(plan.provider.port, 5432);
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| action == "ensure postgres.main provider is running")
+        );
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| action == "ensure database visits exists")
+        );
+    }
+
+    #[test]
     fn kv_provider_reconciler_is_scoped_to_redis_container() {
         let plan = object_provider_plan(Capability::Kv, "sessions", "sessions.kv.example.test");
 
