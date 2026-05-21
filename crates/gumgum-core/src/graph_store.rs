@@ -58,6 +58,24 @@ impl DesiredDeploy {
         .and_then(Result::ok)
         .unwrap_or_default()
     }
+
+    pub async fn delete_reconciliation_steps(
+        &self,
+        graph_path: PathBuf,
+    ) -> Vec<GraphExecutionStep> {
+        let deploy = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = GraphStore::new(graph_path);
+            let old_graph = store.load_desired_graph()?;
+            let mut new_graph = old_graph.clone();
+            new_graph.nodes.remove(&deploy.graph_node()?);
+            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -600,6 +618,56 @@ impl GraphStore {
         )
         .map_err(|source| self.error("could not materialize binding", source))?;
         Ok(true)
+    }
+
+    pub fn desired_deploy(&self, worker: &str) -> Result<Option<DesiredDeploy>> {
+        self.init()?;
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare("SELECT worker, image, container, route, port, health FROM desired_deployments WHERE worker = ?1")
+            .map_err(|source| self.error("could not query desired deployment", source))?;
+        let mut rows = stmt
+            .query(params![worker])
+            .map_err(|source| self.error("could not read desired deployment", source))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|source| self.error("could not decode desired deployment", source))?
+        {
+            Ok(Some(DesiredDeploy {
+                worker: row
+                    .get(0)
+                    .map_err(|source| self.error("could not decode desired deployment", source))?,
+                image: row
+                    .get(1)
+                    .map_err(|source| self.error("could not decode desired deployment", source))?,
+                container: row
+                    .get(2)
+                    .map_err(|source| self.error("could not decode desired deployment", source))?,
+                route: row
+                    .get(3)
+                    .map_err(|source| self.error("could not decode desired deployment", source))?,
+                port: row
+                    .get(4)
+                    .map_err(|source| self.error("could not decode desired deployment", source))?,
+                health: row
+                    .get(5)
+                    .map_err(|source| self.error("could not decode desired deployment", source))?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn delete_deploy(&self, worker: &str) -> Result<bool> {
+        self.init()?;
+        let conn = self.open()?;
+        let changed = conn
+            .execute(
+                "DELETE FROM desired_deployments WHERE worker = ?1",
+                params![worker],
+            )
+            .map_err(|source| self.error("could not delete desired deployment", source))?;
+        Ok(changed > 0)
     }
 
     pub fn materialize_deploy(&self, request: &DesiredDeploy) -> Result<bool> {

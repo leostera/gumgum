@@ -1,5 +1,5 @@
 use crate::{DeployArgs, progress};
-use gumgum_api::{DeployApplyReport, DeployRequest, ServerRecord};
+use gumgum_api::{DeployApplyReport, DeployRequest, DeploymentDeleteRequest, ServerRecord};
 use gumgum_core::{
     ConfigStore, DeploymentDescriptor, ErrorCode, GumgumError, GumgumInstaller, ManifestKind,
     PlanGraph, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
@@ -45,6 +45,7 @@ pub(crate) struct WorkspaceDeployReport {
 pub(crate) enum DeployOutput {
     Worker(DeployReport),
     Workspace(WorkspaceDeployReport),
+    Delete(DeployApplyReport),
 }
 
 pub(crate) async fn deploy(
@@ -66,6 +67,24 @@ pub(crate) async fn deploy(
     match kind {
         ManifestKind::Worker => {
             let manifest = load_worker_path(&args.path)?;
+            if args.delete {
+                let Some(server) = server else {
+                    return Err(GumgumError::structured(
+                        Subsystem::Config,
+                        ErrorCode::InvalidArgs,
+                        "no gumgum server configured",
+                    )
+                    .next_command("gumgum server list")
+                    .build());
+                };
+                let report = ServerClient::new(server.host)
+                    .delete_deploy(&DeploymentDeleteRequest {
+                        worker: manifest.worker.name,
+                        preview: dry_run,
+                    })
+                    .await?;
+                return Ok(DeployOutput::Delete(report));
+            }
             let report = deploy_one(
                 args.path.clone(),
                 &manifest,

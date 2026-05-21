@@ -54,6 +54,13 @@ pub struct DeployRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeploymentDeleteRequest {
+    pub worker: String,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeployApplyReport {
     pub ok: bool,
     pub worker: String,

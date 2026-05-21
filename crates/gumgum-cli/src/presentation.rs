@@ -12,6 +12,7 @@ impl Presenter {
         match output {
             DeployOutput::Worker(report) => self.deploy_report(report),
             DeployOutput::Workspace(report) => self.workspace_deploy_report(report),
+            DeployOutput::Delete(report) => self.deploy_delete_report(report),
         }
     }
 
@@ -31,6 +32,14 @@ impl Presenter {
             for example in examples {
                 println!("  {example}");
             }
+        }
+    }
+
+    fn deploy_delete_report(&self, report: &gumgum_api::DeployApplyReport) {
+        println!("Worker: {}", report.worker);
+        println!("{}", report.message);
+        for action in &report.actions {
+            println!("  - {action}");
         }
     }
 

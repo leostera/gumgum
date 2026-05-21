@@ -1,9 +1,9 @@
 use gumgum_api::{
     AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DeployApplyReport,
-    DeployRequest, DeploymentRevisionsReport, EnvReport, EventsReport, GraphReport, LogsReport,
-    ObjectDeleteRequest, ObjectReport, ObjectRequest, ProviderBootReport, ProviderConfigureReport,
-    ProviderConfigureRequest, ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport,
-    RollbackRequest,
+    DeployRequest, DeploymentDeleteRequest, DeploymentRevisionsReport, EnvReport, EventsReport,
+    GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest, ProviderBootReport,
+    ProviderConfigureReport, ProviderConfigureRequest, ProviderCredentialsInitReport,
+    ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
 
@@ -124,6 +124,14 @@ impl ServerClient {
         request: &DeployRequest,
     ) -> gumgum_core::Result<DeployApplyReport> {
         self.post_json("/v0/deploy", request, "deploy").await
+    }
+
+    pub(crate) async fn delete_deploy(
+        &self,
+        request: &DeploymentDeleteRequest,
+    ) -> gumgum_core::Result<DeployApplyReport> {
+        self.delete_json("/v0/deploy", request, "deployment delete")
+            .await
     }
 
     pub(crate) async fn rollback(

@@ -73,6 +73,8 @@ pub(crate) struct DeployArgs {
     pub(crate) host: Option<String>,
     #[arg(long)]
     pub(crate) prod: bool,
+    #[arg(long, help = "Delete the desired deployment for this worker")]
+    pub(crate) delete: bool,
 }
 
 #[derive(Debug, Args)]

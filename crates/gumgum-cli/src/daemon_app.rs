@@ -5,11 +5,11 @@ use axum::{
 };
 use gumgum_api::{
     AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DaemonVersionReport,
-    DeployApplyReport, DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, EventsReport,
-    GraphNode, GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest,
-    ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
-    ProviderCredentialsInitReport, ProviderCredentialsReport, ProviderStatusReport, RollbackReport,
-    RollbackRequest,
+    DeployApplyReport, DeployRequest, DeploymentDeleteRequest, DeploymentRevisionsReport,
+    EnvReport, EnvVar, EventsReport, GraphNode, GraphReport, LogsReport, ObjectDeleteRequest,
+    ObjectReport, ObjectRequest, ProviderBootReport, ProviderConfigureReport,
+    ProviderConfigureRequest, ProviderCredentialsInitReport, ProviderCredentialsReport,
+    ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject,
@@ -64,7 +64,10 @@ impl DaemonApp {
             .route("/healthz", get(healthz))
             .route("/v0/version", get(daemon_version))
             .route("/v0/status", get(status))
-            .route("/v0/deploy", post(daemon_deploy))
+            .route(
+                "/v0/deploy",
+                post(daemon_deploy).delete(daemon_delete_deploy),
+            )
             .route("/v0/rollback", post(daemon_rollback))
             .route("/v0/revisions/{worker}", get(daemon_revisions))
             .route("/v0/events", get(daemon_events))
@@ -915,6 +918,79 @@ fn rollback_unavailable_report(worker: String, revision_id: Option<i64>) -> Roll
             None => "no previous deployment image recorded".to_owned(),
         },
     }
+}
+
+async fn daemon_delete_deploy(
+    State(state): State<DaemonState>,
+    Json(request): Json<DeploymentDeleteRequest>,
+) -> Json<DeployApplyReport> {
+    let graph_path = (*state.graph_path).clone();
+    let worker = request.worker.clone();
+    let desired = tokio::task::spawn_blocking({
+        let graph_path = graph_path.clone();
+        let worker = worker.clone();
+        move || GraphStore::new(graph_path).desired_deploy(&worker)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .flatten();
+    let Some(deploy) = desired else {
+        return Json(DeployApplyReport {
+            ok: request.preview,
+            worker: request.worker,
+            materialized: false,
+            changed: false,
+            actions: vec!["deployment was not present".to_owned()],
+            reconciliation_steps: Vec::new(),
+            message: "deployment was not present".to_owned(),
+        });
+    };
+    let reconciliation_steps = deploy.delete_reconciliation_steps(graph_path.clone()).await;
+    let deleted = if request.preview {
+        false
+    } else {
+        let graph_path = graph_path.clone();
+        let worker = request.worker.clone();
+        tokio::task::spawn_blocking(move || GraphStore::new(graph_path).delete_deploy(&worker))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false)
+    };
+    let actions = if request.preview {
+        vec!["preview only; no deployments changed".to_owned()]
+    } else {
+        GraphActionExecutor::execute_steps(
+            &reconciliation_steps,
+            GraphExecutionContext {
+                graph_path: Some(graph_path),
+                ..GraphExecutionContext::default()
+            },
+        )
+        .await
+        .unwrap_or_else(|error| {
+            vec![format!(
+                "deployment delete reconcile failed: {}",
+                error.to_report().message
+            )]
+        })
+    };
+    Json(DeployApplyReport {
+        ok: request.preview || deleted,
+        worker: request.worker,
+        materialized: !deleted,
+        changed: deleted,
+        actions,
+        reconciliation_steps,
+        message: if request.preview {
+            "deployment delete preview".to_owned()
+        } else if deleted {
+            "deployment deleted from graph".to_owned()
+        } else {
+            "deployment was not present".to_owned()
+        },
+    })
 }
 
 async fn daemon_deploy(
