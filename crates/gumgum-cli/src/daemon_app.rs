@@ -193,6 +193,13 @@ async fn daemon_create_object(
     let dns = object_dns(&capability_name, &request.name, &request.root_domain);
     let provider_plan = object_provider_plan(capability, &request.name, &dns);
     let provider = provider_plan.provider.provider.clone();
+    let reconciliation_steps = object_reconciliation_plan(
+        (*state.graph_path).clone(),
+        capability,
+        request.name.clone(),
+        provider.clone(),
+    )
+    .await;
     let provider_credentials = match required_provider_credentials(capability) {
         Ok(credentials) => credentials,
         Err(()) => {
@@ -261,6 +268,7 @@ async fn daemon_create_object(
         provider,
         connection_examples: provider_plan.connection_examples,
         provider_actions,
+        reconciliation_steps,
         message: if capability == gumgum_core::Capability::Db {
             "global object materialized with managed password secret and provider reconciled"
         } else {
@@ -268,6 +276,29 @@ async fn daemon_create_object(
         }
         .to_owned(),
     })
+}
+
+async fn object_reconciliation_plan(
+    graph_path: PathBuf,
+    capability: gumgum_core::Capability,
+    name: String,
+    provider: String,
+) -> Vec<gumgum_core::GraphExecutionStep> {
+    tokio::task::spawn_blocking(move || {
+        let store = GraphStore::new(graph_path);
+        let old_graph = store.load_desired_graph()?;
+        let mut new_graph = old_graph.clone();
+        new_graph.nodes.insert(DesiredGraphNode::Object {
+            capability,
+            name,
+            provider,
+        });
+        Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default()
 }
 
 fn required_provider_credentials(
@@ -305,6 +336,7 @@ fn missing_provider_credentials_report(
             "provider credentials are required before creating this object".to_owned(),
             "configure ~/.gumgum/providers/minio-main/credentials.json or run provider credential setup when available".to_owned(),
         ],
+        reconciliation_steps: Vec::new(),
         message: "provider credentials are not configured".to_owned(),
     }
 }

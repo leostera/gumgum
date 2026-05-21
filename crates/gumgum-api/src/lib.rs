@@ -103,6 +103,8 @@ pub struct ObjectReport {
     pub connection_examples: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reconciliation_steps: Vec<GraphExecutionStep>,
     pub message: String,
 }
 
