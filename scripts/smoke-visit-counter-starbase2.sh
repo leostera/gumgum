@@ -24,6 +24,7 @@ VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
 REQUIRE_CURRENT_DAEMON=${REQUIRE_CURRENT_DAEMON:-0}
 HELP=${HELP:-0}
 PLAN=${PLAN:-0}
+ARTIFACT_DIR=${ARTIFACT_DIR:-}
 
 print_plan() {
   cat <<'EOF'
@@ -52,6 +53,7 @@ visit-counter starbase2 smoke modes:
   APPLY_OBJECTS=1 OBJECTS_ONLY=1: create/bind objects, then stop before deploy
   DEPLOY_ONLY=1 APPLY=1: deploy/curl using existing desired object/binding state
   OBSERVE_ONLY=1: show status/events/operations/logs for existing deployment
+  ARTIFACT_DIR=<dir>: copy response/graph/container snapshots and observe output into a directory
   CLEANUP_ONLY=1 VERIFY_CLEANUP_PREVIEW=1: preview cleanup without creating objects
   CLEANUP_ONLY=1 APPLY_CLEANUP=1: apply cleanup without creating objects
   PLAN=1 or --plan: print the recommended intentional apply sequence
@@ -72,6 +74,9 @@ before_file=$(mktemp)
 after_file=$(mktemp)
 before_graph_file=$(mktemp)
 after_graph_file=$(mktemp)
+if [ -n "$ARTIFACT_DIR" ]; then
+  mkdir -p "$ARTIFACT_DIR"
+fi
 cleanup() {
   rm -f "$before_file" "$after_file" "$before_graph_file" "$after_graph_file"
 }
@@ -94,6 +99,10 @@ verify_test_dns() {
 
 container_delta_guard() {
   remote_containers >"$after_file"
+  if [ -n "$ARTIFACT_DIR" ]; then
+    cp "$before_file" "$ARTIFACT_DIR/containers-before.txt"
+    cp "$after_file" "$ARTIFACT_DIR/containers-after.txt"
+  fi
   missing=$(comm -23 "$before_file" "$after_file" || true)
   if [ -n "$missing" ]; then
     echo "error: smoke removed unrelated pre-existing container(s):" >&2
@@ -108,12 +117,26 @@ run_gumgum() {
   $GUMGUM "$@"
 }
 
+run_gumgum_artifact() {
+  local artifact_name="$1"
+  shift
+  if [ -n "$ARTIFACT_DIR" ]; then
+    run_gumgum "$@" | tee "$ARTIFACT_DIR/$artifact_name.txt"
+  else
+    run_gumgum "$@"
+  fi
+}
+
 capture_graph() {
   local output_file="$1"
+  local artifact_name="${2:-$(basename "$output_file")}.json"
   # shellcheck disable=SC2086
   if ! $GUMGUM --json graph --host "$HOST" >"$output_file"; then
     echo "warning: could not capture desired graph snapshot" >&2
     : >"$output_file"
+  fi
+  if [ -n "$ARTIFACT_DIR" ]; then
+    cp "$output_file" "$ARTIFACT_DIR/$artifact_name"
   fi
 }
 
@@ -256,11 +279,11 @@ if [ "$UPGRADE_ONLY" = "1" ]; then
 fi
 
 if [ "$OBSERVE_ONLY" = "1" ]; then
-  run_gumgum status --host "$HOST"
-  run_gumgum events --host "$HOST" --limit 20
-  run_gumgum operations --host "$HOST" --limit 20
-  run_gumgum logs --host "$HOST" api --tail 20 || true
-  run_gumgum logs --host "$HOST" worker --tail 20 || true
+  run_gumgum_artifact status status --host "$HOST"
+  run_gumgum_artifact events events --host "$HOST" --limit 20
+  run_gumgum_artifact operations operations --host "$HOST" --limit 20
+  run_gumgum_artifact logs-api logs --host "$HOST" api --tail 20 || true
+  run_gumgum_artifact logs-worker logs --host "$HOST" worker --tail 20 || true
   container_delta_guard
   echo "visit-counter smoke observe-only completed; pre-existing containers preserved"
   exit 0
@@ -293,7 +316,7 @@ if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
   if ! has_daemon_capability "binding_delete" || ! has_daemon_capability "object_delete"; then
     echo "warning: gumgumd on $HOST does not advertise safe delete APIs; run gumgum setup/upgrade before cleanup verification" >&2
   else
-    capture_graph "$before_graph_file"
+    capture_graph "$before_graph_file" graph-before
     preview_flag="--preview"
     if [ "$APPLY_CLEANUP" = "1" ]; then
       preview_flag=""
@@ -318,7 +341,7 @@ if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
     run_gumgum bucket delete visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
     # shellcheck disable=SC2086
     run_gumgum queue delete visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN" $preview_flag
-    capture_graph "$after_graph_file"
+    capture_graph "$after_graph_file" graph-after
     if [ "$APPLY_CLEANUP" = "1" ]; then
       assert_visit_resources_absent "$after_graph_file"
     else
@@ -337,8 +360,9 @@ fi
 if [ "$APPLY" = "1" ]; then
   run_gumgum deploy --host "$HOST"
   verify_test_dns
-  curl -fsS -H "Host: api.visit-counter.${TEST_DOMAIN}" "http://${HOST}/" >/tmp/gumgum-visit-counter-response.txt
-  grep -q "Hello visitor" /tmp/gumgum-visit-counter-response.txt
+  response_file="${ARTIFACT_DIR:-/tmp}/gumgum-visit-counter-response.txt"
+  curl -fsS -H "Host: api.visit-counter.${TEST_DOMAIN}" "http://${HOST}/" >"$response_file"
+  grep -q "Hello visitor" "$response_file"
   run_gumgum events --host "$HOST" --limit 20
   if [ "$VERIFY_ROLLBACK_PREVIEW" = "1" ]; then
     run_gumgum rollback --host "$HOST" --worker api --preview || true
