@@ -121,6 +121,7 @@ impl GraphActionExecutor {
         context: GraphExecutionContext,
     ) -> crate::Result<Vec<String>> {
         let mut actions = Vec::new();
+        let mut container_runtime_seen = false;
         for step in steps {
             match &step.target {
                 GraphExecutionTarget::Provider { name, capability } => {
@@ -137,6 +138,14 @@ impl GraphActionExecutor {
                     }
                 }
                 GraphExecutionTarget::ContainerRuntime { .. } => {
+                    if container_runtime_seen {
+                        actions.push(
+                            "container runtime already reconciled for this graph execution"
+                                .to_owned(),
+                        );
+                        continue;
+                    }
+                    container_runtime_seen = true;
                     if let (Some(graph_path), Some(request)) =
                         (&context.graph_path, &context.deploy_request)
                     {
@@ -450,6 +459,30 @@ mod tests {
         assert_eq!(
             actions,
             vec!["planned ensure container api runs image ghcr.io/acme/api:v1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn generic_executor_deduplicates_container_runtime_steps() {
+        let steps = GraphActionPlanner::plan(&[
+            GraphReconcileAction::EnsureContainer {
+                name: "api".to_owned(),
+                image: "ghcr.io/acme/api:v1".to_owned(),
+            },
+            GraphReconcileAction::EnsureContainer {
+                name: "api".to_owned(),
+                image: "ghcr.io/acme/api:v1".to_owned(),
+            },
+        ]);
+
+        let actions = GraphActionExecutor::execute_steps(&steps, GraphExecutionContext::default())
+            .await
+            .unwrap();
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(
+            actions[1],
+            "container runtime already reconciled for this graph execution"
         );
     }
 
