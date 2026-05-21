@@ -33,6 +33,9 @@ curl api.visit-counter.leostera.test
 gumgum events
 gumgum logs api
 gumgum logs worker
+
+# public publishing is explicit and dry-run first
+gumgum --dry-run publish api
 ```
 
 ## Safe starbase2 smoke

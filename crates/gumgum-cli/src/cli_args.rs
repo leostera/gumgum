@@ -21,6 +21,7 @@ pub(crate) enum Command {
     Config(ConfigArgs),
     Init(InitArgs),
     Deploy(DeployArgs),
+    Publish(PublishArgs),
     Env(EnvArgs),
     Info(InfoArgs),
     Rollback(RollbackArgs),
@@ -76,6 +77,22 @@ pub(crate) struct DeployArgs {
     pub(crate) prod: bool,
     #[arg(long, help = "Delete the desired deployment for this worker")]
     pub(crate) delete: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PublishArgs {
+    #[arg(default_value = "gumgum.toml")]
+    pub(crate) target: PathBuf,
+    #[arg(long)]
+    pub(crate) host: Option<String>,
+    #[arg(long, help = "Public domain to plan instead of manifest/default route")]
+    pub(crate) public_domain: Option<String>,
+    #[arg(
+        long,
+        default_value = "byo",
+        help = "Tunnel/provider surface to use in the plan"
+    )]
+    pub(crate) tunnel: String,
 }
 
 #[derive(Debug, Args)]

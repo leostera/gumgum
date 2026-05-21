@@ -14,6 +14,7 @@ mod object_command;
 mod operations_command;
 mod presentation;
 mod project_command;
+mod publish_command;
 mod server_client;
 mod setup_command;
 mod system_command;
@@ -37,6 +38,7 @@ use logs_command::logs;
 use object_command::object_command;
 use operations_command::operations;
 use project_command::{info, rollback};
+use publish_command::publish;
 use setup_command::{install_gumgumd, resolve_setup};
 use system_command::{server, status, version};
 
@@ -71,6 +73,9 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Deploy(args) => {
             let report = deploy(args, cli.dry_run, cli.json).await?;
             print_deploy_output(cli.json, &report);
+        }
+        Command::Publish(args) => {
+            publish(args, cli.dry_run, cli.json).await?;
         }
         Command::Env(args) => {
             env(args, cli.json).await?;
