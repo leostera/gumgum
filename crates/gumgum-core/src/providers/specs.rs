@@ -31,6 +31,7 @@ pub fn object_provider_plan(capability: Capability, name: &str, dns: &str) -> Ob
         actions: provider_actions(capability, &safe_name, dns),
         connection_examples: connection_examples(capability, name, dns),
         provider,
+        object_password: None,
     }
 }
 

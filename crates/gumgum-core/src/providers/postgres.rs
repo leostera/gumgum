@@ -39,11 +39,26 @@ pub(crate) async fn ensure_object(
 ) -> crate::Result<Vec<String>> {
     let mut actions = ensure(&plan.provider, credentials.clone()).await?;
     let database = sanitize_name(&plan.name);
+    let owner = sanitize_name(&plan.name);
+    if let Some(password) = &plan.object_password {
+        ensure_role(&plan.provider, &credentials, &owner, password).await?;
+        actions.push(format!("ensured database role {owner}"));
+    }
     if database_exists(&plan.provider, &credentials, &database).await? {
         actions.push(format!("database {database} already exists"));
     } else {
-        create_database(&plan.provider, &credentials, &database).await?;
+        create_database(
+            &plan.provider,
+            &credentials,
+            &database,
+            plan.object_password.as_deref().map(|_| owner.as_str()),
+        )
+        .await?;
         actions.push(format!("created database {database}"));
+    }
+    if plan.object_password.is_some() {
+        grant_database(&plan.provider, &credentials, &database, &owner).await?;
+        actions.push(format!("granted database {database} to role {owner}"));
     }
     actions.push(format!("published DNS {} to postgres.main", plan.dns));
     Ok(actions)
@@ -146,6 +161,70 @@ async fn create_database(
     provider: &ProviderSpec,
     credentials: &ProviderCredentials,
     database: &str,
+    owner: Option<&str>,
+) -> crate::Result<()> {
+    let mut command = TokioCommand::new("docker");
+    command
+        .arg("exec")
+        .arg("-e")
+        .arg(format!("PGPASSWORD={}", credentials.password))
+        .arg(&provider.container)
+        .arg("createdb")
+        .arg("-U")
+        .arg(&credentials.username);
+    if let Some(owner) = owner {
+        command.arg("-O").arg(owner);
+    }
+    command.arg(database);
+    run_provider_command(&mut command, "could not create postgres database").await
+}
+
+async fn ensure_role(
+    provider: &ProviderSpec,
+    credentials: &ProviderCredentials,
+    role: &str,
+    password: &str,
+) -> crate::Result<()> {
+    run_psql(
+        provider,
+        credentials,
+        &format!(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{}') THEN CREATE ROLE \"{}\" LOGIN PASSWORD '{}'; ELSE ALTER ROLE \"{}\" WITH LOGIN PASSWORD '{}'; END IF; END $$;",
+            shell_single_quote(role),
+            sql_identifier(role),
+            shell_single_quote(password),
+            sql_identifier(role),
+            shell_single_quote(password)
+        ),
+        "could not ensure postgres object role",
+    )
+    .await
+}
+
+async fn grant_database(
+    provider: &ProviderSpec,
+    credentials: &ProviderCredentials,
+    database: &str,
+    role: &str,
+) -> crate::Result<()> {
+    run_psql(
+        provider,
+        credentials,
+        &format!(
+            "GRANT ALL PRIVILEGES ON DATABASE \"{}\" TO \"{}\";",
+            sql_identifier(database),
+            sql_identifier(role)
+        ),
+        "could not grant postgres database privileges",
+    )
+    .await
+}
+
+async fn run_psql(
+    provider: &ProviderSpec,
+    credentials: &ProviderCredentials,
+    sql: &str,
+    error: &str,
 ) -> crate::Result<()> {
     run_provider_command(
         TokioCommand::new("docker")
@@ -153,11 +232,14 @@ async fn create_database(
             .arg("-e")
             .arg(format!("PGPASSWORD={}", credentials.password))
             .arg(&provider.container)
-            .arg("createdb")
+            .arg("psql")
             .arg("-U")
             .arg(&credentials.username)
-            .arg(database),
-        "could not create postgres database",
+            .arg("-d")
+            .arg("postgres")
+            .arg("-c")
+            .arg(sql),
+        error,
     )
     .await
 }
@@ -185,6 +267,10 @@ async fn drop_database(
 
 fn shell_single_quote(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+fn sql_identifier(value: &str) -> String {
+    value.replace('"', "\"\"")
 }
 
 #[cfg(test)]
@@ -217,5 +303,10 @@ mod tests {
     #[test]
     fn postgres_sql_literal_escapes_single_quotes() {
         assert_eq!(shell_single_quote("team's-db"), "team''s-db");
+    }
+
+    #[test]
+    fn postgres_sql_identifier_escapes_double_quotes() {
+        assert_eq!(sql_identifier("team\"db"), "team\"\"db");
     }
 }

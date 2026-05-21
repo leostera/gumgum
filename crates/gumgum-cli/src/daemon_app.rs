@@ -269,7 +269,18 @@ async fn daemon_create_object(
     let capability = request.capability;
     let capability_name = capability.to_string();
     let dns = object_dns(&capability_name, &request.name, &request.root_domain);
-    let provider_plan = object_provider_plan(capability, &request.name, &dns);
+    let mut provider_plan = object_provider_plan(capability, &request.name, &dns);
+    let db_password = if capability == gumgum_core::Capability::Db {
+        Some(
+            request
+                .password
+                .clone()
+                .unwrap_or_else(gumgum_core::generated_secret_value),
+        )
+    } else {
+        None
+    };
+    provider_plan.object_password = db_password.clone();
     let provider = provider_plan.provider.provider.clone();
     let reconciliation_steps = object_reconciliation_plan(
         (*state.graph_path).clone(),
@@ -289,16 +300,6 @@ async fn daemon_create_object(
                 provider_plan.connection_examples,
             ));
         }
-    };
-    let db_password = if capability == gumgum_core::Capability::Db {
-        Some(
-            request
-                .password
-                .clone()
-                .unwrap_or_else(gumgum_core::generated_secret_value),
-        )
-    } else {
-        None
     };
     let secret_object_name = format!("{}-password", gumgum_core::sanitize_name(&request.name));
     let object_name_for_secret = request.name.clone();

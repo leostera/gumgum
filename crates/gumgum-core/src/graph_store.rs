@@ -1343,15 +1343,16 @@ fn binding_values(
         Capability::Db => {
             let credentials = provider_credentials("postgres.main")
                 .unwrap_or_else(crate::ProviderCredentials::postgres_local_dev);
+            let database = crate::sanitize_name(name);
+            let username = if secret.is_some() {
+                database.clone()
+            } else {
+                credentials.username
+            };
             let password = secret.unwrap_or(credentials.password);
             vec![(
                 binding.to_owned(),
-                format!(
-                    "postgres://{}:{}@{dns}:5432/{}",
-                    credentials.username,
-                    password,
-                    crate::sanitize_name(name)
-                ),
+                format!("postgres://{username}:{password}@{dns}:5432/{database}"),
             )]
         }
         Capability::Kv => {
