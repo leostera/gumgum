@@ -79,12 +79,41 @@ if [ -n "$ARTIFACT_DIR" ]; then
   mkdir -p "$ARTIFACT_DIR"
 fi
 
+smoke_mode() {
+  if [ "$SETUP_ONLY" = "1" ]; then
+    echo "setup-only"
+  elif [ "$UPGRADE_ONLY" = "1" ]; then
+    echo "upgrade-only"
+  elif [ "$OBJECTS_ONLY" = "1" ]; then
+    echo "objects-only"
+  elif [ "$DEPLOY_ONLY" = "1" ]; then
+    if [ "$APPLY" = "1" ]; then
+      echo "deploy-only-apply"
+    else
+      echo "deploy-only-dry-run"
+    fi
+  elif [ "$OBSERVE_ONLY" = "1" ]; then
+    echo "observe-only"
+  elif [ "$CLEANUP_ONLY" = "1" ]; then
+    if [ "$APPLY_CLEANUP" = "1" ]; then
+      echo "cleanup-only-apply"
+    else
+      echo "cleanup-only-preview"
+    fi
+  elif [ "$APPLY" = "1" ]; then
+    echo "full-apply"
+  else
+    echo "default-dry-run"
+  fi
+}
+
 write_artifact_summary() {
   if [ -z "$ARTIFACT_DIR" ]; then
     return
   fi
   cat >"$ARTIFACT_DIR/summary.txt" <<EOF
 created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+mode=$(smoke_mode)
 host=$HOST
 root_domain=$ROOT_DOMAIN
 test_domain=$TEST_DOMAIN
@@ -108,7 +137,7 @@ write_artifact_readme() {
 Visit-counter smoke artifacts
 
 Key files:
-  summary.txt             run mode, host, domains, and timestamp
+  summary.txt             resolved mode, host, domains, flags, and timestamp
   index.txt               sorted list of captured files
   checksums.sha256        integrity checksums for captured files
   containers-before.txt   remote containers before the smoke stage
