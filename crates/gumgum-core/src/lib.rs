@@ -18,8 +18,8 @@ pub use deployment::DeploymentDescriptor;
 pub use graph::{
     BindingName, ContainerName, DesiredGraph, DesiredGraphNode, GraphActionExecutor,
     GraphActionPlanner, GraphExecutionContext, GraphExecutionStep, GraphExecutionTarget,
-    GraphReconcileAction, GraphReconciler, GraphReconciliationPlan, HealthPath, ImageName,
-    ObjectName, ObjectRef, Port, ProviderName, RouteHost, WorkerId,
+    GraphNodeId, GraphReconcileAction, GraphReconciler, GraphReconciliationPlan, HealthPath,
+    ImageName, ObjectName, ObjectRef, Port, ProviderName, RouteHost, WorkerId,
 };
 pub use graph_store::{
     DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject, GraphStore,

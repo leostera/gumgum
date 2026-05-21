@@ -1,7 +1,7 @@
 use crate::{
-    Capability, ContainerName, DeployRequest, DesiredGraph, GraphReconcileAction, GraphReconciler,
-    HealthPath, ImageName, ObjectName, ObjectProviderPlan, Port, ProviderCredentials, ProviderName,
-    RouteHost, WorkerId,
+    Capability, ContainerName, DeployRequest, DesiredGraph, GraphNodeId, GraphReconcileAction,
+    GraphReconciler, HealthPath, ImageName, ObjectName, ObjectProviderPlan, Port,
+    ProviderCredentials, ProviderName, RouteHost, WorkerId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -42,7 +42,7 @@ pub enum GraphExecutionTarget {
         node: String,
     },
     Removal {
-        id: String,
+        id: GraphNodeId,
     },
 }
 
@@ -393,7 +393,7 @@ impl GraphExecutionTarget {
                 capability, name, ..
             } => format!("{capability}/{name}"),
             Self::GraphStore { node } => node.clone(),
-            Self::Removal { id } => id.clone(),
+            Self::Removal { id } => id.to_string(),
         }
     }
 }

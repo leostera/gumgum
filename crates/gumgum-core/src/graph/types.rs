@@ -433,6 +433,50 @@ impl TryFrom<&str> for ObjectRef {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct GraphNodeId(String);
+
+impl GraphNodeId {
+    pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
+        let value = value.as_ref().trim().to_owned();
+        if value.is_empty() {
+            return Err(invalid_graph_value("graph node id must not be empty"));
+        }
+        if value.chars().any(char::is_whitespace) {
+            return Err(invalid_graph_value(
+                "graph node id must not contain whitespace",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for GraphNodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for GraphNodeId {
+    type Error = GumgumError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for GraphNodeId {
+    type Error = GumgumError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
 fn invalid_graph_value(message: &'static str) -> GumgumError {
     GumgumError::structured(Subsystem::Config, ErrorCode::InvalidArgs, message).build()
 }
@@ -506,6 +550,16 @@ mod tests {
         assert!(BindingName::new("DATABASE URL").is_err());
         assert!(ObjectRef::new("main").is_err());
         assert!(ObjectRef::new("db/main secret").is_err());
+    }
+
+    #[test]
+    fn graph_node_id_rejects_empty_or_whitespace() {
+        assert_eq!(
+            GraphNodeId::new(" deployment/api ").unwrap().as_str(),
+            "deployment/api"
+        );
+        assert!(GraphNodeId::new("deployment api").is_err());
+        assert!(GraphNodeId::new(" ").is_err());
     }
 
     #[test]

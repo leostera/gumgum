@@ -8,6 +8,6 @@ pub use executor::{
 };
 pub use reconciler::{DesiredGraph, DesiredGraphNode, GraphReconcileAction, GraphReconciler};
 pub use types::{
-    BindingName, ContainerName, HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName,
-    RouteHost, WorkerId,
+    BindingName, ContainerName, GraphNodeId, HealthPath, ImageName, ObjectName, ObjectRef, Port,
+    ProviderName, RouteHost, WorkerId,
 };

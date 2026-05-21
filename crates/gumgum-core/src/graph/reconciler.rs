@@ -1,6 +1,6 @@
 use crate::{
-    BindingName, Capability, ContainerName, HealthPath, ImageName, ObjectName, ObjectRef, Port,
-    ProviderName, RouteHost, WorkerId,
+    BindingName, Capability, ContainerName, GraphNodeId, HealthPath, ImageName, ObjectName,
+    ObjectRef, Port, ProviderName, RouteHost, WorkerId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -115,7 +115,7 @@ pub enum GraphReconcileAction {
         provider: ProviderName,
     },
     RemoveNode {
-        id: String,
+        id: GraphNodeId,
     },
 }
 
@@ -131,7 +131,10 @@ impl GraphReconciler {
             actions.push(ensure_action(node));
         }
         for node in old_graph.nodes.difference(&new_graph.nodes) {
-            actions.push(GraphReconcileAction::RemoveNode { id: node.id() });
+            actions.push(GraphReconcileAction::RemoveNode {
+                id: GraphNodeId::new(node.id())
+                    .unwrap_or_else(|_| GraphNodeId::new("unknown").unwrap()),
+            });
         }
         actions
     }
@@ -252,7 +255,7 @@ mod tests {
         assert_eq!(
             GraphReconciler::reconcile(&old_graph, &new_graph),
             vec![GraphReconcileAction::RemoveNode {
-                id: "container/api".to_owned()
+                id: GraphNodeId::new("container/api").unwrap()
             }]
         );
     }
