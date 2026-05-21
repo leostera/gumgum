@@ -60,6 +60,8 @@ pub struct DeployApplyReport {
     pub materialized: bool,
     pub changed: bool,
     pub actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reconciliation_steps: Vec<GraphExecutionStep>,
     pub message: String,
 }
 

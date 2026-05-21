@@ -729,6 +729,7 @@ async fn daemon_deploy(
     let path = (*state.graph_path).clone();
     let reconcile_path = path.clone();
     let store = GraphStore::new(path.clone());
+    let reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
     let request_for_db = desired_from_deploy_request(request.clone());
     let materialized =
         tokio::task::spawn_blocking(move || store.materialize_deploy(&request_for_db))
@@ -751,8 +752,38 @@ async fn daemon_deploy(
         materialized,
         changed,
         actions,
+        reconciliation_steps,
         message: "desired deployment materialized and reconciled".to_owned(),
     })
+}
+
+async fn deploy_reconciliation_plan(
+    graph_path: PathBuf,
+    request: &DeployRequest,
+) -> Vec<gumgum_core::GraphExecutionStep> {
+    let request = request.clone();
+    tokio::task::spawn_blocking(move || {
+        let store = GraphStore::new(graph_path);
+        let old_graph = store.load_desired_graph()?;
+        let mut new_graph = old_graph.clone();
+        new_graph.nodes.insert(DesiredGraphNode::Worker {
+            name: request.worker.clone(),
+            image: request.image.clone(),
+        });
+        new_graph.nodes.insert(DesiredGraphNode::Container {
+            name: request.container.clone(),
+            image: request.image.clone(),
+        });
+        new_graph.nodes.insert(DesiredGraphNode::Route {
+            host: request.route.clone(),
+            target_container: request.container.clone(),
+        });
+        Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default()
 }
 
 fn desired_from_deploy_request(value: DeployRequest) -> DesiredDeploy {
