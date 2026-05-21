@@ -186,6 +186,8 @@ pub struct GraphExecutionContext {
     pub object_plan: Option<ObjectProviderPlan>,
     pub provider_credentials: Option<ProviderCredentials>,
     pub graph_path: Option<PathBuf>,
+    #[cfg(test)]
+    pub fail_next_step: bool,
 }
 
 pub struct GraphActionExecutor;
@@ -227,6 +229,7 @@ impl GraphActionExecutor {
                 object_plan: Some(plan.clone()),
                 provider_credentials: credentials,
                 graph_path: None,
+                ..GraphExecutionContext::default()
             },
         )
         .await
@@ -284,6 +287,17 @@ impl GraphExecutionSession {
     }
 
     async fn execute_step(&mut self, step: &GraphExecutionStep) -> crate::Result<Vec<String>> {
+        #[cfg(test)]
+        if self.context.fail_next_step {
+            self.context.fail_next_step = false;
+            return Err(crate::GumgumError::structured(
+                crate::Subsystem::Setup,
+                crate::ErrorCode::InvalidArgs,
+                "injected graph execution failure",
+            )
+            .build());
+        }
+
         match &step.target {
             GraphExecutionTarget::Provider { name, capability } => {
                 GraphActionExecutor::execute_provider(name.as_str(), *capability).await
@@ -604,6 +618,47 @@ mod tests {
             .unwrap();
 
         assert_eq!(actions, vec!["configured manual provider manual.main"]);
+    }
+
+    #[tokio::test]
+    async fn executor_records_failed_events_when_a_step_errors() {
+        let graph_path = std::env::temp_dir().join(format!(
+            "gumgum-executor-failed-events-{}.sqlite",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let step = GraphActionPlanner::ensure_provider_step(
+            ProviderName::new("manual.main").unwrap(),
+            Capability::Manual,
+        );
+
+        let error = GraphActionExecutor::execute_steps(
+            &[step],
+            GraphExecutionContext {
+                graph_path: Some(graph_path.clone()),
+                fail_next_step: true,
+                ..GraphExecutionContext::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_report().message,
+            "injected graph execution failure"
+        );
+        let events = crate::GraphStore::new(graph_path.clone())
+            .list_reconcile_events(10)
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].status, crate::ReconcileEventStatus::Failed);
+        assert_eq!(events[0].target, "provider/manual.main");
+        assert_eq!(events[0].action, "ensure_provider");
+        assert_eq!(events[0].message, "injected graph execution failure");
+        assert_eq!(events[1].status, crate::ReconcileEventStatus::Planned);
+        let _ = std::fs::remove_file(graph_path);
     }
 
     #[tokio::test]
