@@ -315,6 +315,8 @@ pub struct WorkerPlanInput {
     pub worker_name: String,
     pub databases: Vec<BindingPlanInput>,
     pub kvs: Vec<BindingPlanInput>,
+    pub buckets: Vec<BindingPlanInput>,
+    pub queues: Vec<BindingPlanInput>,
 }
 
 #[derive(Clone, Debug)]
@@ -354,6 +356,24 @@ impl DeployPlanner {
                     binding: binding.binding.clone(),
                 })
                 .collect(),
+            buckets: manifest
+                .bucket
+                .iter()
+                .map(|binding| BindingPlanInput {
+                    capability: Capability::Blob,
+                    name: binding.name.clone(),
+                    binding: binding.binding.clone(),
+                })
+                .collect(),
+            queues: manifest
+                .queue
+                .iter()
+                .map(|binding| BindingPlanInput {
+                    capability: Capability::Queue,
+                    name: binding.name.clone(),
+                    binding: binding.binding.clone(),
+                })
+                .collect(),
         })
     }
 
@@ -374,6 +394,22 @@ impl DeployPlanner {
                 kv.capability.as_str(),
                 &kv.name,
                 kv.binding.as_deref(),
+            );
+        }
+        for bucket in &self.input.buckets {
+            graph.add_binding(
+                worker,
+                bucket.capability.as_str(),
+                &bucket.name,
+                bucket.binding.as_deref(),
+            );
+        }
+        for queue in &self.input.queues {
+            graph.add_binding(
+                worker,
+                queue.capability.as_str(),
+                &queue.name,
+                queue.binding.as_deref(),
             );
         }
         graph.finish()
@@ -515,5 +551,69 @@ impl MutablePlanGraph {
 
     fn finish(self) -> PlanGraph {
         PlanGraph::new(self.nodes, self.edges)
+    }
+}
+
+#[cfg(test)]
+mod deploy_planner_tests {
+    use super::*;
+
+    #[test]
+    fn deploy_plan_includes_bucket_and_queue_bindings() {
+        let manifest = WorkerManifest {
+            project: None,
+            worker: Worker {
+                name: "visit-counter-api".to_owned(),
+                image: Some("./Dockerfile".to_owned()),
+                build_context: Some(".".to_owned()),
+                command: None,
+                port: Some(3000),
+                health: Some("/healthz".to_owned()),
+            },
+            zone: Vec::new(),
+            ingress: Vec::new(),
+            database: Vec::new(),
+            kv: Vec::new(),
+            bucket: vec![ObjectBinding {
+                name: "visit-requests".to_owned(),
+                binding: Some("VISIT_REQUESTS_BUCKET".to_owned()),
+                access: Some("read-write".to_owned()),
+                dns: None,
+            }],
+            queue: vec![ObjectBinding {
+                name: "visit-events".to_owned(),
+                binding: Some("VISIT_EVENTS_QUEUE".to_owned()),
+                access: Some("write".to_owned()),
+                dns: None,
+            }],
+            observability: None,
+            limits: None,
+        };
+
+        let graph = DeployPlanner::from_manifest(&manifest).graph();
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.id == "blob/visit-requests")
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.id == "queue/visit-events")
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.id == "binding/visit-counter-api/VISIT_REQUESTS_BUCKET")
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.id == "binding/visit-counter-api/VISIT_EVENTS_QUEUE")
+        );
     }
 }
