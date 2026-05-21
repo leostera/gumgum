@@ -8,7 +8,7 @@ This is the canonical end-to-end GumGum fixture. It is intentionally small, but 
 - Queue receives events that point at bucket objects.
 - Background worker consumes queue events and writes normalized rows into DB.
 
-The Python implementation uses `uv` with a small FastAPI API worker and a stdlib queue worker. It currently includes filesystem/SQLite fallbacks so the example can run before every provider-backed binding is complete. GumGum should progressively replace those fallbacks with real provider env projections.
+The Python implementation uses `uv` with a small FastAPI API worker and a queue worker. The queue worker can use a real Postgres `DATABASE_URL` projected by GumGum, and falls back to SQLite when provider-backed bindings are not ready. Bucket, queue, and KV currently have filesystem fallbacks that GumGum should progressively replace with real provider env projections.
 
 ## GumGum path
 

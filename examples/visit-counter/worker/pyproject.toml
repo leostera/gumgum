@@ -3,7 +3,9 @@ name = "visit-counter-worker"
 version = "0.1.0"
 description = "GumGum visit-counter queue worker"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "psycopg[binary]>=3.2.0",
+]
 
 [project.scripts]
 visit-counter-worker = "visit_counter_worker.worker:main"
