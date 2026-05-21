@@ -60,6 +60,79 @@ impl DesiredDeploy {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReconcileEventId(i64);
+
+impl ReconcileEventId {
+    pub fn new(value: i64) -> Self {
+        Self(value)
+    }
+
+    pub fn get(self) -> i64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReconcileEventStatus {
+    Planned,
+    Executed,
+    Failed,
+}
+
+impl ReconcileEventStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Executed => "executed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl std::fmt::Display for ReconcileEventStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReconcileEventStatus {
+    type Err = GumgumError;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "planned" => Ok(Self::Planned),
+            "executed" => Ok(Self::Executed),
+            "failed" => Ok(Self::Failed),
+            _ => Err(GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::InvalidArgs,
+                "unknown reconciliation event status",
+            )
+            .build()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ReconcileEvent {
+    pub id: ReconcileEventId,
+    pub status: ReconcileEventStatus,
+    pub target: String,
+    pub action: String,
+    pub message: String,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NewReconcileEvent {
+    pub status: ReconcileEventStatus,
+    pub target: String,
+    pub action: String,
+    pub message: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeploymentRevision {
     pub id: i64,
@@ -167,6 +240,14 @@ impl GraphStore {
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(object_kind, object_name, field)
+            );
+            CREATE TABLE IF NOT EXISTS reconciliation_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                status TEXT NOT NULL,
+                target TEXT NOT NULL,
+                action TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );",
         )
         .map_err(|source| self.error("could not initialize graph database", source))
@@ -205,6 +286,64 @@ impl GraphStore {
         self.load_desired_objects(&conn, &mut nodes)?;
         self.load_desired_bindings(&conn, &mut nodes)?;
         Ok(DesiredGraph::new(nodes))
+    }
+
+    pub fn record_reconcile_event(&self, event: &NewReconcileEvent) -> Result<ReconcileEventId> {
+        self.init()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO reconciliation_events (status, target, action, message, created_at)
+             VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)",
+            params![
+                event.status.to_string(),
+                event.target,
+                event.action,
+                event.message
+            ],
+        )
+        .map_err(|source| self.error("could not record reconciliation event", source))?;
+        Ok(ReconcileEventId::new(conn.last_insert_rowid()))
+    }
+
+    pub fn list_reconcile_events(&self, limit: u32) -> Result<Vec<ReconcileEvent>> {
+        self.init()?;
+        let conn = self.open()?;
+        let limit = limit.clamp(1, 500);
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, status, target, action, message, created_at
+                 FROM reconciliation_events
+                 ORDER BY id DESC
+                 LIMIT ?1",
+            )
+            .map_err(|source| self.error("could not query reconciliation events", source))?;
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                let status: String = row.get(1)?;
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    status,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })
+            .map_err(|source| self.error("could not read reconciliation events", source))?;
+        let mut events = Vec::new();
+        for row in rows {
+            let (id, status, target, action, message, created_at) =
+                row.map_err(|source| self.error("could not decode reconciliation event", source))?;
+            events.push(ReconcileEvent {
+                id: ReconcileEventId::new(id),
+                status: ReconcileEventStatus::from_str(&status)?,
+                target,
+                action,
+                message,
+                created_at,
+            });
+        }
+        Ok(events)
     }
 
     pub fn load_graph(&self) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
@@ -964,6 +1103,36 @@ mod tests {
         edges
             .iter()
             .any(|edge| edge.from == from && edge.to == to && edge.kind == kind)
+    }
+
+    #[test]
+    fn reconciliation_events_are_append_only_and_newest_first() {
+        let store = temp_store("reconcile-events");
+        let first = store
+            .record_reconcile_event(&NewReconcileEvent {
+                status: ReconcileEventStatus::Planned,
+                target: "provider/vaultwarden.main".to_owned(),
+                action: "ensure provider".to_owned(),
+                message: "planned provider reconcile".to_owned(),
+            })
+            .unwrap();
+        let second = store
+            .record_reconcile_event(&NewReconcileEvent {
+                status: ReconcileEventStatus::Executed,
+                target: "provider/vaultwarden.main".to_owned(),
+                action: "ensure provider".to_owned(),
+                message: "provider reconciled".to_owned(),
+            })
+            .unwrap();
+
+        assert!(second.get() > first.get());
+        let events = store.list_reconcile_events(10).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].id, second);
+        assert_eq!(events[0].status, ReconcileEventStatus::Executed);
+        assert_eq!(events[1].id, first);
+        assert_eq!(events[1].status, ReconcileEventStatus::Planned);
+        let _ = fs::remove_file(store.path);
     }
 
     #[test]

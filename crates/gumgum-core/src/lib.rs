@@ -22,7 +22,8 @@ pub use graph::{
     ObjectName, ObjectRef, Port, ProviderName, RouteHost, WorkerId,
 };
 pub use graph_store::{
-    DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject, GraphStore, WorkerBinding,
+    DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject, GraphStore,
+    NewReconcileEvent, ReconcileEvent, ReconcileEventId, ReconcileEventStatus, WorkerBinding,
     object_dns,
 };
 pub use manifest::{
