@@ -12,6 +12,7 @@ RUN_SETUP=${RUN_SETUP:-0}
 VERIFY_SETUP_IDEMPOTENCY=${VERIFY_SETUP_IDEMPOTENCY:-0}
 VERIFY_UPGRADE_IDEMPOTENCY=${VERIFY_UPGRADE_IDEMPOTENCY:-0}
 APPLY_UPGRADE=${APPLY_UPGRADE:-0}
+UPGRADE_ONLY=${UPGRADE_ONLY:-0}
 VERIFY_CLEANUP_PREVIEW=${VERIFY_CLEANUP_PREVIEW:-0}
 APPLY_CLEANUP=${APPLY_CLEANUP:-0}
 VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
@@ -124,6 +125,14 @@ if [ "$APPLY_CLEANUP" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
   echo "error: APPLY_CLEANUP=1 requires APPLY_OBJECTS=1 to make destructive cleanup explicit" >&2
   exit 1
 fi
+if [ "$APPLY_UPGRADE" = "1" ] && [ "$VERIFY_UPGRADE_IDEMPOTENCY" != "1" ]; then
+  echo "error: APPLY_UPGRADE=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1 so real upgrades run the explicit idempotency path" >&2
+  exit 1
+fi
+if [ "$UPGRADE_ONLY" = "1" ] && [ "$VERIFY_UPGRADE_IDEMPOTENCY" != "1" ]; then
+  echo "error: UPGRADE_ONLY=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1" >&2
+  exit 1
+fi
 if [ "$REQUIRE_CURRENT_DAEMON" = "1" ] || [ "$APPLY_OBJECTS" = "1" ] || [ "$APPLY" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
   require_daemon_capabilities events rollback_revision_id binding_delete object_delete deployment_delete
 fi
@@ -146,6 +155,12 @@ if [ "$VERIFY_UPGRADE_IDEMPOTENCY" = "1" ]; then
     run_gumgum --dry-run server "$HOST" upgrade
     run_gumgum --dry-run server "$HOST" upgrade
   fi
+fi
+
+if [ "$UPGRADE_ONLY" = "1" ]; then
+  container_delta_guard
+  echo "visit-counter smoke upgrade-only completed; APPLY_UPGRADE=$APPLY_UPGRADE; pre-existing containers preserved"
+  exit 0
 fi
 
 pushd "$EXAMPLE_DIR" >/dev/null
