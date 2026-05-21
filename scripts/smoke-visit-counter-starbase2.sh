@@ -211,10 +211,33 @@ write_artifact_root_readme() {
 Visit-counter staged smoke artifact root
 
 Each subdirectory is one smoke stage, named by resolved mode from summary.txt.
+Root files:
+  summary.tsv  tab-separated stage, mode, status, exit code, duration, and failure message
+  index.txt    cross-stage file index
+
 Review every captured stage with:
   find . -name checksums.sha256 -print -execdir shasum -a 256 -c checksums.sha256 \;
   find . -name 'containers-before.txt' -execdir diff -u containers-before.txt containers-after.txt \;
 EOF
+}
+
+write_artifact_root_summary() {
+  if [ -z "$ARTIFACT_ROOT" ]; then
+    return
+  fi
+  (
+    cd "$ARTIFACT_ROOT"
+    printf 'stage\tmode\tstatus\texit_code\tduration_seconds\tfailure_message\n'
+    find . -mindepth 2 -maxdepth 2 -name summary.txt -print | sort | while read -r summary_file; do
+      stage=$(dirname "$summary_file" | sed 's#^./##')
+      mode=$(grep '^mode=' "$summary_file" | cut -d= -f2-)
+      status=$(grep '^status=' "$summary_file" | cut -d= -f2-)
+      exit_code=$(grep '^exit_code=' "$summary_file" | cut -d= -f2-)
+      duration=$(grep '^duration_seconds=' "$summary_file" | cut -d= -f2-)
+      failure=$(grep '^failure_message=' "$summary_file" | cut -d= -f2-)
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$stage" "$mode" "$status" "$exit_code" "$duration" "$failure"
+    done
+  ) >"$ARTIFACT_ROOT/summary.tsv"
 }
 
 write_artifact_root_index() {
@@ -251,6 +274,7 @@ write_artifacts() {
   write_artifact_checksums
   write_artifact_index
   write_artifact_root_readme
+  write_artifact_root_summary
   write_artifact_root_index
 }
 
