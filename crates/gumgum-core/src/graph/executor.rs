@@ -1,6 +1,6 @@
 use crate::{
     Capability, ContainerName, DeployRequest, DesiredGraph, GraphReconcileAction, GraphReconciler,
-    ImageName, ObjectProviderPlan, Port, ProviderCredentials, WorkerId,
+    ImageName, ObjectProviderPlan, Port, ProviderCredentials, RouteHost, WorkerId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -24,7 +24,7 @@ pub enum GraphExecutionTarget {
         worker: Option<WorkerId>,
         container: ContainerName,
         image: ImageName,
-        route: Option<String>,
+        route: Option<RouteHost>,
         port: Option<Port>,
         health: Option<String>,
     },
@@ -77,7 +77,7 @@ impl GraphActionPlanner {
             _ => None,
         });
         let route = steps.iter().find_map(|step| match &step.target {
-            GraphExecutionTarget::Gateway { host, .. } => Some(host.clone()),
+            GraphExecutionTarget::Gateway { host, .. } => RouteHost::new(host).ok(),
             _ => None,
         });
         let deploy_step = steps.iter().find_map(|step| match &step.target {
@@ -169,11 +169,10 @@ impl GraphActionPlanner {
         worker: WorkerId,
         container: ContainerName,
         image: ImageName,
-        route: impl Into<String>,
+        route: RouteHost,
         port: Port,
         health: impl Into<String>,
     ) -> GraphExecutionStep {
-        let route = route.into();
         let health = health.into();
         GraphExecutionStep {
             action: GraphReconcileAction::EnsureContainer {
@@ -324,7 +323,7 @@ fn deploy_request_from_target(target: &GraphExecutionTarget) -> Option<DeployReq
             worker: worker.to_string(),
             image: image.to_string(),
             container: container.to_string(),
-            route: route.clone(),
+            route: route.to_string(),
             port: port.get(),
             health: health.clone(),
         }),
@@ -586,7 +585,7 @@ mod tests {
             WorkerId::new("api").unwrap(),
             ContainerName::new("gumgum-api").unwrap(),
             ImageName::new("ghcr.io/acme/api:v1").unwrap(),
-            "api.example.test",
+            RouteHost::new("api.example.test").unwrap(),
             Port::new(3000).unwrap(),
             "/healthz",
         );
@@ -600,7 +599,7 @@ mod tests {
                 port: Some(port),
                 health: Some(ref health),
                 ..
-            } if worker.as_str() == "api" && container.as_str() == "gumgum-api" && route == "api.example.test" && port.get() == 3000 && health == "/healthz"
+            } if worker.as_str() == "api" && container.as_str() == "gumgum-api" && route.as_str() == "api.example.test" && port.get() == 3000 && health == "/healthz"
         ));
     }
 
@@ -610,7 +609,7 @@ mod tests {
             WorkerId::new("api").unwrap(),
             ContainerName::new("gumgum-api").unwrap(),
             ImageName::new("ghcr.io/acme/api:v1").unwrap(),
-            "api.example.test",
+            RouteHost::new("api.example.test").unwrap(),
             Port::new(3000).unwrap(),
             "/healthz",
         );
@@ -692,7 +691,7 @@ mod tests {
                 worker: Some(ref worker),
                 route: Some(ref route),
                 ..
-            } if worker.as_str() == "api" && route == "api.example.test"
+            } if worker.as_str() == "api" && route.as_str() == "api.example.test"
         ));
     }
 
@@ -715,7 +714,7 @@ mod tests {
             GraphExecutionTarget::DeployRuntime {
                 route: Some(ref route),
                 ..
-            } if route == "api.example.test"
+            } if route.as_str() == "api.example.test"
         ));
     }
 }

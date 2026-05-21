@@ -747,7 +747,8 @@ async fn daemon_deploy(
                 .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
             gumgum_core::ImageName::new(&request.image)
                 .unwrap_or_else(|_| gumgum_core::ImageName::new("invalid:latest").unwrap()),
-            request.route.clone(),
+            gumgum_core::RouteHost::new(&request.route)
+                .unwrap_or_else(|_| gumgum_core::RouteHost::new("invalid.local").unwrap()),
             gumgum_core::Port::new(request.port)
                 .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
             request.health.clone(),
@@ -794,7 +795,8 @@ async fn deploy_reconciliation_plan(
                 .unwrap_or_else(|_| gumgum_core::ImageName::new("invalid:latest").unwrap()),
             container: gumgum_core::ContainerName::new(&request.container)
                 .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
-            route: request.route.clone(),
+            route: gumgum_core::RouteHost::new(&request.route)
+                .unwrap_or_else(|_| gumgum_core::RouteHost::new("invalid.local").unwrap()),
             port: gumgum_core::Port::new(request.port)
                 .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
             health: request.health.clone(),
