@@ -28,6 +28,7 @@ ARTIFACT_DIR=${ARTIFACT_DIR:-}
 ARTIFACT_ROOT=${ARTIFACT_ROOT:-}
 SMOKE_STATUS=running
 SMOKE_EXIT_CODE=0
+SMOKE_FAILURE_MESSAGE=
 
 print_plan() {
   cat <<'EOF'
@@ -137,6 +138,7 @@ test_domain=$TEST_DOMAIN
 artifact_dir=$ARTIFACT_DIR
 status=$SMOKE_STATUS
 exit_code=$SMOKE_EXIT_CODE
+failure_message=$SMOKE_FAILURE_MESSAGE
 apply_objects=$APPLY_OBJECTS
 apply=$APPLY
 objects_only=$OBJECTS_ONLY
@@ -162,6 +164,7 @@ Key files:
   containers-before.txt   remote containers before the smoke stage
   containers-after.txt    remote containers after the smoke stage
   commands.txt            gumgum commands executed or planned by the harness
+  failure.txt             failure status, exit code, and message, when a stage fails
   deploy-dry-run.txt      dry-run deploy plan output, when captured
   deploy.txt              apply deploy output, when captured
   gumgum-visit-counter-response.txt  route curl response, when deploy applies
@@ -182,6 +185,17 @@ write_artifact_index() {
     cd "$ARTIFACT_DIR"
     find . -maxdepth 1 -type f -print | sed 's#^./##' | sort >index.txt
   )
+}
+
+write_artifact_failure() {
+  if [ -z "$ARTIFACT_DIR" ] || [ "$SMOKE_STATUS" != "failed" ]; then
+    return
+  fi
+  cat >"$ARTIFACT_DIR/failure.txt" <<EOF
+status=$SMOKE_STATUS
+exit_code=$SMOKE_EXIT_CODE
+message=$SMOKE_FAILURE_MESSAGE
+EOF
 }
 
 write_artifact_root_readme() {
@@ -227,6 +241,7 @@ write_artifact_checksums() {
 write_artifacts() {
   write_artifact_summary
   write_artifact_readme
+  write_artifact_failure
   write_artifact_index
   write_artifact_checksums
   write_artifact_index
@@ -240,6 +255,12 @@ finish_artifacts() {
   write_artifacts
 }
 
+fail() {
+  SMOKE_FAILURE_MESSAGE="$1"
+  echo "error: $1" >&2
+  exit 1
+}
+
 cleanup() {
   rm -f "$before_file" "$after_file" "$before_graph_file" "$after_graph_file"
 }
@@ -249,6 +270,9 @@ on_exit() {
   if [ "$status" -ne 0 ]; then
     SMOKE_STATUS=failed
     SMOKE_EXIT_CODE=$status
+    if [ -z "$SMOKE_FAILURE_MESSAGE" ]; then
+      SMOKE_FAILURE_MESSAGE="unexpected script failure"
+    fi
     write_artifacts || true
   fi
   cleanup
@@ -278,9 +302,8 @@ container_delta_guard() {
   fi
   missing=$(comm -23 "$before_file" "$after_file" || true)
   if [ -n "$missing" ]; then
-    echo "error: smoke removed unrelated pre-existing container(s):" >&2
     echo "$missing" >&2
-    exit 1
+    fail "smoke removed unrelated pre-existing container(s)"
   fi
 }
 
@@ -322,9 +345,8 @@ capture_graph() {
 
 assert_graph_unchanged() {
   if ! cmp -s "$before_graph_file" "$after_graph_file"; then
-    echo "error: preview operation mutated desired graph" >&2
     diff -u "$before_graph_file" "$after_graph_file" >&2 || true
-    exit 1
+    fail "preview operation mutated desired graph"
   fi
 }
 
@@ -333,9 +355,8 @@ assert_visit_resources_absent() {
   local unexpected
   unexpected=$(grep -E 'visit-requests|visit-events|user-counters|object/db/visits|DATABASE_URL|USER_COUNTERS|VISIT_REQUESTS_BUCKET|VISIT_EVENTS_QUEUE' "$graph_file" || true)
   if [ -n "$unexpected" ]; then
-    echo "error: cleanup left visit-counter object/binding desired state:" >&2
     echo "$unexpected" >&2
-    exit 1
+    fail "cleanup left visit-counter object/binding desired state"
   fi
 }
 
@@ -354,8 +375,7 @@ require_daemon_capabilities() {
   if $GUMGUM server "$HOST" capabilities --require-visit-counter; then
     return
   fi
-  echo "error: gumgumd on $HOST is not ready for mutating visit-counter smoke modes" >&2
-  exit 1
+  fail "gumgumd on $HOST is not ready for mutating visit-counter smoke modes"
 }
 
 plan_gumgum() {
@@ -372,56 +392,43 @@ run_object_step() {
 }
 
 if [ "$APPLY" = "1" ] && [ "$APPLY_OBJECTS" != "1" ] && [ "$DEPLOY_ONLY" != "1" ]; then
-  echo "error: APPLY=1 requires APPLY_OBJECTS=1 or DEPLOY_ONLY=1 so deploy bindings exist intentionally" >&2
-  exit 1
+  fail "APPLY=1 requires APPLY_OBJECTS=1 or DEPLOY_ONLY=1 so deploy bindings exist intentionally"
 fi
 if [ "$OBJECTS_ONLY" = "1" ] && [ "$APPLY_OBJECTS" != "1" ]; then
-  echo "error: OBJECTS_ONLY=1 requires APPLY_OBJECTS=1 so object mutations are explicit" >&2
-  exit 1
+  fail "OBJECTS_ONLY=1 requires APPLY_OBJECTS=1 so object mutations are explicit"
 fi
 if [ "$OBJECTS_ONLY" = "1" ] && [ "$DEPLOY_ONLY" = "1" ]; then
-  echo "error: OBJECTS_ONLY=1 and DEPLOY_ONLY=1 cannot be combined" >&2
-  exit 1
+  fail "OBJECTS_ONLY=1 and DEPLOY_ONLY=1 cannot be combined"
 fi
 if [ "$OBSERVE_ONLY" = "1" ] && { [ "$OBJECTS_ONLY" = "1" ] || [ "$DEPLOY_ONLY" = "1" ] || [ "$CLEANUP_ONLY" = "1" ] || [ "$SETUP_ONLY" = "1" ] || [ "$UPGRADE_ONLY" = "1" ]; }; then
-  echo "error: OBSERVE_ONLY=1 cannot be combined with setup/upgrade/object/deploy/cleanup-only modes" >&2
-  exit 1
+  fail "OBSERVE_ONLY=1 cannot be combined with setup/upgrade/object/deploy/cleanup-only modes"
 fi
 if [ "$OBJECTS_ONLY" = "1" ] && [ "$CLEANUP_ONLY" = "1" ]; then
-  echo "error: OBJECTS_ONLY=1 and CLEANUP_ONLY=1 cannot be combined" >&2
-  exit 1
+  fail "OBJECTS_ONLY=1 and CLEANUP_ONLY=1 cannot be combined"
 fi
 if [ "$DEPLOY_ONLY" = "1" ] && [ "$CLEANUP_ONLY" = "1" ]; then
-  echo "error: DEPLOY_ONLY=1 and CLEANUP_ONLY=1 cannot be combined" >&2
-  exit 1
+  fail "DEPLOY_ONLY=1 and CLEANUP_ONLY=1 cannot be combined"
 fi
 if [ "$APPLY_CLEANUP" = "1" ] && [ "$APPLY_OBJECTS" != "1" ] && [ "$CLEANUP_ONLY" != "1" ]; then
-  echo "error: APPLY_CLEANUP=1 requires APPLY_OBJECTS=1 or CLEANUP_ONLY=1 to make destructive cleanup explicit" >&2
-  exit 1
+  fail "APPLY_CLEANUP=1 requires APPLY_OBJECTS=1 or CLEANUP_ONLY=1 to make destructive cleanup explicit"
 fi
 if [ "$CLEANUP_ONLY" = "1" ] && [ "$VERIFY_CLEANUP_PREVIEW" != "1" ] && [ "$APPLY_CLEANUP" != "1" ]; then
-  echo "error: CLEANUP_ONLY=1 requires VERIFY_CLEANUP_PREVIEW=1 or APPLY_CLEANUP=1" >&2
-  exit 1
+  fail "CLEANUP_ONLY=1 requires VERIFY_CLEANUP_PREVIEW=1 or APPLY_CLEANUP=1"
 fi
 if [ "$VERIFY_SETUP_IDEMPOTENCY" = "1" ] && [ "$RUN_SETUP" != "1" ]; then
-  echo "error: VERIFY_SETUP_IDEMPOTENCY=1 requires RUN_SETUP=1" >&2
-  exit 1
+  fail "VERIFY_SETUP_IDEMPOTENCY=1 requires RUN_SETUP=1"
 fi
 if [ "$SETUP_ONLY" = "1" ] && [ "$RUN_SETUP" != "1" ]; then
-  echo "error: SETUP_ONLY=1 requires RUN_SETUP=1" >&2
-  exit 1
+  fail "SETUP_ONLY=1 requires RUN_SETUP=1"
 fi
 if [ "$SETUP_ONLY" = "1" ] && [ "$UPGRADE_ONLY" = "1" ]; then
-  echo "error: SETUP_ONLY=1 and UPGRADE_ONLY=1 cannot be combined" >&2
-  exit 1
+  fail "SETUP_ONLY=1 and UPGRADE_ONLY=1 cannot be combined"
 fi
 if [ "$APPLY_UPGRADE" = "1" ] && [ "$VERIFY_UPGRADE_IDEMPOTENCY" != "1" ]; then
-  echo "error: APPLY_UPGRADE=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1 so real upgrades run the explicit idempotency path" >&2
-  exit 1
+  fail "APPLY_UPGRADE=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1 so real upgrades run the explicit idempotency path"
 fi
 if [ "$UPGRADE_ONLY" = "1" ] && [ "$VERIFY_UPGRADE_IDEMPOTENCY" != "1" ]; then
-  echo "error: UPGRADE_ONLY=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1" >&2
-  exit 1
+  fail "UPGRADE_ONLY=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1"
 fi
 if [ "$REQUIRE_CURRENT_DAEMON" = "1" ] || [ "$APPLY_OBJECTS" = "1" ] || [ "$APPLY" = "1" ] || [ "$APPLY_CLEANUP" = "1" ] || [ "$OBSERVE_ONLY" = "1" ]; then
   require_daemon_capabilities events rollback_revision_id binding_delete object_delete deployment_delete
