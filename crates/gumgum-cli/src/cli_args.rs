@@ -26,6 +26,7 @@ pub(crate) enum Command {
     Rollback(RollbackArgs),
     Logs(LogsArgs),
     Events(EventsArgs),
+    Operations(OperationsArgs),
     Graph(GraphArgs),
     Db(ObjectArgs),
     Kv(ObjectArgs),
@@ -226,6 +227,16 @@ pub(crate) struct EventsArgs {
     #[arg(long)]
     pub(crate) host: Option<String>,
     #[arg(long, default_value_t = 50)]
+    pub(crate) limit: u32,
+    #[arg(long, help = "Filter events by kind: mutation or reconciliation")]
+    pub(crate) kind: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct OperationsArgs {
+    #[arg(long)]
+    pub(crate) host: Option<String>,
+    #[arg(long, default_value_t = 100)]
     pub(crate) limit: u32,
 }
 

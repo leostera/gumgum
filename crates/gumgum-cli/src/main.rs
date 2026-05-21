@@ -11,6 +11,7 @@ mod graph_presenter;
 mod init_command;
 mod logs_command;
 mod object_command;
+mod operations_command;
 mod presentation;
 mod project_command;
 mod server_client;
@@ -34,6 +35,7 @@ use gumgum_core::{
 use init_command::init_manifest;
 use logs_command::logs;
 use object_command::object_command;
+use operations_command::operations;
 use project_command::{info, rollback};
 use setup_command::{install_gumgumd, resolve_setup};
 use system_command::{server, status, version};
@@ -84,6 +86,9 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         }
         Command::Events(args) => {
             events(args, cli.json).await?;
+        }
+        Command::Operations(args) => {
+            operations(args, cli.json).await?;
         }
         Command::Graph(args) => {
             graph(args, cli.json).await?;

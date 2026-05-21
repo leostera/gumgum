@@ -1,8 +1,22 @@
 use crate::{EventsArgs, print_value, resolve_server, server_client::ServerClient};
+use gumgum_core::{ControlPlaneEventKind, ErrorCode, GumgumError, ReconcileEvent, Subsystem};
+use std::str::FromStr;
 
 pub(crate) async fn events(args: EventsArgs, json: bool) -> gumgum_core::Result<()> {
     let server = resolve_server(args.host)?;
-    let report = ServerClient::new(server.host).events(args.limit).await?;
+    let mut report = ServerClient::new(server.host).events(args.limit).await?;
+    if let Some(kind) = args.kind.as_deref() {
+        let kind = ControlPlaneEventKind::from_str(kind).map_err(|_| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::InvalidArgs,
+                "unknown event kind filter",
+            )
+            .likely_cause("expected mutation or reconciliation")
+            .build()
+        })?;
+        report.events.retain(|event| event.kind == kind);
+    }
     if json {
         print_value(true, &report);
     } else if report.events.is_empty() {
@@ -15,7 +29,7 @@ pub(crate) async fn events(args: EventsArgs, json: bool) -> gumgum_core::Result<
     Ok(())
 }
 
-fn event_line(event: &gumgum_core::ReconcileEvent) -> String {
+fn event_line(event: &ReconcileEvent) -> String {
     let operation = event
         .operation_id
         .as_deref()
