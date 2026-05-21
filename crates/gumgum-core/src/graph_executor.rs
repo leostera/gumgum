@@ -80,6 +80,18 @@ impl GraphActionPlanner {
             capability,
         })
     }
+
+    pub fn ensure_object_step(
+        capability: Capability,
+        name: impl Into<String>,
+        provider: impl Into<String>,
+    ) -> GraphExecutionStep {
+        plan_action(&GraphReconcileAction::EnsureObject {
+            capability,
+            name: name.into(),
+            provider: provider.into(),
+        })
+    }
 }
 
 pub struct GraphActionExecutor;
@@ -106,6 +118,21 @@ impl GraphActionExecutor {
                 crate::providers::vaultwarden::ensure().await
             }
             _ => Ok(vec![format!("configured {capability} provider {name}")]),
+        }
+    }
+
+    pub async fn execute_object_provider_steps(
+        steps: &[GraphExecutionStep],
+        plan: &ObjectProviderPlan,
+        credentials: Option<ProviderCredentials>,
+    ) -> crate::Result<Vec<String>> {
+        let should_execute = steps
+            .iter()
+            .any(|step| matches!(step.target, GraphExecutionTarget::ObjectProvider { .. }));
+        if should_execute {
+            Self::execute_object_plan(plan, credentials).await
+        } else {
+            Ok(Vec::new())
         }
     }
 
@@ -273,6 +300,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn planner_can_synthesize_idempotent_object_step() {
+        let step =
+            GraphActionPlanner::ensure_object_step(Capability::Blob, "uploads", "minio.main");
+
+        assert_eq!(
+            step.target,
+            GraphExecutionTarget::ObjectProvider {
+                capability: Capability::Blob,
+                name: "uploads".to_owned(),
+                provider: "minio.main".to_owned(),
+            }
+        );
+    }
+
     #[tokio::test]
     async fn executor_routes_object_plan_to_provider_reconciler() {
         let plan = crate::object_provider_plan(
@@ -281,7 +323,12 @@ mod tests {
             "stripe.secret.example.test",
         );
 
-        let actions = GraphActionExecutor::execute_object_plan(&plan, None)
+        let step = GraphActionPlanner::ensure_object_step(
+            Capability::Secret,
+            "stripe-api-key",
+            "onepassword.main",
+        );
+        let actions = GraphActionExecutor::execute_object_provider_steps(&[step], &plan, None)
             .await
             .unwrap();
 

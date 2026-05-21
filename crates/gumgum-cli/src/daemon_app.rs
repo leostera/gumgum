@@ -251,15 +251,26 @@ async fn daemon_create_object(
     .ok()
     .and_then(Result::ok)
     .unwrap_or(false);
-    let provider_actions =
-        GraphActionExecutor::execute_object_plan(&provider_plan, provider_credentials)
-            .await
-            .unwrap_or_else(|error| {
-                vec![format!(
-                    "provider reconcile failed: {}",
-                    error.to_report().message
-                )]
-            });
+    let mut execution_steps = reconciliation_steps.clone();
+    if execution_steps.is_empty() {
+        execution_steps.push(GraphActionPlanner::ensure_object_step(
+            capability,
+            request.name.clone(),
+            provider.clone(),
+        ));
+    }
+    let provider_actions = GraphActionExecutor::execute_object_provider_steps(
+        &execution_steps,
+        &provider_plan,
+        provider_credentials,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        vec![format!(
+            "provider reconcile failed: {}",
+            error.to_report().message
+        )]
+    });
     Json(ObjectReport {
         ok,
         kind: capability_name,
@@ -268,7 +279,7 @@ async fn daemon_create_object(
         provider,
         connection_examples: provider_plan.connection_examples,
         provider_actions,
-        reconciliation_steps,
+        reconciliation_steps: execution_steps,
         message: if capability == gumgum_core::Capability::Db {
             "global object materialized with managed password secret and provider reconciled"
         } else {
