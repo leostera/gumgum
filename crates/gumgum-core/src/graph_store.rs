@@ -1,7 +1,7 @@
 use crate::{
-    Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge, GraphNode,
-    GumgumError, HealthPath, ImageName, ObjectName, Port, ProviderName, Result, RouteHost,
-    Subsystem, WorkerId,
+    BindingName, Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge,
+    GraphNode, GumgumError, HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName,
+    Result, RouteHost, Subsystem, WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -593,9 +593,9 @@ impl GraphStore {
             let (kind, name, worker, binding) =
                 row.map_err(|source| self.error("could not decode desired binding", source))?;
             nodes.push(DesiredGraphNode::Binding {
-                worker,
-                name: binding,
-                object: format!("{kind}/{name}"),
+                worker: WorkerId::new(&worker)?,
+                name: BindingName::new(&binding)?,
+                object: ObjectRef::new(format!("{kind}/{name}"))?,
             });
         }
         Ok(())
@@ -1000,9 +1000,9 @@ mod tests {
             provider: ProviderName::new("postgres.main").unwrap(),
         }));
         assert!(desired.nodes.contains(&DesiredGraphNode::Binding {
-            worker: "api".to_owned(),
-            name: "DATABASE_URL".to_owned(),
-            object: "db/main".to_owned(),
+            worker: WorkerId::new("api").unwrap(),
+            name: BindingName::new("DATABASE_URL").unwrap(),
+            object: ObjectRef::new("db/main").unwrap(),
         }));
         assert!(desired.nodes.contains(&DesiredGraphNode::Deployment {
             worker: WorkerId::new("api").unwrap(),

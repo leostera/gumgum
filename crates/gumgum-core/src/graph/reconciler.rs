@@ -1,6 +1,6 @@
 use crate::{
-    Capability, ContainerName, HealthPath, ImageName, ObjectName, Port, ProviderName, RouteHost,
-    WorkerId,
+    BindingName, Capability, ContainerName, HealthPath, ImageName, ObjectName, ObjectRef, Port,
+    ProviderName, RouteHost, WorkerId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -36,9 +36,9 @@ pub enum DesiredGraphNode {
         target_container: String,
     },
     Binding {
-        worker: String,
-        name: String,
-        object: String,
+        worker: WorkerId,
+        name: BindingName,
+        object: ObjectRef,
     },
     Object {
         capability: Capability,
@@ -105,9 +105,9 @@ pub enum GraphReconcileAction {
         target_container: String,
     },
     EnsureBinding {
-        worker: String,
-        name: String,
-        object: String,
+        worker: WorkerId,
+        name: BindingName,
+        object: ObjectRef,
     },
     EnsureObject {
         capability: Capability,

@@ -345,6 +345,94 @@ impl TryFrom<&str> for ObjectName {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct BindingName(String);
+
+impl BindingName {
+    pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
+        let value = value.as_ref().trim().to_owned();
+        if value.is_empty() {
+            return Err(invalid_graph_value("binding name must not be empty"));
+        }
+        if value.chars().any(char::is_whitespace) {
+            return Err(invalid_graph_value(
+                "binding name must not contain whitespace",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for BindingName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for BindingName {
+    type Error = GumgumError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for BindingName {
+    type Error = GumgumError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ObjectRef(String);
+
+impl ObjectRef {
+    pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
+        let value = value.as_ref().trim().to_owned();
+        if value.is_empty() {
+            return Err(invalid_graph_value("object reference must not be empty"));
+        }
+        if value.chars().any(char::is_whitespace) || !value.contains('/') {
+            return Err(invalid_graph_value(
+                "object reference must be capability/name without whitespace",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ObjectRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for ObjectRef {
+    type Error = GumgumError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for ObjectRef {
+    type Error = GumgumError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
 fn invalid_graph_value(message: &'static str) -> GumgumError {
     GumgumError::structured(Subsystem::Config, ErrorCode::InvalidArgs, message).build()
 }
@@ -406,6 +494,18 @@ mod tests {
         );
         assert!(ProviderName::new("bad provider").is_err());
         assert!(ObjectName::new(" ").is_err());
+    }
+
+    #[test]
+    fn binding_names_and_object_refs_reject_invalid_values() {
+        assert_eq!(
+            BindingName::new(" DATABASE_URL ").unwrap().as_str(),
+            "DATABASE_URL"
+        );
+        assert_eq!(ObjectRef::new(" db/main ").unwrap().as_str(), "db/main");
+        assert!(BindingName::new("DATABASE URL").is_err());
+        assert!(ObjectRef::new("main").is_err());
+        assert!(ObjectRef::new("db/main secret").is_err());
     }
 
     #[test]
