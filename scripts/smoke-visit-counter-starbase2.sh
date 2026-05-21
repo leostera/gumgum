@@ -20,6 +20,17 @@ remote_containers() {
   ssh "$HOST" "docker ps --format '{{.Names}}' | sort" 2>/dev/null || true
 }
 
+verify_test_dns() {
+  local route="api.visit-counter.${TEST_DOMAIN}"
+  if command -v dig >/dev/null 2>&1; then
+    dig +short "@$HOST" "$route" | grep -q .
+  elif command -v nslookup >/dev/null 2>&1; then
+    nslookup "$route" "$HOST" >/dev/null
+  else
+    echo "warning: dig/nslookup unavailable; skipping explicit .test DNS verification" >&2
+  fi
+}
+
 container_delta_guard() {
   remote_containers >"$after_file"
   missing=$(comm -23 "$before_file" "$after_file" || true)
@@ -58,6 +69,7 @@ run_gumgum queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_
 
 if [ "$APPLY" = "1" ]; then
   run_gumgum deploy --host "$HOST"
+  verify_test_dns
   curl -fsS -H "Host: api.visit-counter.${TEST_DOMAIN}" "http://${HOST}/" >/tmp/gumgum-visit-counter-response.txt
   grep -q "Hello visitor" /tmp/gumgum-visit-counter-response.txt
   run_gumgum events --host "$HOST" --limit 20

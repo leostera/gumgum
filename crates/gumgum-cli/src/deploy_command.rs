@@ -177,7 +177,13 @@ async fn deploy_one(
     GumgumInstaller::configure_client_resolver(&server.test_domain, &server.host, quiet).await?;
     report.ok = true;
     report.dry_run = false;
-    report.message = format!("deployed {} to {}", report.worker, server.host);
+    report.message = match &report.health_url {
+        Some(health_url) => format!(
+            "deployed {} to {}; health verified at {}",
+            report.worker, server.host, health_url
+        ),
+        None => format!("deployed {} to {}", report.worker, server.host),
+    };
     Ok(report)
 }
 

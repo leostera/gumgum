@@ -55,22 +55,66 @@ impl Presenter {
     }
 
     fn deploy_report(&self, report: &DeployReport) {
-        println!("Worker: {}", report.worker);
-        if let Some(host) = &report.host {
-            println!("Host: {host}");
+        for line in deploy_report_lines(report) {
+            println!("{line}");
         }
-        for route in &report.routes {
-            println!("Route: {route}");
-        }
-        println!("Image: {}", report.image);
-        println!("Container: {}", report.container);
-        println!("Plan:");
-        for level in &report.plan_graph.execution_levels {
-            println!("  - {}", level.join(", "));
-        }
-        if !report.dry_run {
-            println!("{}", report.message);
-        }
+    }
+}
+
+fn deploy_report_lines(report: &DeployReport) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push(format!("Worker: {}", report.worker));
+    if let Some(host) = &report.host {
+        lines.push(format!("Host: {host}"));
+    }
+    for route in &report.routes {
+        lines.push(format!("Route: {route}"));
+    }
+    if let Some(health_url) = &report.health_url {
+        lines.push(format!("Health: {health_url}"));
+    }
+    lines.push(format!("Image: {}", report.image));
+    lines.push(format!("Container: {}", report.container));
+    lines.push("Plan:".to_owned());
+    for level in &report.plan_graph.execution_levels {
+        lines.push(format!("  - {}", level.join(", ")));
+    }
+    if !report.dry_run {
+        lines.push(report.message.clone());
+    }
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gumgum_core::PlanGraph;
+
+    #[test]
+    fn deploy_lines_include_health_status_url() {
+        let report = DeployReport {
+            ok: true,
+            dry_run: false,
+            path: "api/gumgum.toml".to_owned(),
+            worker: "api".to_owned(),
+            host: Some("starbase2".to_owned()),
+            build_context: Some("api".to_owned()),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            port: 3000,
+            routes: vec!["api.visit-counter.leostera.test".to_owned()],
+            health_url: Some("http://api.visit-counter.leostera.test/healthz".to_owned()),
+            plan: Vec::new(),
+            plan_graph: PlanGraph::default(),
+            message: "deployed api; health verified".to_owned(),
+        };
+
+        let lines = deploy_report_lines(&report);
+
+        assert!(
+            lines.contains(&"Health: http://api.visit-counter.leostera.test/healthz".to_owned())
+        );
+        assert!(lines.contains(&"deployed api; health verified".to_owned()));
     }
 }
 
