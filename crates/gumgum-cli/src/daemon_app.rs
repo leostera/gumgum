@@ -11,11 +11,10 @@ use gumgum_api::{
     ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
-    ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy,
-    DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject, GraphActionExecutor,
-    GraphActionPlanner, GraphExecutionContext, GraphStore, GumgumError, LocalPlatform,
-    ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph, not_configured_status,
-    object_dns, object_provider_plan, render_mermaid_graph,
+    ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject,
+    GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore, GumgumError,
+    LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph,
+    not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -641,23 +640,32 @@ async fn daemon_rollback(
         let actions = if request.preview {
             rollback_preview_actions(&image)
         } else {
-            let store = GraphStore::new((*state.graph_path).clone());
+            let graph_path = (*state.graph_path).clone();
+            let deploy_graph = DesiredDeployGraph::new(&deploy);
+            let mut steps = deploy_graph.rollback_plan(graph_path.clone()).await;
+            if steps.is_empty() {
+                steps.push(deploy_graph.step());
+            }
+            let store = GraphStore::new(graph_path.clone());
             let deploy_for_db = deploy.clone();
             let _ =
                 tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db)).await;
-            let deploy_request = deploy_request_from_desired(deploy);
-            let (_, mut actions) = ContainerReconciler::new((*state.graph_path).clone())
-                .reconcile(&core_deploy_request(&deploy_request))
-                .await
-                .unwrap_or_else(|error| {
-                    (
-                        false,
-                        vec![format!(
-                            "rollback reconcile failed: {}",
-                            error.to_report().message
-                        )],
-                    )
-                });
+            let mut actions = GraphActionExecutor::execute_steps(
+                &steps,
+                GraphExecutionContext {
+                    object_plan: None,
+                    provider_credentials: None,
+                    deploy_request: None,
+                    graph_path: Some(graph_path),
+                },
+            )
+            .await
+            .unwrap_or_else(|error| {
+                vec![format!(
+                    "rollback reconcile failed: {}",
+                    error.to_report().message
+                )]
+            });
             actions.insert(0, format!("rollback to {image}"));
             actions
         };
@@ -680,6 +688,63 @@ fn rollback_preview_actions(image: &str) -> Vec<String> {
         format!("would rollback to {image}"),
         "preview only; no containers changed".to_owned(),
     ]
+}
+
+struct DesiredDeployGraph<'a> {
+    deploy: &'a DesiredDeploy,
+}
+
+impl<'a> DesiredDeployGraph<'a> {
+    fn new(deploy: &'a DesiredDeploy) -> Self {
+        Self { deploy }
+    }
+
+    async fn rollback_plan(&self, graph_path: PathBuf) -> Vec<gumgum_core::GraphExecutionStep> {
+        let deploy = self.deploy.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = GraphStore::new(graph_path);
+            let old_graph = store.load_desired_graph()?;
+            let mut new_graph = old_graph.clone();
+            new_graph.nodes.insert(Self::node_for(&deploy)?);
+            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    }
+
+    fn step(&self) -> gumgum_core::GraphExecutionStep {
+        GraphActionPlanner::ensure_deploy_step(
+            gumgum_core::WorkerId::new(&self.deploy.worker)
+                .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
+            gumgum_core::ContainerName::new(&self.deploy.container)
+                .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
+            gumgum_core::ImageName::new(&self.deploy.image)
+                .unwrap_or_else(|_| gumgum_core::ImageName::new("invalid:latest").unwrap()),
+            gumgum_core::RouteHost::new(&self.deploy.route)
+                .unwrap_or_else(|_| gumgum_core::RouteHost::new("invalid.local").unwrap()),
+            gumgum_core::Port::new(self.deploy.port)
+                .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
+            gumgum_core::HealthPath::new(&self.deploy.health)
+                .unwrap_or_else(|_| gumgum_core::HealthPath::new("/healthz").unwrap()),
+        )
+    }
+
+    fn node(&self) -> gumgum_core::Result<DesiredGraphNode> {
+        Self::node_for(self.deploy)
+    }
+
+    fn node_for(deploy: &DesiredDeploy) -> gumgum_core::Result<DesiredGraphNode> {
+        Ok(DesiredGraphNode::Deployment {
+            worker: gumgum_core::WorkerId::new(&deploy.worker)?,
+            image: gumgum_core::ImageName::new(&deploy.image)?,
+            container: gumgum_core::ContainerName::new(&deploy.container)?,
+            route: gumgum_core::RouteHost::new(&deploy.route)?,
+            port: gumgum_core::Port::new(deploy.port)?,
+            health: gumgum_core::HealthPath::new(&deploy.health)?,
+        })
+    }
 }
 
 fn rollback_report_from_revision(
@@ -744,20 +809,8 @@ async fn daemon_deploy(
             .and_then(Result::ok)
             .unwrap_or(false);
     if reconciliation_steps.is_empty() {
-        reconciliation_steps.push(GraphActionPlanner::ensure_deploy_step(
-            gumgum_core::WorkerId::new(&request.worker)
-                .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
-            gumgum_core::ContainerName::new(&request.container)
-                .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
-            gumgum_core::ImageName::new(&request.image)
-                .unwrap_or_else(|_| gumgum_core::ImageName::new("invalid:latest").unwrap()),
-            gumgum_core::RouteHost::new(&request.route)
-                .unwrap_or_else(|_| gumgum_core::RouteHost::new("invalid.local").unwrap()),
-            gumgum_core::Port::new(request.port)
-                .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
-            gumgum_core::HealthPath::new(&request.health)
-                .unwrap_or_else(|_| gumgum_core::HealthPath::new("/healthz").unwrap()),
-        ));
+        reconciliation_steps
+            .push(DesiredDeployGraph::new(&desired_from_deploy_request(request.clone())).step());
     }
     let deploy_context = GraphExecutionContext {
         object_plan: None,
@@ -793,20 +846,9 @@ async fn deploy_reconciliation_plan(
         let store = GraphStore::new(graph_path);
         let old_graph = store.load_desired_graph()?;
         let mut new_graph = old_graph.clone();
-        new_graph.nodes.insert(DesiredGraphNode::Deployment {
-            worker: gumgum_core::WorkerId::new(&request.worker)
-                .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
-            image: gumgum_core::ImageName::new(&request.image)
-                .unwrap_or_else(|_| gumgum_core::ImageName::new("invalid:latest").unwrap()),
-            container: gumgum_core::ContainerName::new(&request.container)
-                .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
-            route: gumgum_core::RouteHost::new(&request.route)
-                .unwrap_or_else(|_| gumgum_core::RouteHost::new("invalid.local").unwrap()),
-            port: gumgum_core::Port::new(request.port)
-                .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
-            health: gumgum_core::HealthPath::new(&request.health)
-                .unwrap_or_else(|_| gumgum_core::HealthPath::new("/healthz").unwrap()),
-        });
+        new_graph
+            .nodes
+            .insert(DesiredDeployGraph::new(&desired_from_deploy_request(request)).node()?);
         Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
     })
     .await
@@ -823,28 +865,6 @@ fn desired_from_deploy_request(value: DeployRequest) -> DesiredDeploy {
         route: value.route,
         port: value.port,
         health: value.health,
-    }
-}
-
-fn deploy_request_from_desired(value: DesiredDeploy) -> DeployRequest {
-    DeployRequest {
-        worker: value.worker,
-        image: value.image,
-        container: value.container,
-        route: value.route,
-        port: value.port,
-        health: value.health,
-    }
-}
-
-fn core_deploy_request(value: &DeployRequest) -> CoreDeployRequest {
-    CoreDeployRequest {
-        worker: value.worker.clone(),
-        image: value.image.clone(),
-        container: value.container.clone(),
-        route: value.route.clone(),
-        port: value.port,
-        health: value.health.clone(),
     }
 }
 
@@ -930,6 +950,37 @@ mod tests {
                 health: "/healthz".to_owned(),
             },
         }
+    }
+
+    #[test]
+    fn rollback_deploy_step_uses_self_contained_deploy_runtime_target() {
+        let deploy = DesiredDeploy {
+            worker: "api".to_owned(),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            route: "api.example.test".to_owned(),
+            port: 3000,
+            health: "/healthz".to_owned(),
+        };
+
+        let step = DesiredDeployGraph::new(&deploy).step();
+
+        assert!(matches!(
+            step.target,
+            gumgum_core::GraphExecutionTarget::DeployRuntime {
+                worker: Some(ref worker),
+                ref container,
+                ref image,
+                route: Some(ref route),
+                port: Some(port),
+                health: Some(ref health),
+            } if worker.as_str() == "api"
+                && container.as_str() == "gumgum-api"
+                && image.as_str() == "registry/api:1"
+                && route.as_str() == "api.example.test"
+                && port.get() == 3000
+                && health.as_str() == "/healthz"
+        ));
     }
 
     #[test]
