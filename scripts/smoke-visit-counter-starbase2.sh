@@ -77,6 +77,25 @@ after_graph_file=$(mktemp)
 if [ -n "$ARTIFACT_DIR" ]; then
   mkdir -p "$ARTIFACT_DIR"
 fi
+
+write_artifact_summary() {
+  if [ -z "$ARTIFACT_DIR" ]; then
+    return
+  fi
+  cat >"$ARTIFACT_DIR/summary.txt" <<EOF
+host=$HOST
+root_domain=$ROOT_DOMAIN
+test_domain=$TEST_DOMAIN
+apply_objects=$APPLY_OBJECTS
+apply=$APPLY
+objects_only=$OBJECTS_ONLY
+deploy_only=$DEPLOY_ONLY
+observe_only=$OBSERVE_ONLY
+cleanup_only=$CLEANUP_ONLY
+apply_cleanup=$APPLY_CLEANUP
+apply_upgrade=$APPLY_UPGRADE
+EOF
+}
 cleanup() {
   rm -f "$before_file" "$after_file" "$before_graph_file" "$after_graph_file"
 }
@@ -257,6 +276,7 @@ fi
 
 if [ "$SETUP_ONLY" = "1" ]; then
   container_delta_guard
+  write_artifact_summary
   echo "visit-counter smoke setup-only completed; RUN_SETUP=$RUN_SETUP VERIFY_SETUP_IDEMPOTENCY=$VERIFY_SETUP_IDEMPOTENCY; pre-existing containers preserved"
   exit 0
 fi
@@ -274,6 +294,7 @@ fi
 
 if [ "$UPGRADE_ONLY" = "1" ]; then
   container_delta_guard
+  write_artifact_summary
   echo "visit-counter smoke upgrade-only completed; APPLY_UPGRADE=$APPLY_UPGRADE; pre-existing containers preserved"
   exit 0
 fi
@@ -285,6 +306,7 @@ if [ "$OBSERVE_ONLY" = "1" ]; then
   run_gumgum_artifact logs-api logs --host "$HOST" api --tail 20 || true
   run_gumgum_artifact logs-worker logs --host "$HOST" worker --tail 20 || true
   container_delta_guard
+  write_artifact_summary
   echo "visit-counter smoke observe-only completed; pre-existing containers preserved"
   exit 0
 fi
@@ -308,6 +330,7 @@ fi
 if [ "$OBJECTS_ONLY" = "1" ]; then
   popd >/dev/null
   container_delta_guard
+  write_artifact_summary
   echo "visit-counter smoke objects-only completed; APPLY_OBJECTS=$APPLY_OBJECTS; pre-existing containers preserved"
   exit 0
 fi
@@ -353,12 +376,13 @@ fi
 if [ "$CLEANUP_ONLY" = "1" ]; then
   popd >/dev/null
   container_delta_guard
+  write_artifact_summary
   echo "visit-counter smoke cleanup-only completed; APPLY_CLEANUP=$APPLY_CLEANUP; pre-existing containers preserved"
   exit 0
 fi
 
 if [ "$APPLY" = "1" ]; then
-  run_gumgum deploy --host "$HOST"
+  run_gumgum_artifact deploy deploy --host "$HOST"
   verify_test_dns
   response_file="${ARTIFACT_DIR:-/tmp}/gumgum-visit-counter-response.txt"
   curl -fsS -H "Host: api.visit-counter.${TEST_DOMAIN}" "http://${HOST}/" >"$response_file"
@@ -370,11 +394,12 @@ if [ "$APPLY" = "1" ]; then
   run_gumgum logs --host "$HOST" api --tail 20 || true
   run_gumgum logs --host "$HOST" worker --tail 20 || true
 else
-  run_gumgum --dry-run deploy --host "$HOST"
+  run_gumgum_artifact deploy-dry-run --dry-run deploy --host "$HOST"
 fi
 
 popd >/dev/null
 
 container_delta_guard
+write_artifact_summary
 
 echo "visit-counter smoke completed; APPLY_OBJECTS=$APPLY_OBJECTS APPLY=$APPLY DEPLOY_ONLY=$DEPLOY_ONLY APPLY_CLEANUP=$APPLY_CLEANUP; pre-existing containers preserved"
