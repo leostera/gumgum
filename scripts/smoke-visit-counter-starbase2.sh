@@ -100,6 +100,31 @@ apply_upgrade=$APPLY_UPGRADE
 EOF
 }
 
+write_artifact_readme() {
+  if [ -z "$ARTIFACT_DIR" ]; then
+    return
+  fi
+  cat >"$ARTIFACT_DIR/README.txt" <<'EOF'
+Visit-counter smoke artifacts
+
+Key files:
+  summary.txt             run mode, host, domains, and timestamp
+  index.txt               sorted list of captured files
+  checksums.sha256        integrity checksums for captured files
+  containers-before.txt   remote containers before the smoke stage
+  containers-after.txt    remote containers after the smoke stage
+  deploy-dry-run.txt      dry-run deploy plan output, when captured
+  deploy.txt              apply deploy output, when captured
+  gumgum-visit-counter-response.txt  route curl response, when deploy applies
+  status/events/operations/logs-*.txt observe-only output, when captured
+  graph-before.json / graph-after.json cleanup preview/apply graph snapshots
+
+Safe review:
+  diff -u containers-before.txt containers-after.txt
+  shasum -a 256 -c checksums.sha256
+EOF
+}
+
 write_artifact_index() {
   if [ -z "$ARTIFACT_DIR" ]; then
     return
@@ -119,7 +144,7 @@ write_artifact_checksums() {
   fi
   (
     cd "$ARTIFACT_DIR"
-    find . -maxdepth 1 -type f ! -name checksums.sha256 -print \
+    find . -maxdepth 1 -type f ! -name checksums.sha256 ! -name index.txt -print \
       | sed 's#^./##' \
       | sort \
       | xargs shasum -a 256 >checksums.sha256
@@ -128,6 +153,7 @@ write_artifact_checksums() {
 
 write_artifacts() {
   write_artifact_summary
+  write_artifact_readme
   write_artifact_index
   write_artifact_checksums
   write_artifact_index
