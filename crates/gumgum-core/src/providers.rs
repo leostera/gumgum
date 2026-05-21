@@ -114,6 +114,22 @@ mod tests {
     }
 
     #[test]
+    fn kv_provider_delete_plan_is_scoped_to_redis_namespace() {
+        let plan = object_provider_plan(
+            Capability::Kv,
+            "user-counters",
+            "user-counters.kv.example.test",
+        );
+
+        assert_eq!(plan.provider.provider, "redis.main");
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| action == "reserve Redis key prefix user-counters:")
+        );
+    }
+
+    #[test]
     fn provider_boot_requires_all_default_credentials() {
         let credentials = vec![(
             "redis.main".to_owned(),

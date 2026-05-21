@@ -21,7 +21,7 @@ impl ProviderReconciler {
                 )
                 .await
             }
-            Capability::Kv => super::redis::ensure(&plan.provider).await,
+            Capability::Kv => super::redis::ensure_object(plan).await,
             Capability::Blob => {
                 super::minio::ensure(
                     plan,
@@ -46,6 +46,7 @@ impl ProviderReconciler {
                 )
                 .await
             }
+            Capability::Kv => super::redis::delete_object(plan).await,
             _ => Ok(vec![format!(
                 "removed desired {} object {}; provider cleanup is not implemented yet",
                 plan.capability, plan.name

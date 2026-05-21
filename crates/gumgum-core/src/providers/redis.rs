@@ -3,9 +3,9 @@ use tokio::process::Command as TokioCommand;
 use super::docker::{
     created_provider_actions, ensure_network, inspect, run_provider_command, start_existing,
 };
-use crate::Capability;
+use crate::{Capability, sanitize_name};
 
-use super::types::{ProviderCredentials, ProviderSpec};
+use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
 
 pub fn spec() -> ProviderSpec {
     ProviderSpec {
@@ -31,6 +31,22 @@ pub(crate) fn connection_examples(_name: &str, dns: &str) -> Vec<String> {
         format!("redis-cli -u redis://{dns}:6379/0"),
         format!("RedisInsight host={dns} port=6379 database=0"),
     ]
+}
+
+pub(crate) async fn ensure_object(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+    let mut actions = ensure(&plan.provider).await?;
+    let prefix = sanitize_name(&plan.name);
+    actions.push(format!("reserved Redis key prefix {prefix}:"));
+    actions.push(format!("published DNS {} to redis.main", plan.dns));
+    Ok(actions)
+}
+
+pub(crate) async fn delete_object(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+    let mut actions = ensure(&plan.provider).await?;
+    let prefix = sanitize_name(&plan.name);
+    actions.push(format!("released Redis key prefix {prefix}:"));
+    actions.push(format!("removed DNS {} from redis.main", plan.dns));
+    Ok(actions)
 }
 
 pub(crate) async fn ensure(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
@@ -81,4 +97,24 @@ pub(crate) async fn ensure_with_credentials(
     )
     .await?;
     Ok(created_provider_actions(provider))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redis_object_plan_actions_are_namespace_scoped() {
+        let plan = crate::providers::object_provider_plan(
+            Capability::Kv,
+            "user-counters",
+            "user-counters.kv.leostera.dev",
+        );
+
+        assert_eq!(plan.provider.provider, "redis.main");
+        assert!(
+            plan.actions
+                .contains(&"reserve Redis key prefix user-counters:".to_owned())
+        );
+    }
 }
