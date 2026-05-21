@@ -60,7 +60,26 @@ pub struct GraphActionPlanner;
 
 impl GraphActionPlanner {
     pub fn plan(actions: &[GraphReconcileAction]) -> Vec<GraphExecutionStep> {
-        actions.iter().map(plan_action).collect()
+        Self::normalize_steps(actions.iter().map(plan_action).collect())
+    }
+
+    pub fn normalize_steps(steps: Vec<GraphExecutionStep>) -> Vec<GraphExecutionStep> {
+        let has_container_runtime = steps
+            .iter()
+            .any(|step| matches!(step.target, GraphExecutionTarget::ContainerRuntime { .. }));
+        if !has_container_runtime {
+            return steps;
+        }
+        steps
+            .into_iter()
+            .filter(|step| {
+                !matches!(
+                    step.target,
+                    GraphExecutionTarget::WorkerRuntime { .. }
+                        | GraphExecutionTarget::Gateway { .. }
+                )
+            })
+            .collect()
     }
 
     pub fn plan_transition(
@@ -487,6 +506,30 @@ mod tests {
     }
 
     #[test]
+    fn planner_normalizes_deploy_runtime_to_container_step() {
+        let steps = GraphActionPlanner::plan(&[
+            GraphReconcileAction::EnsureWorker {
+                name: "api".to_owned(),
+                image: "ghcr.io/acme/api:v1".to_owned(),
+            },
+            GraphReconcileAction::EnsureContainer {
+                name: "api".to_owned(),
+                image: "ghcr.io/acme/api:v1".to_owned(),
+            },
+            GraphReconcileAction::EnsureRoute {
+                host: "api.example.test".to_owned(),
+                target_container: "api".to_owned(),
+            },
+        ]);
+
+        assert_eq!(steps.len(), 1);
+        assert!(matches!(
+            steps[0].target,
+            GraphExecutionTarget::ContainerRuntime { .. }
+        ));
+    }
+
+    #[test]
     fn planner_routes_runtime_and_gateway_actions_to_distinct_targets() {
         let steps = GraphActionPlanner::plan(&[
             GraphReconcileAction::EnsureContainer {
@@ -499,13 +542,10 @@ mod tests {
             },
         ]);
 
+        assert_eq!(steps.len(), 1);
         assert!(matches!(
             steps[0].target,
             GraphExecutionTarget::ContainerRuntime { .. }
-        ));
-        assert!(matches!(
-            steps[1].target,
-            GraphExecutionTarget::Gateway { .. }
         ));
     }
 }
