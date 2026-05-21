@@ -1,6 +1,12 @@
+pub mod docker;
+pub mod minio;
+pub mod postgres;
 pub mod reconciler;
+pub mod redis;
+pub mod secret;
 pub mod specs;
 pub mod types;
+pub mod vaultwarden;
 
 pub use reconciler::ProviderReconciler;
 pub use specs::{connection_examples, object_provider_plan, provider_spec};
@@ -131,7 +137,7 @@ mod tests {
         assert_eq!(plan.provider.image, "minio/minio:latest");
         assert_eq!(plan.provider.port, 9000);
         assert_eq!(
-            reconciler::created_provider_actions(&plan.provider),
+            docker::created_provider_actions(&plan.provider),
             vec!["created minio.main provider container gumgum-provider-minio-main"]
         );
         assert!(
@@ -148,7 +154,7 @@ mod tests {
             "stripe-api-key",
             "stripe.secret.example.test",
         );
-        let actions = reconciler::secret_provider_actions(&plan);
+        let actions = secret::provider_actions(&plan);
 
         assert_eq!(plan.provider.provider, "onepassword.main");
         assert!(
@@ -161,8 +167,8 @@ mod tests {
 
     #[test]
     fn shell_single_quote_escapes_minio_credentials() {
-        assert_eq!(reconciler::shell_single_quote("plain"), "plain");
-        assert_eq!(reconciler::shell_single_quote("don't"), "don'\\''t");
+        assert_eq!(minio::shell_single_quote("plain"), "plain");
+        assert_eq!(minio::shell_single_quote("don't"), "don'\\''t");
     }
 
     #[test]

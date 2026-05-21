@@ -63,17 +63,6 @@ pub fn provider_spec(capability: Capability) -> ProviderSpec {
     }
 }
 
-pub fn vaultwarden_spec() -> ProviderSpec {
-    ProviderSpec {
-        capability: Capability::Secret,
-        provider: "vaultwarden.main".to_owned(),
-        container: "gumgum-provider-vaultwarden-main".to_owned(),
-        image: "vaultwarden/server:latest".to_owned(),
-        port: 80,
-        protocol: "bitwarden-compatible".to_owned(),
-    }
-}
-
 pub fn object_provider_plan(capability: Capability, name: &str, dns: &str) -> ObjectProviderPlan {
     let provider = provider_spec(capability);
     let safe_name = sanitize_name(name);
@@ -106,8 +95,8 @@ pub fn connection_examples(capability: Capability, name: &str, dns: &str) -> Vec
             format!("KAFKA_BROKERS={dns}:9092 KAFKA_TOPIC={name}"),
         ],
         Capability::Secret => vec![
-            format!("op item get {name} --vault gumgum"),
-            format!("onepassword://gumgum/{name}"),
+            format!("bw get item {name}"),
+            format!("bitwarden://gumgum/{name}"),
         ],
         Capability::Observability => vec![format!("OTEL_EXPORTER_OTLP_ENDPOINT=http://{dns}:4317")],
         Capability::Manual => Vec::new(),
