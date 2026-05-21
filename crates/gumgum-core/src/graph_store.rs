@@ -1,7 +1,7 @@
 use crate::{
-    BindingName, Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode, GraphEdge,
-    GraphNode, GumgumError, HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName,
-    Result, RouteHost, Subsystem, WorkerId,
+    BindingName, Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode,
+    GraphActionPlanner, GraphEdge, GraphExecutionStep, GraphNode, GumgumError, HealthPath,
+    ImageName, ObjectName, ObjectRef, Port, ProviderName, Result, RouteHost, Subsystem, WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,48 @@ pub struct DesiredDeploy {
     pub route: String,
     pub port: u16,
     pub health: String,
+}
+
+impl DesiredDeploy {
+    pub fn graph_node(&self) -> Result<DesiredGraphNode> {
+        Ok(DesiredGraphNode::Deployment {
+            worker: WorkerId::new(&self.worker)?,
+            image: ImageName::new(&self.image)?,
+            container: ContainerName::new(&self.container)?,
+            route: RouteHost::new(&self.route)?,
+            port: Port::new(self.port)?,
+            health: HealthPath::new(&self.health)?,
+        })
+    }
+
+    pub fn execution_step(&self) -> GraphExecutionStep {
+        GraphActionPlanner::ensure_deploy_step(
+            WorkerId::new(&self.worker).unwrap_or_else(|_| WorkerId::new("worker").unwrap()),
+            ContainerName::new(&self.container)
+                .unwrap_or_else(|_| ContainerName::new("container").unwrap()),
+            ImageName::new(&self.image)
+                .unwrap_or_else(|_| ImageName::new("invalid:latest").unwrap()),
+            RouteHost::new(&self.route)
+                .unwrap_or_else(|_| RouteHost::new("invalid.local").unwrap()),
+            Port::new(self.port).unwrap_or_else(|_| Port::new(80).unwrap()),
+            HealthPath::new(&self.health).unwrap_or_else(|_| HealthPath::new("/healthz").unwrap()),
+        )
+    }
+
+    pub async fn reconciliation_steps(&self, graph_path: PathBuf) -> Vec<GraphExecutionStep> {
+        let deploy = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = GraphStore::new(graph_path);
+            let old_graph = store.load_desired_graph()?;
+            let mut new_graph = old_graph.clone();
+            new_graph.nodes.insert(deploy.graph_node()?);
+            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

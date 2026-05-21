@@ -640,10 +640,9 @@ async fn daemon_rollback(
             rollback_preview_actions(&image)
         } else {
             let graph_path = (*state.graph_path).clone();
-            let deploy_graph = DesiredDeployGraph::new(deploy.clone());
-            let mut steps = deploy_graph.rollback_plan(graph_path.clone()).await;
+            let mut steps = deploy.reconciliation_steps(graph_path.clone()).await;
             if steps.is_empty() {
-                steps.push(deploy_graph.step());
+                steps.push(deploy.execution_step());
             }
             let store = GraphStore::new(graph_path.clone());
             let deploy_for_db = deploy.clone();
@@ -686,74 +685,6 @@ fn rollback_preview_actions(image: &str) -> Vec<String> {
         format!("would rollback to {image}"),
         "preview only; no containers changed".to_owned(),
     ]
-}
-
-struct DesiredDeployGraph {
-    deploy: DesiredDeploy,
-}
-
-impl DesiredDeployGraph {
-    fn new(deploy: DesiredDeploy) -> Self {
-        Self { deploy }
-    }
-
-    fn from_request(value: DeployRequest) -> Self {
-        Self::new(DesiredDeploy {
-            worker: value.worker,
-            image: value.image,
-            container: value.container,
-            route: value.route,
-            port: value.port,
-            health: value.health,
-        })
-    }
-
-    async fn rollback_plan(&self, graph_path: PathBuf) -> Vec<gumgum_core::GraphExecutionStep> {
-        let deploy = self.deploy.clone();
-        tokio::task::spawn_blocking(move || {
-            let store = GraphStore::new(graph_path);
-            let old_graph = store.load_desired_graph()?;
-            let mut new_graph = old_graph.clone();
-            new_graph.nodes.insert(Self::node_for(&deploy)?);
-            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-        })
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default()
-    }
-
-    fn step(&self) -> gumgum_core::GraphExecutionStep {
-        GraphActionPlanner::ensure_deploy_step(
-            gumgum_core::WorkerId::new(&self.deploy.worker)
-                .unwrap_or_else(|_| gumgum_core::WorkerId::new("worker").unwrap()),
-            gumgum_core::ContainerName::new(&self.deploy.container)
-                .unwrap_or_else(|_| gumgum_core::ContainerName::new("container").unwrap()),
-            gumgum_core::ImageName::new(&self.deploy.image)
-                .unwrap_or_else(|_| gumgum_core::ImageName::new("invalid:latest").unwrap()),
-            gumgum_core::RouteHost::new(&self.deploy.route)
-                .unwrap_or_else(|_| gumgum_core::RouteHost::new("invalid.local").unwrap()),
-            gumgum_core::Port::new(self.deploy.port)
-                .unwrap_or_else(|_| gumgum_core::Port::new(80).unwrap()),
-            gumgum_core::HealthPath::new(&self.deploy.health)
-                .unwrap_or_else(|_| gumgum_core::HealthPath::new("/healthz").unwrap()),
-        )
-    }
-
-    fn node(&self) -> gumgum_core::Result<DesiredGraphNode> {
-        Self::node_for(&self.deploy)
-    }
-
-    fn node_for(deploy: &DesiredDeploy) -> gumgum_core::Result<DesiredGraphNode> {
-        Ok(DesiredGraphNode::Deployment {
-            worker: gumgum_core::WorkerId::new(&deploy.worker)?,
-            image: gumgum_core::ImageName::new(&deploy.image)?,
-            container: gumgum_core::ContainerName::new(&deploy.container)?,
-            route: gumgum_core::RouteHost::new(&deploy.route)?,
-            port: gumgum_core::Port::new(deploy.port)?,
-            health: gumgum_core::HealthPath::new(&deploy.health)?,
-        })
-    }
 }
 
 fn rollback_report_from_revision(
@@ -810,16 +741,16 @@ async fn daemon_deploy(
     let reconcile_path = path.clone();
     let store = GraphStore::new(path.clone());
     let mut reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
-    let deploy_graph = DesiredDeployGraph::from_request(request.clone());
-    let request_for_db = deploy_graph.deploy.clone();
+    let request_for_db = request.clone().into_desired_deploy();
+    let deploy_for_db = request_for_db.clone();
     let materialized =
-        tokio::task::spawn_blocking(move || store.materialize_deploy(&request_for_db))
+        tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db))
             .await
             .ok()
             .and_then(Result::ok)
             .unwrap_or(false);
     if reconciliation_steps.is_empty() {
-        reconciliation_steps.push(deploy_graph.step());
+        reconciliation_steps.push(request_for_db.execution_step());
     }
     let deploy_context = GraphExecutionContext {
         object_plan: None,
@@ -845,6 +776,23 @@ async fn daemon_deploy(
     })
 }
 
+trait DeployRequestExt {
+    fn into_desired_deploy(self) -> DesiredDeploy;
+}
+
+impl DeployRequestExt for DeployRequest {
+    fn into_desired_deploy(self) -> DesiredDeploy {
+        DesiredDeploy {
+            worker: self.worker,
+            image: self.image,
+            container: self.container,
+            route: self.route,
+            port: self.port,
+            health: self.health,
+        }
+    }
+}
+
 async fn deploy_reconciliation_plan(
     graph_path: PathBuf,
     request: &DeployRequest,
@@ -856,7 +804,7 @@ async fn deploy_reconciliation_plan(
         let mut new_graph = old_graph.clone();
         new_graph
             .nodes
-            .insert(DesiredDeployGraph::from_request(request).node()?);
+            .insert(request.into_desired_deploy().graph_node()?);
         Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
     })
     .await
@@ -960,7 +908,7 @@ mod tests {
             health: "/healthz".to_owned(),
         };
 
-        let step = DesiredDeployGraph::new(deploy).step();
+        let step = deploy.execution_step();
 
         assert!(matches!(
             step.target,
