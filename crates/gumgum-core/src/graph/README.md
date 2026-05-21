@@ -25,7 +25,7 @@ Typed reconciliation actions now cover provider, worker, container, deploy, rout
 These remain raw strings for now because they are edge/persistence/presentation values rather than canonical graph-domain internals:
 
 - `DesiredDeploy`, `GlobalObject`, `WorkerBinding`, and `DesiredProvider` fields in `graph_store.rs`: persisted/API-adjacent DTOs. They expose methods such as `graph_node`, `execution_step`, and `*_reconciliation_steps` to convert into typed graph values.
-- `ReconcileEvent::{kind, target, action, message, created_at}` and `NewReconcileEvent`: control-plane event-log records. `kind` distinguishes user desired-state mutations from reconciliation/execution steps. `target`/`action` are stable display/filter keys, `message` is user-facing text, and `created_at` is SQLite text output.
+- `ReconcileEvent::{kind, operation_id, target, action, message, created_at}` and `NewReconcileEvent`: control-plane event-log records. `kind` distinguishes user desired-state mutations from reconciliation/execution steps. `operation_id` groups planned/executed/failed records from the same execution run, `target`/`action` are stable display/filter keys, `message` is user-facing text, and `created_at` is SQLite text output.
 - `GraphExecutionStep::description`: user-facing execution text.
 - `GraphExecutionTarget::{WorkerRuntime,ContainerRuntime,Gateway,GraphStore}` fields: compatibility/presentation targets used while normalizing legacy worker/container/route actions into typed `DeployRuntime` where possible.
 - `DesiredGraphNode::{Daemon,Worker,Container,Route}` fields: legacy/presentation-style desired nodes retained for compatibility with older graph projections. New deployment execution should prefer `DesiredGraphNode::Deployment`.

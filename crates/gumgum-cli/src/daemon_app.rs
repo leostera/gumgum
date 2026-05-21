@@ -1254,6 +1254,7 @@ mod tests {
         store
             .record_reconcile_event(&gumgum_core::NewReconcileEvent {
                 kind: gumgum_core::ControlPlaneEventKind::Reconciliation,
+                operation_id: None,
                 status: gumgum_core::ReconcileEventStatus::Planned,
                 target: "provider/manual.main".to_owned(),
                 action: "ensure_provider".to_owned(),
@@ -1263,6 +1264,7 @@ mod tests {
         store
             .record_reconcile_event(&gumgum_core::NewReconcileEvent {
                 kind: gumgum_core::ControlPlaneEventKind::Reconciliation,
+                operation_id: None,
                 status: gumgum_core::ReconcileEventStatus::Executed,
                 target: "provider/manual.main".to_owned(),
                 action: "ensure_provider".to_owned(),

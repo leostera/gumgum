@@ -6,7 +6,11 @@ use crate::{
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DesiredDeploy {
@@ -177,6 +181,8 @@ pub struct ReconcileEvent {
     pub id: ReconcileEventId,
     pub kind: ControlPlaneEventKind,
     pub status: ReconcileEventStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
     pub target: String,
     pub action: String,
     pub message: String,
@@ -187,6 +193,8 @@ pub struct ReconcileEvent {
 pub struct NewReconcileEvent {
     pub kind: ControlPlaneEventKind,
     pub status: ReconcileEventStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
     pub target: String,
     pub action: String,
     pub message: String,
@@ -378,6 +386,7 @@ impl GraphStore {
             CREATE TABLE IF NOT EXISTS reconciliation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL DEFAULT 'reconciliation',
+                operation_id TEXT,
                 status TEXT NOT NULL,
                 target TEXT NOT NULL,
                 action TEXT NOT NULL,
@@ -386,8 +395,13 @@ impl GraphStore {
             );",
         )
         .map_err(|source| self.error("could not initialize graph database", source))?;
-        let _ = self.open()?.execute(
+        let conn = self.open()?;
+        let _ = conn.execute(
             "ALTER TABLE reconciliation_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'reconciliation'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE reconciliation_events ADD COLUMN operation_id TEXT",
             [],
         );
         Ok(())
@@ -432,10 +446,11 @@ impl GraphStore {
         self.init()?;
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO reconciliation_events (kind, status, target, action, message, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)",
+            "INSERT INTO reconciliation_events (kind, operation_id, status, target, action, message, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)",
             params![
                 event.kind.to_string(),
+                event.operation_id,
                 event.status.to_string(),
                 event.target,
                 event.action,
@@ -455,6 +470,7 @@ impl GraphStore {
         self.record_reconcile_event(&NewReconcileEvent {
             kind: ControlPlaneEventKind::Mutation,
             status: ReconcileEventStatus::Executed,
+            operation_id: Some(new_operation_id("mutation")),
             target: target.into(),
             action: action.into(),
             message: message.into(),
@@ -467,7 +483,7 @@ impl GraphStore {
         let limit = limit.clamp(1, 500);
         let mut stmt = conn
             .prepare(
-                "SELECT id, kind, status, target, action, message, created_at
+                "SELECT id, kind, operation_id, status, target, action, message, created_at
                  FROM reconciliation_events
                  ORDER BY id DESC
                  LIMIT ?1",
@@ -476,26 +492,29 @@ impl GraphStore {
         let rows = stmt
             .query_map(params![limit], |row| {
                 let kind: String = row.get(1)?;
-                let status: String = row.get(2)?;
+                let operation_id: Option<String> = row.get(2)?;
+                let status: String = row.get(3)?;
                 Ok((
                     row.get::<_, i64>(0)?,
                     kind,
+                    operation_id,
                     status,
-                    row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
                 ))
             })
             .map_err(|source| self.error("could not read reconciliation events", source))?;
         let mut events = Vec::new();
         for row in rows {
-            let (id, kind, status, target, action, message, created_at) =
+            let (id, kind, operation_id, status, target, action, message, created_at) =
                 row.map_err(|source| self.error("could not decode reconciliation event", source))?;
             events.push(ReconcileEvent {
                 id: ReconcileEventId::new(id),
                 kind: ControlPlaneEventKind::from_str(&kind)?,
                 status: ReconcileEventStatus::from_str(&status)?,
+                operation_id,
                 target,
                 action,
                 message,
@@ -1403,6 +1422,14 @@ fn image_scope(image: &str) -> (String, String) {
     }
 }
 
+pub fn new_operation_id(prefix: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}-{nanos}", crate::sanitize_name(prefix))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1431,6 +1458,7 @@ mod tests {
         let first = store
             .record_reconcile_event(&NewReconcileEvent {
                 kind: ControlPlaneEventKind::Reconciliation,
+                operation_id: None,
                 status: ReconcileEventStatus::Planned,
                 target: "provider/vaultwarden.main".to_owned(),
                 action: "ensure provider".to_owned(),
@@ -1440,6 +1468,7 @@ mod tests {
         let second = store
             .record_reconcile_event(&NewReconcileEvent {
                 kind: ControlPlaneEventKind::Reconciliation,
+                operation_id: None,
                 status: ReconcileEventStatus::Executed,
                 target: "provider/vaultwarden.main".to_owned(),
                 action: "ensure provider".to_owned(),

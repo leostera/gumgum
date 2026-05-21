@@ -251,13 +251,19 @@ impl GraphActionExecutor {
 struct GraphExecutionSession {
     context: GraphExecutionContext,
     container_runtime_seen: bool,
+    operation_id: Option<String>,
 }
 
 impl GraphExecutionSession {
     fn new(context: GraphExecutionContext) -> Self {
+        let operation_id = context
+            .graph_path
+            .as_ref()
+            .map(|_| crate::new_operation_id("reconcile"));
         Self {
             context,
             container_runtime_seen: false,
+            operation_id,
         }
     }
 
@@ -411,6 +417,7 @@ impl GraphExecutionSession {
             &crate::NewReconcileEvent {
                 kind: crate::ControlPlaneEventKind::Reconciliation,
                 status,
+                operation_id: self.operation_id.clone(),
                 target: step.target.event_target(),
                 action: step.action.event_action(),
                 message,
@@ -691,6 +698,8 @@ mod tests {
         assert_eq!(events[0].target, "provider/manual.main");
         assert_eq!(events[0].action, "ensure_provider");
         assert_eq!(events[0].message, "injected graph execution failure");
+        assert!(events[0].operation_id.is_some());
+        assert_eq!(events[0].operation_id, events[1].operation_id);
         assert_eq!(events[1].status, crate::ReconcileEventStatus::Planned);
         let _ = std::fs::remove_file(graph_path);
     }
@@ -727,6 +736,8 @@ mod tests {
         assert_eq!(events[0].status, crate::ReconcileEventStatus::Executed);
         assert_eq!(events[0].target, "provider/manual.main");
         assert_eq!(events[0].action, "ensure_provider");
+        assert!(events[0].operation_id.is_some());
+        assert_eq!(events[0].operation_id, events[1].operation_id);
         assert_eq!(events[1].status, crate::ReconcileEventStatus::Planned);
         let _ = std::fs::remove_file(graph_path);
     }

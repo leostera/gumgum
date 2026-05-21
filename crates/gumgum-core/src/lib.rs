@@ -24,7 +24,7 @@ pub use graph::{
 pub use graph_store::{
     ControlPlaneEventKind, DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject,
     GraphStore, NewReconcileEvent, ReconcileEvent, ReconcileEventId, ReconcileEventStatus,
-    WorkerBinding, object_dns,
+    WorkerBinding, new_operation_id, object_dns,
 };
 pub use manifest::{
     Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,
