@@ -85,12 +85,12 @@ pub enum GraphReconcileAction {
         capability: Capability,
     },
     EnsureWorker {
-        name: String,
-        image: String,
+        name: WorkerId,
+        image: ImageName,
     },
     EnsureContainer {
-        name: String,
-        image: String,
+        name: ContainerName,
+        image: ImageName,
     },
     EnsureDeploy {
         worker: WorkerId,
@@ -101,8 +101,8 @@ pub enum GraphReconcileAction {
         health: HealthPath,
     },
     EnsureRoute {
-        host: String,
-        target_container: String,
+        host: RouteHost,
+        target_container: ContainerName,
     },
     EnsureBinding {
         worker: WorkerId,
@@ -148,12 +148,15 @@ fn ensure_action(node: &DesiredGraphNode) -> GraphReconcileAction {
             capability: *capability,
         },
         DesiredGraphNode::Worker { name, image } => GraphReconcileAction::EnsureWorker {
-            name: name.clone(),
-            image: image.clone(),
+            name: WorkerId::new(name).unwrap_or_else(|_| WorkerId::new("worker").unwrap()),
+            image: ImageName::new(image)
+                .unwrap_or_else(|_| ImageName::new("invalid:latest").unwrap()),
         },
         DesiredGraphNode::Container { name, image } => GraphReconcileAction::EnsureContainer {
-            name: name.clone(),
-            image: image.clone(),
+            name: ContainerName::new(name)
+                .unwrap_or_else(|_| ContainerName::new("container").unwrap()),
+            image: ImageName::new(image)
+                .unwrap_or_else(|_| ImageName::new("invalid:latest").unwrap()),
         },
         DesiredGraphNode::Deployment {
             worker,
@@ -174,8 +177,9 @@ fn ensure_action(node: &DesiredGraphNode) -> GraphReconcileAction {
             host,
             target_container,
         } => GraphReconcileAction::EnsureRoute {
-            host: host.clone(),
-            target_container: target_container.clone(),
+            host: RouteHost::new(host).unwrap_or_else(|_| RouteHost::new("invalid.local").unwrap()),
+            target_container: ContainerName::new(target_container)
+                .unwrap_or_else(|_| ContainerName::new("container").unwrap()),
         },
         DesiredGraphNode::Binding {
             worker,
@@ -228,12 +232,12 @@ mod tests {
             capability: Capability::Secret
         }));
         assert!(actions.contains(&GraphReconcileAction::EnsureWorker {
-            name: "api".to_owned(),
-            image: "ghcr.io/acme/api:v1".to_owned()
+            name: WorkerId::new("api").unwrap(),
+            image: ImageName::new("ghcr.io/acme/api:v1").unwrap()
         }));
         assert!(actions.contains(&GraphReconcileAction::EnsureRoute {
-            host: "api.example.test".to_owned(),
-            target_container: "api".to_owned()
+            host: RouteHost::new("api.example.test").unwrap(),
+            target_container: ContainerName::new("api").unwrap()
         }));
     }
 

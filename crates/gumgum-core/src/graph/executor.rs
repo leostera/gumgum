@@ -150,14 +150,8 @@ impl GraphActionPlanner {
         })
     }
 
-    pub fn ensure_container_step(
-        name: impl Into<String>,
-        image: impl Into<String>,
-    ) -> GraphExecutionStep {
-        plan_action(&GraphReconcileAction::EnsureContainer {
-            name: name.into(),
-            image: image.into(),
-        })
+    pub fn ensure_container_step(name: ContainerName, image: ImageName) -> GraphExecutionStep {
+        plan_action(&GraphReconcileAction::EnsureContainer { name, image })
     }
 
     pub fn ensure_deploy_step(
@@ -170,8 +164,8 @@ impl GraphActionPlanner {
     ) -> GraphExecutionStep {
         GraphExecutionStep {
             action: GraphReconcileAction::EnsureContainer {
-                name: container.to_string(),
-                image: image.to_string(),
+                name: container.clone(),
+                image: image.clone(),
             },
             target: GraphExecutionTarget::DeployRuntime {
                 worker: Some(worker.clone()),
@@ -432,16 +426,16 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
         GraphReconcileAction::EnsureWorker { name, image } => GraphExecutionStep {
             action: action.clone(),
             target: GraphExecutionTarget::WorkerRuntime {
-                worker: name.clone(),
-                image: image.clone(),
+                worker: name.to_string(),
+                image: image.to_string(),
             },
             description: format!("ensure worker {name} is represented in desired runtime state"),
         },
         GraphReconcileAction::EnsureContainer { name, image } => GraphExecutionStep {
             action: action.clone(),
             target: GraphExecutionTarget::ContainerRuntime {
-                container: name.clone(),
-                image: image.clone(),
+                container: name.to_string(),
+                image: image.to_string(),
             },
             description: format!("ensure container {name} runs image {image}"),
         },
@@ -470,8 +464,8 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
         } => GraphExecutionStep {
             action: action.clone(),
             target: GraphExecutionTarget::Gateway {
-                host: host.clone(),
-                target_container: target_container.clone(),
+                host: host.to_string(),
+                target_container: target_container.to_string(),
             },
             description: format!("ensure route {host} points at {target_container}"),
         },
@@ -683,8 +677,8 @@ mod tests {
                 capability: Capability::Manual,
             },
             GraphReconcileAction::EnsureRoute {
-                host: "api.example.test".to_owned(),
-                target_container: "api".to_owned(),
+                host: RouteHost::new("api.example.test").unwrap(),
+                target_container: ContainerName::new("api").unwrap(),
             },
         ]);
 
@@ -698,7 +692,10 @@ mod tests {
 
     #[test]
     fn planner_can_synthesize_idempotent_container_step() {
-        let step = GraphActionPlanner::ensure_container_step("api", "ghcr.io/acme/api:v1");
+        let step = GraphActionPlanner::ensure_container_step(
+            ContainerName::new("api").unwrap(),
+            ImageName::new("ghcr.io/acme/api:v1").unwrap(),
+        );
 
         assert_eq!(
             step.target,
@@ -759,8 +756,8 @@ mod tests {
     #[tokio::test]
     async fn generic_executor_plans_container_without_runtime_context() {
         let steps = GraphActionPlanner::plan(&[GraphReconcileAction::EnsureContainer {
-            name: "api".to_owned(),
-            image: "ghcr.io/acme/api:v1".to_owned(),
+            name: ContainerName::new("api").unwrap(),
+            image: ImageName::new("ghcr.io/acme/api:v1").unwrap(),
         }]);
 
         let actions = GraphActionExecutor::execute_steps(&steps, GraphExecutionContext::default())
@@ -777,12 +774,12 @@ mod tests {
     async fn generic_executor_deduplicates_container_runtime_steps() {
         let steps = GraphActionPlanner::plan(&[
             GraphReconcileAction::EnsureContainer {
-                name: "api".to_owned(),
-                image: "ghcr.io/acme/api:v1".to_owned(),
+                name: ContainerName::new("api").unwrap(),
+                image: ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             },
             GraphReconcileAction::EnsureContainer {
-                name: "api".to_owned(),
-                image: "ghcr.io/acme/api:v1".to_owned(),
+                name: ContainerName::new("api").unwrap(),
+                image: ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             },
         ]);
 
@@ -801,16 +798,16 @@ mod tests {
     fn planner_normalizes_deploy_runtime_to_container_step() {
         let steps = GraphActionPlanner::plan(&[
             GraphReconcileAction::EnsureWorker {
-                name: "api".to_owned(),
-                image: "ghcr.io/acme/api:v1".to_owned(),
+                name: WorkerId::new("api").unwrap(),
+                image: ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             },
             GraphReconcileAction::EnsureContainer {
-                name: "api".to_owned(),
-                image: "ghcr.io/acme/api:v1".to_owned(),
+                name: ContainerName::new("api").unwrap(),
+                image: ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             },
             GraphReconcileAction::EnsureRoute {
-                host: "api.example.test".to_owned(),
-                target_container: "api".to_owned(),
+                host: RouteHost::new("api.example.test").unwrap(),
+                target_container: ContainerName::new("api").unwrap(),
             },
         ]);
 
@@ -829,12 +826,12 @@ mod tests {
     fn planner_routes_runtime_and_gateway_actions_to_distinct_targets() {
         let steps = GraphActionPlanner::plan(&[
             GraphReconcileAction::EnsureContainer {
-                name: "api".to_owned(),
-                image: "ghcr.io/acme/api:v1".to_owned(),
+                name: ContainerName::new("api").unwrap(),
+                image: ImageName::new("ghcr.io/acme/api:v1").unwrap(),
             },
             GraphReconcileAction::EnsureRoute {
-                host: "api.example.test".to_owned(),
-                target_container: "api".to_owned(),
+                host: RouteHost::new("api.example.test").unwrap(),
+                target_container: ContainerName::new("api").unwrap(),
             },
         ]);
 
