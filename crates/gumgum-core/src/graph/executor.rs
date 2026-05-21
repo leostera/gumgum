@@ -38,6 +38,11 @@ pub enum GraphExecutionTarget {
         name: ObjectName,
         provider: ProviderName,
     },
+    ObjectProviderRemoval {
+        capability: Capability,
+        name: ObjectName,
+        provider: ProviderName,
+    },
     GraphStore {
         node: String,
     },
@@ -313,6 +318,17 @@ impl GraphExecutionSession {
                     Ok(vec![format!("planned {}", step.description)])
                 }
             }
+            GraphExecutionTarget::ObjectProviderRemoval { .. } => {
+                if let Some(plan) = &self.context.object_plan {
+                    crate::providers::ProviderReconciler::delete_with_credentials(
+                        plan,
+                        self.context.provider_credentials.clone(),
+                    )
+                    .await
+                } else {
+                    Ok(vec![format!("planned {}", step.description)])
+                }
+            }
             GraphExecutionTarget::ContainerRuntime { .. }
             | GraphExecutionTarget::DeployRuntime { .. } => self.execute_deploy_step(step).await,
             GraphExecutionTarget::WorkerRuntime { .. }
@@ -439,6 +455,9 @@ impl GraphExecutionTarget {
             Self::Gateway { host, .. } => format!("route/{host}"),
             Self::ObjectProvider {
                 capability, name, ..
+            }
+            | Self::ObjectProviderRemoval {
+                capability, name, ..
             } => format!("{capability}/{name}"),
             Self::GraphStore { node } => node.clone(),
             Self::Removal { id, .. } => id.to_string(),
@@ -456,6 +475,7 @@ impl GraphReconcileAction {
             Self::EnsureRoute { .. } => "ensure_route".to_owned(),
             Self::EnsureBinding { .. } => "ensure_binding".to_owned(),
             Self::EnsureObject { .. } => "ensure_object".to_owned(),
+            Self::RemoveObject { .. } => "remove_object".to_owned(),
             Self::RemoveNode { .. } => "remove_node".to_owned(),
             Self::RemoveDeploy { .. } => "remove_deploy".to_owned(),
         }
@@ -541,6 +561,19 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 provider: provider.clone(),
             },
             description: format!("ensure {capability} object {name} is materialized by {provider}"),
+        },
+        GraphReconcileAction::RemoveObject {
+            capability,
+            name,
+            provider,
+        } => GraphExecutionStep {
+            action: action.clone(),
+            target: GraphExecutionTarget::ObjectProviderRemoval {
+                capability: *capability,
+                name: name.clone(),
+                provider: provider.clone(),
+            },
+            description: format!("remove {capability} object {name} from {provider}"),
         },
         GraphReconcileAction::RemoveNode { id } => GraphExecutionStep {
             action: action.clone(),

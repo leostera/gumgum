@@ -117,6 +117,11 @@ pub enum GraphReconcileAction {
     RemoveNode {
         id: GraphNodeId,
     },
+    RemoveObject {
+        capability: Capability,
+        name: ObjectName,
+        provider: ProviderName,
+    },
     RemoveDeploy {
         worker: WorkerId,
         container: ContainerName,
@@ -148,6 +153,15 @@ fn remove_action(node: &DesiredGraphNode) -> GraphReconcileAction {
         } => GraphReconcileAction::RemoveDeploy {
             worker: worker.clone(),
             container: container.clone(),
+        },
+        DesiredGraphNode::Object {
+            capability,
+            name,
+            provider,
+        } => GraphReconcileAction::RemoveObject {
+            capability: *capability,
+            name: name.clone(),
+            provider: provider.clone(),
         },
         _ => GraphReconcileAction::RemoveNode {
             id: GraphNodeId::new(node.id())

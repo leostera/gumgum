@@ -202,6 +202,8 @@ async fn daemon_delete_object(
     let capability_name = request.capability.to_string();
     let dns = object_dns(&capability_name, &request.name, &request.root_domain);
     let provider = request.capability.provider().to_owned();
+    let provider_plan = object_provider_plan(request.capability, &request.name, &dns);
+    let provider_credentials = required_provider_credentials(request.capability).unwrap_or(None);
     let reconciliation_steps = object.delete_reconciliation_steps(graph_path.clone()).await;
     let deleted = if request.preview {
         false
@@ -220,6 +222,8 @@ async fn daemon_delete_object(
         GraphActionExecutor::execute_steps(
             &reconciliation_steps,
             GraphExecutionContext {
+                object_plan: Some(provider_plan.clone()),
+                provider_credentials,
                 graph_path: Some(graph_path),
                 ..GraphExecutionContext::default()
             },

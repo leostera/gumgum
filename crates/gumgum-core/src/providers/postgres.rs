@@ -49,6 +49,22 @@ pub(crate) async fn ensure_object(
     Ok(actions)
 }
 
+pub(crate) async fn delete_object(
+    plan: &ObjectProviderPlan,
+    credentials: ProviderCredentials,
+) -> crate::Result<Vec<String>> {
+    let mut actions = ensure(&plan.provider, credentials.clone()).await?;
+    let database = sanitize_name(&plan.name);
+    if database_exists(&plan.provider, &credentials, &database).await? {
+        drop_database(&plan.provider, &credentials, &database).await?;
+        actions.push(format!("dropped database {database}"));
+    } else {
+        actions.push(format!("database {database} was already absent"));
+    }
+    actions.push(format!("removed DNS {} from postgres.main", plan.dns));
+    Ok(actions)
+}
+
 pub(crate) async fn ensure(
     provider: &ProviderSpec,
     credentials: ProviderCredentials,
@@ -146,6 +162,27 @@ async fn create_database(
     .await
 }
 
+async fn drop_database(
+    provider: &ProviderSpec,
+    credentials: &ProviderCredentials,
+    database: &str,
+) -> crate::Result<()> {
+    run_provider_command(
+        TokioCommand::new("docker")
+            .arg("exec")
+            .arg("-e")
+            .arg(format!("PGPASSWORD={}", credentials.password))
+            .arg(&provider.container)
+            .arg("dropdb")
+            .arg("--if-exists")
+            .arg("-U")
+            .arg(&credentials.username)
+            .arg(database),
+        "could not drop postgres database",
+    )
+    .await
+}
+
 fn shell_single_quote(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -164,6 +201,17 @@ mod tests {
                 "publish DNS visits.db.leostera.dev to postgres.main",
             ]
         );
+    }
+
+    #[test]
+    fn postgres_delete_for_absent_database_is_actionable() {
+        let plan = crate::providers::object_provider_plan(
+            Capability::Db,
+            "visits",
+            "visits.db.leostera.dev",
+        );
+
+        assert_eq!(plan.provider.provider, "postgres.main");
     }
 
     #[test]

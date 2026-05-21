@@ -34,6 +34,25 @@ impl ProviderReconciler {
         }
     }
 
+    pub async fn delete_with_credentials(
+        plan: &ObjectProviderPlan,
+        credentials: Option<ProviderCredentials>,
+    ) -> crate::Result<Vec<String>> {
+        match plan.capability {
+            Capability::Db => {
+                super::postgres::delete_object(
+                    plan,
+                    credentials.unwrap_or_else(ProviderCredentials::postgres_local_dev),
+                )
+                .await
+            }
+            _ => Ok(vec![format!(
+                "removed desired {} object {}; provider cleanup is not implemented yet",
+                plan.capability, plan.name
+            )]),
+        }
+    }
+
     pub async fn boot_defaults(
         credentials: &[(String, ProviderCredentials)],
     ) -> crate::Result<Vec<String>> {
