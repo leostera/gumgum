@@ -10,6 +10,7 @@ APPLY=${APPLY:-0}
 APPLY_OBJECTS=${APPLY_OBJECTS:-0}
 OBJECTS_ONLY=${OBJECTS_ONLY:-0}
 DEPLOY_ONLY=${DEPLOY_ONLY:-0}
+OBSERVE_ONLY=${OBSERVE_ONLY:-0}
 RUN_SETUP=${RUN_SETUP:-0}
 SETUP_ONLY=${SETUP_ONLY:-0}
 VERIFY_SETUP_IDEMPOTENCY=${VERIFY_SETUP_IDEMPOTENCY:-0}
@@ -35,7 +36,8 @@ recommended intentional starbase2 sequence:
   6. CLEANUP_ONLY=1 VERIFY_CLEANUP_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
   7. APPLY_OBJECTS=1 OBJECTS_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
   8. DEPLOY_ONLY=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
-  9. CLEANUP_ONLY=1 APPLY_CLEANUP=1 scripts/smoke-visit-counter-starbase2.sh
+  9. OBSERVE_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
+ 10. CLEANUP_ONLY=1 APPLY_CLEANUP=1 scripts/smoke-visit-counter-starbase2.sh
 EOF
 }
 
@@ -49,6 +51,7 @@ visit-counter starbase2 smoke modes:
   VERIFY_UPGRADE_IDEMPOTENCY=1 APPLY_UPGRADE=1 UPGRADE_ONLY=1: apply upgrade twice, verify capabilities, then stop
   APPLY_OBJECTS=1 OBJECTS_ONLY=1: create/bind objects, then stop before deploy
   DEPLOY_ONLY=1 APPLY=1: deploy/curl using existing desired object/binding state
+  OBSERVE_ONLY=1: show status/events/operations/logs for existing deployment
   CLEANUP_ONLY=1 VERIFY_CLEANUP_PREVIEW=1: preview cleanup without creating objects
   CLEANUP_ONLY=1 APPLY_CLEANUP=1: apply cleanup without creating objects
   PLAN=1 or --plan: print the recommended intentional apply sequence
@@ -176,6 +179,10 @@ if [ "$OBJECTS_ONLY" = "1" ] && [ "$DEPLOY_ONLY" = "1" ]; then
   echo "error: OBJECTS_ONLY=1 and DEPLOY_ONLY=1 cannot be combined" >&2
   exit 1
 fi
+if [ "$OBSERVE_ONLY" = "1" ] && { [ "$OBJECTS_ONLY" = "1" ] || [ "$DEPLOY_ONLY" = "1" ] || [ "$CLEANUP_ONLY" = "1" ] || [ "$SETUP_ONLY" = "1" ] || [ "$UPGRADE_ONLY" = "1" ]; }; then
+  echo "error: OBSERVE_ONLY=1 cannot be combined with setup/upgrade/object/deploy/cleanup-only modes" >&2
+  exit 1
+fi
 if [ "$OBJECTS_ONLY" = "1" ] && [ "$CLEANUP_ONLY" = "1" ]; then
   echo "error: OBJECTS_ONLY=1 and CLEANUP_ONLY=1 cannot be combined" >&2
   exit 1
@@ -212,7 +219,7 @@ if [ "$UPGRADE_ONLY" = "1" ] && [ "$VERIFY_UPGRADE_IDEMPOTENCY" != "1" ]; then
   echo "error: UPGRADE_ONLY=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1" >&2
   exit 1
 fi
-if [ "$REQUIRE_CURRENT_DAEMON" = "1" ] || [ "$APPLY_OBJECTS" = "1" ] || [ "$APPLY" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
+if [ "$REQUIRE_CURRENT_DAEMON" = "1" ] || [ "$APPLY_OBJECTS" = "1" ] || [ "$APPLY" = "1" ] || [ "$APPLY_CLEANUP" = "1" ] || [ "$OBSERVE_ONLY" = "1" ]; then
   require_daemon_capabilities events rollback_revision_id binding_delete object_delete deployment_delete
 fi
 
@@ -245,6 +252,17 @@ fi
 if [ "$UPGRADE_ONLY" = "1" ]; then
   container_delta_guard
   echo "visit-counter smoke upgrade-only completed; APPLY_UPGRADE=$APPLY_UPGRADE; pre-existing containers preserved"
+  exit 0
+fi
+
+if [ "$OBSERVE_ONLY" = "1" ]; then
+  run_gumgum status --host "$HOST"
+  run_gumgum events --host "$HOST" --limit 20
+  run_gumgum operations --host "$HOST" --limit 20
+  run_gumgum logs --host "$HOST" api --tail 20 || true
+  run_gumgum logs --host "$HOST" worker --tail 20 || true
+  container_delta_guard
+  echo "visit-counter smoke observe-only completed; pre-existing containers preserved"
   exit 0
 fi
 
