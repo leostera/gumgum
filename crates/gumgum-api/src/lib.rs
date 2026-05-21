@@ -1,6 +1,7 @@
 use gumgum_core::Capability;
 pub use gumgum_core::{
-    DeploymentRevision, GraphEdge, GraphNode, ProviderConfig, ProviderStatus, ServerRecord,
+    DeploymentRevision, GraphEdge, GraphExecutionStep, GraphNode, ProviderConfig, ProviderStatus,
+    ServerRecord,
 };
 use serde::{Deserialize, Serialize};
 
@@ -146,6 +147,8 @@ pub struct ProviderConfigureReport {
     pub config: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reconciliation_steps: Vec<GraphExecutionStep>,
     pub message: String,
 }
 

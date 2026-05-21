@@ -11,10 +11,10 @@ use gumgum_api::{
     ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
-    ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
-    GlobalObject, GraphStore, GumgumError, LocalPlatform, ProviderReconciler, Subsystem,
-    WorkerBinding, affected_subgraph, not_configured_status, object_dns, object_provider_plan,
-    render_mermaid_graph,
+    ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy,
+    DesiredGraphNode, ErrorCode, GlobalObject, GraphActionPlanner, GraphStore, GumgumError,
+    LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph,
+    not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -309,6 +309,7 @@ fn missing_provider_credentials_report(
 }
 
 async fn daemon_configure_provider(
+    State(state): State<DaemonState>,
     Json(request): Json<ProviderConfigureRequest>,
 ) -> Json<ProviderConfigureReport> {
     let config = gumgum_core::ProviderConfig::new(
@@ -317,6 +318,7 @@ async fn daemon_configure_provider(
         request.endpoint,
         request.vault,
     );
+    let plan = provider_configure_plan((*state.graph_path).clone(), &config).await;
     match ConfigStore::from_home_env().and_then(|store| store.save_provider_config(&config)) {
         Ok(()) => match ProviderReconciler::ensure_configured_provider(&config).await {
             Ok(actions) => Json(ProviderConfigureReport {
@@ -324,12 +326,14 @@ async fn daemon_configure_provider(
                 message: "provider configured and reconciled".to_owned(),
                 config: Some(config),
                 actions,
+                reconciliation_steps: plan.unwrap_or_default(),
             }),
             Err(error) => Json(ProviderConfigureReport {
                 ok: false,
                 message: error.to_report().message,
                 config: Some(config),
                 actions: Vec::new(),
+                reconciliation_steps: plan.unwrap_or_default(),
             }),
         },
         Err(error) => Json(ProviderConfigureReport {
@@ -337,8 +341,29 @@ async fn daemon_configure_provider(
             message: error.to_report().message,
             config: None,
             actions: Vec::new(),
+            reconciliation_steps: plan.unwrap_or_default(),
         }),
     }
+}
+
+async fn provider_configure_plan(
+    graph_path: PathBuf,
+    config: &gumgum_core::ProviderConfig,
+) -> Option<Vec<gumgum_core::GraphExecutionStep>> {
+    let config = config.clone();
+    tokio::task::spawn_blocking(move || {
+        let store = GraphStore::new(graph_path);
+        let old_graph = store.load_desired_graph()?;
+        let mut new_graph = old_graph.clone();
+        new_graph.nodes.insert(DesiredGraphNode::Provider {
+            name: config.provider,
+            capability: config.capability,
+        });
+        Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
 }
 
 async fn daemon_providers() -> Json<ProviderStatusReport> {
