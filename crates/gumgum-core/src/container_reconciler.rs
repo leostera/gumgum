@@ -25,10 +25,11 @@ impl ContainerReconciler {
     pub async fn reconcile(&self, request: &DeployRequest) -> crate::Result<(bool, Vec<String>)> {
         let mut actions = Vec::new();
         let binding_env = self.binding_env(&request.worker)?;
+        let binding_env_fingerprint = binding_env_fingerprint(&binding_env);
         let inspect = TokioCommand::new("docker")
             .arg("inspect")
             .arg("-f")
-            .arg("{{.Config.Image}} {{index .Config.Labels \"caddy\"}} {{index .Config.Labels \"caddy.reverse_proxy\"}}")
+            .arg("{{.Config.Image}} {{index .Config.Labels \"caddy\"}} {{index .Config.Labels \"caddy.reverse_proxy\"}} {{index .Config.Labels \"gumgum.binding_env\"}}")
             .arg(&request.container)
             .output()
             .await
@@ -43,10 +44,13 @@ impl ContainerReconciler {
             })?;
         let current = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
         let expected_proxy = format!("{{{{upstreams {}}}}}", request.port);
-        let expected = format!("{} {} {}", request.image, request.route, expected_proxy);
+        let expected = format!(
+            "{} {} {} {}",
+            request.image, request.route, expected_proxy, binding_env_fingerprint
+        );
         let route_label = format!("caddy={}", request.route);
-        if inspect.status.success() && current == expected && binding_env.is_empty() {
-            actions.push("container already matches desired image".to_owned());
+        if inspect.status.success() && current == expected {
+            actions.push("container already matches desired image, route, and bindings".to_owned());
             return Ok((false, actions));
         }
         actions.push(format!("pull {}", request.image));
@@ -89,7 +93,9 @@ impl ContainerReconciler {
                 request.port
             ))
             .arg("--label")
-            .arg("caddy.tls=internal");
+            .arg("caddy.tls=internal")
+            .arg("--label")
+            .arg(format!("gumgum.binding_env={binding_env_fingerprint}"));
         for (name, value) in &binding_env {
             run.arg("-e").arg(format!("{name}={value}"));
         }
@@ -161,6 +167,19 @@ impl ContainerReconciler {
     }
 }
 
+fn binding_env_fingerprint(env: &[(String, String)]) -> String {
+    let mut entries = env.to_vec();
+    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let mut hash = 0xcbf29ce484222325u64;
+    for (name, value) in entries {
+        for byte in name.bytes().chain([b'=']).chain(value.bytes()).chain([0]) {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("env-{hash:016x}")
+}
+
 async fn run_command_streaming(cmd: &mut TokioCommand, quiet: bool) -> crate::Result<()> {
     let output = cmd.output().await.map_err(|source| {
         GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "failed to run command")
@@ -179,5 +198,35 @@ async fn run_command_streaming(cmd: &mut TokioCommand, quiet: bool) -> crate::Re
                 .likely_cause(format!("process exited with {}", output.status))
                 .build(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_env_fingerprint_is_stable_and_order_insensitive() {
+        let left = vec![
+            ("DATABASE_URL".to_owned(), "postgres://db".to_owned()),
+            ("USER_COUNTERS".to_owned(), "redis://kv".to_owned()),
+        ];
+        let right = vec![
+            ("USER_COUNTERS".to_owned(), "redis://kv".to_owned()),
+            ("DATABASE_URL".to_owned(), "postgres://db".to_owned()),
+        ];
+
+        assert_eq!(
+            binding_env_fingerprint(&left),
+            binding_env_fingerprint(&right)
+        );
+    }
+
+    #[test]
+    fn binding_env_fingerprint_changes_when_secret_projection_changes() {
+        let old = vec![("DATABASE_URL".to_owned(), "postgres://old".to_owned())];
+        let new = vec![("DATABASE_URL".to_owned(), "postgres://new".to_owned())];
+
+        assert_ne!(binding_env_fingerprint(&old), binding_env_fingerprint(&new));
     }
 }
