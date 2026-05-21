@@ -52,13 +52,14 @@ APPLY_OBJECTS=1 scripts/smoke-visit-counter-starbase2.sh
 # apply intentionally; setup is still opt-in and object mutation must be explicit
 APPLY_OBJECTS=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
 RUN_SETUP=1 VERIFY_SETUP_IDEMPOTENCY=1 APPLY_OBJECTS=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
+VERIFY_UPGRADE_IDEMPOTENCY=1 scripts/smoke-visit-counter-starbase2.sh
 
 # non-destructive cleanup/rollback checks
 APPLY_OBJECTS=1 VERIFY_CLEANUP_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_OBJECTS=1 APPLY=1 VERIFY_ROLLBACK_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
 ```
 
-The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, verifies DNS/Caddy with a `Host: api.visit-counter.leostera.test` request, and can optionally preview rollback. The default mode does not mutate starbase2 objects.
+The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, verifies DNS/Caddy with a `Host: api.visit-counter.leostera.test` request, and can optionally preview rollback. Cleanup preview mode snapshots the desired graph before/after and fails if a preview mutates state. The default mode does not mutate starbase2 objects.
 
 ## Local fallback smoke test
 

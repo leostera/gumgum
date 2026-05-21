@@ -10,13 +10,16 @@ APPLY=${APPLY:-0}
 APPLY_OBJECTS=${APPLY_OBJECTS:-0}
 RUN_SETUP=${RUN_SETUP:-0}
 VERIFY_SETUP_IDEMPOTENCY=${VERIFY_SETUP_IDEMPOTENCY:-0}
+VERIFY_UPGRADE_IDEMPOTENCY=${VERIFY_UPGRADE_IDEMPOTENCY:-0}
 VERIFY_CLEANUP_PREVIEW=${VERIFY_CLEANUP_PREVIEW:-0}
 VERIFY_ROLLBACK_PREVIEW=${VERIFY_ROLLBACK_PREVIEW:-0}
 
 before_file=$(mktemp)
 after_file=$(mktemp)
+before_graph_file=$(mktemp)
+after_graph_file=$(mktemp)
 cleanup() {
-  rm -f "$before_file" "$after_file"
+  rm -f "$before_file" "$after_file" "$before_graph_file" "$after_graph_file"
 }
 trap cleanup EXIT
 
@@ -51,6 +54,23 @@ run_gumgum() {
   $GUMGUM "$@"
 }
 
+capture_graph() {
+  local output_file="$1"
+  # shellcheck disable=SC2086
+  if ! $GUMGUM --json graph --host "$HOST" >"$output_file"; then
+    echo "warning: could not capture desired graph snapshot" >&2
+    : >"$output_file"
+  fi
+}
+
+assert_graph_unchanged() {
+  if ! cmp -s "$before_graph_file" "$after_graph_file"; then
+    echo "error: preview operation mutated desired graph" >&2
+    diff -u "$before_graph_file" "$after_graph_file" >&2 || true
+    exit 1
+  fi
+}
+
 plan_gumgum() {
   echo "+ gumgum $*"
 }
@@ -77,6 +97,11 @@ if [ "$RUN_SETUP" = "1" ]; then
   fi
 fi
 
+if [ "$VERIFY_UPGRADE_IDEMPOTENCY" = "1" ]; then
+  run_gumgum server "$HOST" upgrade
+  run_gumgum server "$HOST" upgrade
+fi
+
 pushd "$EXAMPLE_DIR" >/dev/null
 
 run_object_step db create visits --host "$HOST" --root-domain "$ROOT_DOMAIN"
@@ -92,6 +117,7 @@ run_object_step queue bind visit-events --host "$HOST" --to api --as VISIT_EVENT
 run_object_step queue bind visit-events --host "$HOST" --to worker --as VISIT_EVENTS_QUEUE
 
 if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ]; then
+  capture_graph "$before_graph_file"
   run_gumgum db unbind visits --host "$HOST" --to worker --as DATABASE_URL --preview
   run_gumgum kv unbind user-counters --host "$HOST" --to api --as USER_COUNTERS --preview
   run_gumgum bucket unbind visit-requests --host "$HOST" --to api --as VISIT_REQUESTS_BUCKET --preview
@@ -102,6 +128,8 @@ if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ]; then
   run_gumgum kv delete user-counters --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
   run_gumgum bucket delete visit-requests --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
   run_gumgum queue delete visit-events --host "$HOST" --root-domain "$ROOT_DOMAIN" --preview
+  capture_graph "$after_graph_file"
+  assert_graph_unchanged
 fi
 
 if [ "$APPLY" = "1" ]; then
