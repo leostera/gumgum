@@ -46,7 +46,8 @@ recommended intentional starbase2 sequence:
   8. DEPLOY_ONLY=1 APPLY=1 scripts/smoke-visit-counter-starbase2.sh
   9. OBSERVE_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
  10. CLEANUP_ONLY=1 APPLY_CLEANUP=1 scripts/smoke-visit-counter-starbase2.sh
- 11. find "$ARTIFACT_ROOT" -name checksums.sha256 -print -execdir shasum -a 256 -c checksums.sha256 \;
+ 11. column -t -s $'\t' "$ARTIFACT_ROOT/summary.tsv"
+ 12. find "$ARTIFACT_ROOT" -name checksums.sha256 -print -execdir shasum -a 256 -c checksums.sha256 \;
 EOF
 }
 
@@ -216,6 +217,7 @@ Root files:
   index.txt    cross-stage file index
 
 Review every captured stage with:
+  column -t -s $'\t' summary.tsv
   find . -name checksums.sha256 -print -execdir shasum -a 256 -c checksums.sha256 \;
   find . -name 'containers-before.txt' -execdir diff -u containers-before.txt containers-after.txt \;
 EOF
