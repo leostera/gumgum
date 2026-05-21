@@ -190,7 +190,6 @@ impl GraphActionPlanner {
 pub struct GraphExecutionContext {
     pub object_plan: Option<ObjectProviderPlan>,
     pub provider_credentials: Option<ProviderCredentials>,
-    pub deploy_request: Option<DeployRequest>,
     pub graph_path: Option<PathBuf>,
 }
 
@@ -229,11 +228,7 @@ impl GraphActionExecutor {
                     }
                     container_runtime_seen = true;
                     if let Some(graph_path) = &context.graph_path {
-                        let request = context
-                            .deploy_request
-                            .clone()
-                            .or_else(|| deploy_request_from_target(&step.target));
-                        let Some(request) = request else {
+                        let Some(request) = step.target.deploy_request() else {
                             actions.push(format!("planned {}", step.description));
                             continue;
                         };
@@ -289,7 +284,6 @@ impl GraphActionExecutor {
             GraphExecutionContext {
                 object_plan: Some(plan.clone()),
                 provider_credentials: credentials,
-                deploy_request: None,
                 graph_path: None,
             },
         )
@@ -304,24 +298,26 @@ impl GraphActionExecutor {
     }
 }
 
-fn deploy_request_from_target(target: &GraphExecutionTarget) -> Option<DeployRequest> {
-    match target {
-        GraphExecutionTarget::DeployRuntime {
-            worker: Some(worker),
-            container,
-            image,
-            route: Some(route),
-            port: Some(port),
-            health: Some(health),
-        } => Some(DeployRequest {
-            worker: worker.to_string(),
-            image: image.to_string(),
-            container: container.to_string(),
-            route: route.to_string(),
-            port: port.get(),
-            health: health.to_string(),
-        }),
-        _ => None,
+impl GraphExecutionTarget {
+    fn deploy_request(&self) -> Option<DeployRequest> {
+        match self {
+            GraphExecutionTarget::DeployRuntime {
+                worker: Some(worker),
+                container,
+                image,
+                route: Some(route),
+                port: Some(port),
+                health: Some(health),
+            } => Some(DeployRequest {
+                worker: worker.to_string(),
+                image: image.to_string(),
+                container: container.to_string(),
+                route: route.to_string(),
+                port: port.get(),
+                health: health.to_string(),
+            }),
+            _ => None,
+        }
     }
 }
 

@@ -265,7 +265,6 @@ async fn daemon_create_object(
         GraphExecutionContext {
             object_plan: Some(provider_plan.clone()),
             provider_credentials,
-            deploy_request: None,
             graph_path: None,
         },
     )
@@ -641,7 +640,7 @@ async fn daemon_rollback(
             rollback_preview_actions(&image)
         } else {
             let graph_path = (*state.graph_path).clone();
-            let deploy_graph = DesiredDeployGraph::new(&deploy);
+            let deploy_graph = DesiredDeployGraph::new(deploy.clone());
             let mut steps = deploy_graph.rollback_plan(graph_path.clone()).await;
             if steps.is_empty() {
                 steps.push(deploy_graph.step());
@@ -655,7 +654,6 @@ async fn daemon_rollback(
                 GraphExecutionContext {
                     object_plan: None,
                     provider_credentials: None,
-                    deploy_request: None,
                     graph_path: Some(graph_path),
                 },
             )
@@ -690,13 +688,24 @@ fn rollback_preview_actions(image: &str) -> Vec<String> {
     ]
 }
 
-struct DesiredDeployGraph<'a> {
-    deploy: &'a DesiredDeploy,
+struct DesiredDeployGraph {
+    deploy: DesiredDeploy,
 }
 
-impl<'a> DesiredDeployGraph<'a> {
-    fn new(deploy: &'a DesiredDeploy) -> Self {
+impl DesiredDeployGraph {
+    fn new(deploy: DesiredDeploy) -> Self {
         Self { deploy }
+    }
+
+    fn from_request(value: DeployRequest) -> Self {
+        Self::new(DesiredDeploy {
+            worker: value.worker,
+            image: value.image,
+            container: value.container,
+            route: value.route,
+            port: value.port,
+            health: value.health,
+        })
     }
 
     async fn rollback_plan(&self, graph_path: PathBuf) -> Vec<gumgum_core::GraphExecutionStep> {
@@ -732,7 +741,7 @@ impl<'a> DesiredDeployGraph<'a> {
     }
 
     fn node(&self) -> gumgum_core::Result<DesiredGraphNode> {
-        Self::node_for(self.deploy)
+        Self::node_for(&self.deploy)
     }
 
     fn node_for(deploy: &DesiredDeploy) -> gumgum_core::Result<DesiredGraphNode> {
@@ -801,7 +810,8 @@ async fn daemon_deploy(
     let reconcile_path = path.clone();
     let store = GraphStore::new(path.clone());
     let mut reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
-    let request_for_db = desired_from_deploy_request(request.clone());
+    let deploy_graph = DesiredDeployGraph::from_request(request.clone());
+    let request_for_db = deploy_graph.deploy.clone();
     let materialized =
         tokio::task::spawn_blocking(move || store.materialize_deploy(&request_for_db))
             .await
@@ -809,13 +819,11 @@ async fn daemon_deploy(
             .and_then(Result::ok)
             .unwrap_or(false);
     if reconciliation_steps.is_empty() {
-        reconciliation_steps
-            .push(DesiredDeployGraph::new(&desired_from_deploy_request(request.clone())).step());
+        reconciliation_steps.push(deploy_graph.step());
     }
     let deploy_context = GraphExecutionContext {
         object_plan: None,
         provider_credentials: None,
-        deploy_request: None,
         graph_path: Some(reconcile_path),
     };
     let actions = GraphActionExecutor::execute_steps(&reconciliation_steps, deploy_context)
@@ -848,24 +856,13 @@ async fn deploy_reconciliation_plan(
         let mut new_graph = old_graph.clone();
         new_graph
             .nodes
-            .insert(DesiredDeployGraph::new(&desired_from_deploy_request(request)).node()?);
+            .insert(DesiredDeployGraph::from_request(request).node()?);
         Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
     })
     .await
     .ok()
     .and_then(Result::ok)
     .unwrap_or_default()
-}
-
-fn desired_from_deploy_request(value: DeployRequest) -> DesiredDeploy {
-    DesiredDeploy {
-        worker: value.worker,
-        image: value.image,
-        container: value.container,
-        route: value.route,
-        port: value.port,
-        health: value.health,
-    }
 }
 
 #[cfg(test)]
@@ -963,7 +960,7 @@ mod tests {
             health: "/healthz".to_owned(),
         };
 
-        let step = DesiredDeployGraph::new(&deploy).step();
+        let step = DesiredDeployGraph::new(deploy).step();
 
         assert!(matches!(
             step.target,
