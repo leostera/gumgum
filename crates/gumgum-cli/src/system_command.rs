@@ -4,7 +4,7 @@ use crate::{
     ServerProvidersSubcommand, ServerSubcommand, ServerUpgradeArgs, StatusArgs, config_command,
     print_value, progress,
 };
-use gumgum_api::{PingReport, ProviderStatusReport, ServerListReport};
+use gumgum_api::{PingReport, ProviderConfigureRequest, ProviderStatusReport, ServerListReport};
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DaemonPingReport, DoctorCheck, DoctorReport, ErrorCode,
     GumgumError, GumgumInstaller, ServerRecord, SetupTarget, Subsystem, not_configured_status,
@@ -12,6 +12,7 @@ use gumgum_core::{
 };
 use serde::Serialize;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 pub(crate) async fn status(args: StatusArgs, json: bool) -> gumgum_core::Result<()> {
     if let Some(host) = args.host {
@@ -102,6 +103,19 @@ pub(crate) async fn server(server: ServerCommand, json: bool) -> gumgum_core::Re
                 ServerProvidersSubcommand::Boot => {
                     let report = ServerClient::new(server.host)
                         .boot_default_providers()
+                        .await?;
+                    print_value(json, &report);
+                }
+                ServerProvidersSubcommand::Configure(args) => {
+                    let capability = gumgum_core::Capability::from_str(&args.capability)
+                        .unwrap_or(gumgum_core::Capability::Manual);
+                    let report = ServerClient::new(server.host)
+                        .configure_provider(&ProviderConfigureRequest {
+                            capability,
+                            kind: args.kind,
+                            endpoint: args.endpoint,
+                            vault: args.vault,
+                        })
                         .await?;
                     print_value(json, &report);
                 }

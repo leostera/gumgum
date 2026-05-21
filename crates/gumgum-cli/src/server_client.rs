@@ -1,8 +1,8 @@
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DeployApplyReport, DeployRequest,
     DeploymentRevisionsReport, EnvReport, GraphReport, LogsReport, ObjectReport, ObjectRequest,
-    ProviderBootReport, ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport,
-    RollbackRequest,
+    ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
+    ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
 
@@ -61,6 +61,14 @@ impl ServerClient {
 
     pub(crate) async fn providers(&self) -> gumgum_core::Result<ProviderStatusReport> {
         self.get_json("/v0/providers", "providers").await
+    }
+
+    pub(crate) async fn configure_provider(
+        &self,
+        request: &ProviderConfigureRequest,
+    ) -> gumgum_core::Result<ProviderConfigureReport> {
+        self.post_json("/v0/providers/configure", request, "provider configure")
+            .await
     }
 
     pub(crate) async fn boot_default_providers(&self) -> gumgum_core::Result<ProviderBootReport> {

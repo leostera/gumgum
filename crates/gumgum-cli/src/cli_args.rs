@@ -274,7 +274,18 @@ pub(crate) struct ServerProvidersArgs {
 #[derive(Debug, Subcommand)]
 pub(crate) enum ServerProvidersSubcommand {
     Boot,
+    Configure(ServerProviderConfigureArgs),
     Status,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ServerProviderConfigureArgs {
+    pub(crate) capability: String,
+    pub(crate) kind: String,
+    #[arg(long)]
+    pub(crate) endpoint: Option<String>,
+    #[arg(long)]
+    pub(crate) vault: Option<String>,
 }
 
 #[derive(Debug, Args)]

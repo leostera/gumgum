@@ -1,4 +1,6 @@
-use crate::{ErrorCode, GumgumError, ProviderCredentials, Result, Subsystem, sanitize_name};
+use crate::{
+    ErrorCode, GumgumError, ProviderConfig, ProviderCredentials, Result, Subsystem, sanitize_name,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{fs, path::PathBuf};
@@ -107,6 +109,49 @@ impl ConfigStore {
 
     pub fn load_default_server(&self) -> Result<Option<ServerRecord>> {
         Ok(self.load_servers()?.into_iter().next())
+    }
+
+    pub fn load_provider_config(&self, provider: &str) -> Result<Option<ProviderConfig>> {
+        let path = self.provider_config_path(provider);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&path).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not read provider config",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        serde_json::from_str(&raw).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not parse provider config",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })
+    }
+
+    pub fn save_provider_config(&self, config: &ProviderConfig) -> Result<()> {
+        let path = self.provider_config_path(&config.provider);
+        self.ensure_parent(&path)?;
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(config).expect("serialize provider config"),
+        )
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not write provider config",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })
     }
 
     pub fn load_provider_credentials(&self, provider: &str) -> Result<Option<ProviderCredentials>> {
@@ -246,6 +291,13 @@ impl ConfigStore {
             .join("credentials.json")
     }
 
+    fn provider_config_path(&self, provider: &str) -> PathBuf {
+        self.root
+            .join("providers")
+            .join(sanitize_name(provider))
+            .join("config.json")
+    }
+
     fn load_config_map(&self, path: PathBuf) -> Result<Map<String, Value>> {
         if !path.exists() {
             return Ok(Map::new());
@@ -341,6 +393,30 @@ mod tests {
             ConfigScope::Server("starbase".to_owned()).label(),
             "server:starbase"
         );
+    }
+
+    #[test]
+    fn stores_provider_config_separately_from_credentials() {
+        let store = temp_store("provider-config");
+        let config = ProviderConfig::new(
+            crate::Capability::Secret,
+            "onepassword",
+            Some("http://onepassword:8080".to_owned()),
+            Some("GumGum".to_owned()),
+        );
+
+        store.save_provider_config(&config).unwrap();
+        assert_eq!(
+            store.load_provider_config("onepassword.main").unwrap(),
+            Some(config)
+        );
+        assert!(
+            store
+                .root()
+                .join("providers/onepassword-main/config.json")
+                .exists()
+        );
+        let _ = fs::remove_dir_all(store.root());
     }
 
     #[test]

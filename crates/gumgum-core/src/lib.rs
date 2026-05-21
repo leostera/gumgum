@@ -26,8 +26,9 @@ pub use manifest::{
 pub use platform::LocalPlatform;
 pub use process::{run_setup_command, run_setup_command_streaming};
 pub use providers::{
-    ObjectProviderPlan, ProviderCredentials, ProviderReconciler, ProviderSpec, ProviderStatus,
-    connection_examples, generated_secret_value, object_provider_plan, provider_spec,
+    ObjectProviderPlan, ProviderConfig, ProviderCredentials, ProviderReconciler, ProviderSpec,
+    ProviderStatus, connection_examples, generated_secret_value, object_provider_plan,
+    provider_spec,
 };
 pub use setup::{not_configured_status, setup_actions};
 pub use setup_installer::{GumgumInstaller, SetupOptions, SetupTarget};

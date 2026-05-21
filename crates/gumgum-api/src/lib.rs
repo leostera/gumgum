@@ -1,5 +1,7 @@
 use gumgum_core::Capability;
-pub use gumgum_core::{DeploymentRevision, GraphEdge, GraphNode, ProviderStatus, ServerRecord};
+pub use gumgum_core::{
+    DeploymentRevision, GraphEdge, GraphNode, ProviderConfig, ProviderStatus, ServerRecord,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -125,6 +127,23 @@ pub struct BindingReport {
 pub struct ProviderStatusReport {
     pub ok: bool,
     pub providers: Vec<ProviderStatus>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProviderConfigureRequest {
+    pub capability: Capability,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProviderConfigureReport {
+    pub ok: bool,
+    pub config: Option<ProviderConfig>,
     pub message: String,
 }
 

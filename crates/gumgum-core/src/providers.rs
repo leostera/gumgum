@@ -23,6 +23,40 @@ pub struct ObjectProviderPlan {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderConfig {
+    pub capability: Capability,
+    pub provider: String,
+    pub kind: String,
+    pub endpoint: Option<String>,
+    pub vault: Option<String>,
+}
+
+impl ProviderConfig {
+    pub fn new(
+        capability: Capability,
+        kind: impl Into<String>,
+        endpoint: Option<String>,
+        vault: Option<String>,
+    ) -> Self {
+        let kind = kind.into();
+        let provider = match (capability, kind.as_str()) {
+            (Capability::Secret, "local") => "local.secrets".to_owned(),
+            (Capability::Secret, "onepassword") | (Capability::Secret, "onepassword-connect") => {
+                "onepassword.main".to_owned()
+            }
+            _ => capability.provider().to_owned(),
+        };
+        Self {
+            capability,
+            provider,
+            kind,
+            endpoint,
+            vault,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProviderCredentials {
     pub username_env: String,
     pub password_env: String,
@@ -625,6 +659,20 @@ fn provider_actions(capability: Capability, safe_name: &str, dns: &str) -> Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_config_maps_secret_kinds_to_providers() {
+        let local = ProviderConfig::new(Capability::Secret, "local", None, None);
+        assert_eq!(local.provider, "local.secrets");
+        let onepassword = ProviderConfig::new(
+            Capability::Secret,
+            "onepassword",
+            Some("http://onepassword:8080".to_owned()),
+            Some("GumGum".to_owned()),
+        );
+        assert_eq!(onepassword.provider, "onepassword.main");
+        assert_eq!(onepassword.vault.as_deref(), Some("GumGum"));
+    }
 
     #[test]
     fn provider_specs_cover_core_capabilities() {

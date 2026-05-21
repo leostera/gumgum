@@ -6,8 +6,9 @@ use axum::{
 use gumgum_api::{
     AffectedReport, BindingReport, BindingRequest, DaemonVersionReport, DeployApplyReport,
     DeployRequest, DeploymentRevisionsReport, EnvReport, EnvVar, GraphNode, GraphReport,
-    LogsReport, ObjectReport, ObjectRequest, ProviderBootReport, ProviderCredentialsInitReport,
-    ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
+    LogsReport, ObjectReport, ObjectRequest, ProviderBootReport, ProviderConfigureReport,
+    ProviderConfigureRequest, ProviderCredentialsInitReport, ProviderCredentialsReport,
+    ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, ContainerReconciler, DeployRequest as CoreDeployRequest, DesiredDeploy, ErrorCode,
@@ -68,6 +69,7 @@ impl DaemonApp {
             .route("/v0/objects", post(daemon_create_object))
             .route("/v0/bindings", post(daemon_create_binding))
             .route("/v0/providers", get(daemon_providers))
+            .route("/v0/providers/configure", post(daemon_configure_provider))
             .route(
                 "/v0/providers/defaults/boot",
                 post(daemon_boot_default_providers),
@@ -303,6 +305,29 @@ fn missing_provider_credentials_report(
             "configure ~/.gumgum/providers/minio-main/credentials.json or run provider credential setup when available".to_owned(),
         ],
         message: "provider credentials are not configured".to_owned(),
+    }
+}
+
+async fn daemon_configure_provider(
+    Json(request): Json<ProviderConfigureRequest>,
+) -> Json<ProviderConfigureReport> {
+    let config = gumgum_core::ProviderConfig::new(
+        request.capability,
+        request.kind,
+        request.endpoint,
+        request.vault,
+    );
+    match ConfigStore::from_home_env().and_then(|store| store.save_provider_config(&config)) {
+        Ok(()) => Json(ProviderConfigureReport {
+            ok: true,
+            message: "provider configured".to_owned(),
+            config: Some(config),
+        }),
+        Err(error) => Json(ProviderConfigureReport {
+            ok: false,
+            message: error.to_report().message,
+            config: None,
+        }),
     }
 }
 
