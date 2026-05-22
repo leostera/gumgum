@@ -209,7 +209,8 @@ impl GumgumInstaller {
 
 fn remote_setup_command(setup: &SetupTarget, quiet: bool) -> String {
     format!(
-        "~/.gumgum/bin/gumgum setup --name {} --root-domain {} --test-domain {}{}",
+        "~/.gumgum/bin/gumgum setup {} --name {} --root-domain {} --test-domain {}{}",
+        shell_quote(&setup.host),
         shell_quote(&setup.name),
         shell_quote(&setup.root_domain),
         shell_quote(&setup.test_domain),
