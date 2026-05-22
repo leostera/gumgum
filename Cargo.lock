@@ -847,6 +847,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "bollard",
+ "futures-util",
  "hex",
  "hmac 0.13.0",
  "percent-encoding",

@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 base64.workspace = true
 bollard.workspace = true
+futures-util.workspace = true
 hex.workspace = true
 hmac.workspace = true
 percent-encoding.workspace = true

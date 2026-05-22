@@ -1,5 +1,6 @@
 use crate::{ErrorCode, GumgumError, Result, Subsystem};
 use bollard::{Docker, errors::Error as DockerError};
+use futures_util::StreamExt;
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -15,6 +16,16 @@ pub struct ContainerSnapshot {
     pub running: bool,
     pub healthy: Option<bool>,
     pub networks: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ContainerRunSpec {
+    pub name: String,
+    pub image: String,
+    pub network: String,
+    pub restart_unless_stopped: bool,
+    pub labels: HashMap<String, String>,
+    pub env: Vec<(String, String)>,
 }
 
 impl DockerEngine {
@@ -86,6 +97,78 @@ impl DockerEngine {
             Err(DockerError::DockerResponseServerError {
                 status_code: 404, ..
             }) => Ok(false),
+            Err(error) => Err(docker_error(error)),
+        }
+    }
+
+    pub async fn pull_image(&self, image: &str) -> Result<()> {
+        use bollard::query_parameters::CreateImageOptionsBuilder;
+        let options = CreateImageOptionsBuilder::new().from_image(image).build();
+        let mut stream = self.client.create_image(Some(options), None, None);
+        while let Some(message) = stream.next().await {
+            message.map_err(docker_error)?;
+        }
+        Ok(())
+    }
+
+    pub async fn create_and_start_container(&self, spec: ContainerRunSpec) -> Result<()> {
+        use bollard::models::{
+            ContainerCreateBody, HostConfig, RestartPolicy, RestartPolicyNameEnum,
+        };
+        use bollard::query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions};
+
+        let body = ContainerCreateBody {
+            image: Some(spec.image),
+            env: Some(
+                spec.env
+                    .into_iter()
+                    .map(|(name, value)| format!("{name}={value}"))
+                    .collect(),
+            ),
+            labels: Some(spec.labels),
+            host_config: Some(HostConfig {
+                network_mode: Some(spec.network),
+                restart_policy: spec.restart_unless_stopped.then_some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
+                    maximum_retry_count: None,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let options = CreateContainerOptionsBuilder::new()
+            .name(&spec.name)
+            .build();
+        self.client
+            .create_container(Some(options), body)
+            .await
+            .map_err(docker_error)?;
+        self.client
+            .start_container(&spec.name, None::<StartContainerOptions>)
+            .await
+            .map_err(docker_error)
+    }
+
+    pub async fn connect_container_to_network(&self, container: &str, network: &str) -> Result<()> {
+        use bollard::models::NetworkConnectRequest;
+        match self
+            .client
+            .connect_network(
+                network,
+                NetworkConnectRequest {
+                    container: container.to_owned(),
+                    endpoint_config: None,
+                },
+            )
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(DockerError::DockerResponseServerError {
+                status_code: 403,
+                message,
+            }) if message.contains("already exists") || message.contains("already connected") => {
+                Ok(())
+            }
             Err(error) => Err(docker_error(error)),
         }
     }

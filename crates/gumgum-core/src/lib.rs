@@ -20,7 +20,7 @@ pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
-pub use docker_engine::{ContainerSnapshot, DockerEngine};
+pub use docker_engine::{ContainerRunSpec, ContainerSnapshot, DockerEngine};
 pub use domain::{DomainProvider, DomainRecord};
 pub use graph::{
     BindingName, ContainerName, DesiredGraph, DesiredGraphNode, GraphActionExecutor,

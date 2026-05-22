@@ -1,7 +1,6 @@
-use crate::{DockerEngine, ErrorCode, GraphStore, GumgumError, Subsystem};
+use crate::{ContainerRunSpec, DockerEngine, ErrorCode, GraphStore, GumgumError, Subsystem};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
-use tokio::process::Command as TokioCommand;
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeployRequest {
@@ -47,11 +46,7 @@ impl ContainerReconciler {
             return Ok((false, actions));
         }
         actions.push(format!("pull {}", request.image));
-        run_command_streaming(
-            TokioCommand::new("docker").arg("pull").arg(&request.image),
-            false,
-        )
-        .await?;
+        docker.pull_image(&request.image).await?;
         let network = if docker
             .container_running("gumgum-caddy")
             .await
@@ -66,37 +61,32 @@ impl ContainerReconciler {
         }
         actions.push(format!("recreate {}", request.container));
         let _ = docker.remove_container_force(&request.container).await;
-        let mut run = TokioCommand::new("docker");
-        run.arg("run")
-            .arg("-d")
-            .arg("--name")
-            .arg(&request.container)
-            .arg("--restart")
-            .arg("unless-stopped")
-            .arg("--network")
-            .arg(network);
+        let mut labels = HashMap::from([
+            ("gumgum.managed".to_owned(), "deployment".to_owned()),
+            ("gumgum.worker".to_owned(), request.worker.clone()),
+            (
+                "gumgum.binding_env".to_owned(),
+                binding_env_fingerprint.clone(),
+            ),
+        ]);
         if let Some(route) = &request.route {
-            run.arg("--label")
-                .arg(format!("caddy={route}"))
-                .arg("--label")
-                .arg(format!(
-                    "caddy.reverse_proxy={{{{upstreams {}}}}}",
-                    request.port
-                ))
-                .arg("--label")
-                .arg("caddy.tls=internal");
+            labels.insert("caddy".to_owned(), route.clone());
+            labels.insert(
+                "caddy.reverse_proxy".to_owned(),
+                format!("{{{{upstreams {}}}}}", request.port),
+            );
+            labels.insert("caddy.tls".to_owned(), "internal".to_owned());
         }
-        run.arg("--label")
-            .arg("gumgum.managed=deployment")
-            .arg("--label")
-            .arg(format!("gumgum.worker={}", request.worker))
-            .arg("--label")
-            .arg(format!("gumgum.binding_env={binding_env_fingerprint}"));
-        for (name, value) in &binding_env {
-            run.arg("-e").arg(format!("{name}={value}"));
-        }
-        run.arg(&request.image);
-        run_command_streaming(&mut run, false).await?;
+        docker
+            .create_and_start_container(ContainerRunSpec {
+                name: request.container.clone(),
+                image: request.image.clone(),
+                network: network.to_owned(),
+                restart_unless_stopped: true,
+                labels,
+                env: binding_env.clone(),
+            })
+            .await?;
         if network != "gumgum-network"
             && docker
                 .network_exists("gumgum-network")
@@ -104,15 +94,9 @@ impl ContainerReconciler {
                 .unwrap_or(false)
         {
             actions.push(format!("connect {} to gumgum-network", request.container));
-            run_command_streaming(
-                TokioCommand::new("docker")
-                    .arg("network")
-                    .arg("connect")
-                    .arg("gumgum-network")
-                    .arg(&request.container),
-                false,
-            )
-            .await?;
+            docker
+                .connect_container_to_network(&request.container, "gumgum-network")
+                .await?;
         }
         Self::wait_for_container_health(&docker, &request.container, request.port, &request.health)
             .await?;
@@ -219,27 +203,6 @@ fn binding_env_fingerprint(env: &[(String, String)]) -> String {
         }
     }
     format!("env-{hash:016x}")
-}
-
-async fn run_command_streaming(cmd: &mut TokioCommand, quiet: bool) -> crate::Result<()> {
-    let output = cmd.output().await.map_err(|source| {
-        GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "failed to run command")
-            .likely_cause(source.to_string())
-            .build()
-    })?;
-    if !quiet {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
-        eprint!("{}", String::from_utf8_lossy(&output.stderr));
-    }
-    if output.status.success() || quiet {
-        Ok(())
-    } else {
-        Err(
-            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "command failed")
-                .likely_cause(format!("process exited with {}", output.status))
-                .build(),
-        )
-    }
 }
 
 #[cfg(test)]
