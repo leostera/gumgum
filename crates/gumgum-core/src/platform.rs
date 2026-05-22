@@ -64,6 +64,7 @@ impl LocalPlatform {
                     5000,
                 )],
                 command: Vec::new(),
+                entrypoint: Vec::new(),
             })
             .await
     }
@@ -113,6 +114,7 @@ impl LocalPlatform {
                     PortBindingSpec::udp(Some(host_ip.to_string()), 53, 53),
                 ],
                 command: Vec::new(),
+                entrypoint: Vec::new(),
             })
             .await
     }
@@ -158,6 +160,7 @@ impl LocalPlatform {
                 binds: vec![socket_mount.to_owned()],
                 ports,
                 command: Vec::new(),
+                entrypoint: Vec::new(),
             })
             .await
     }

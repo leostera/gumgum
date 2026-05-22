@@ -29,6 +29,7 @@ pub struct ContainerRunSpec {
     pub binds: Vec<String>,
     pub ports: Vec<PortBindingSpec>,
     pub command: Vec<String>,
+    pub entrypoint: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -194,6 +195,7 @@ impl DockerEngine {
             ),
             labels: Some(spec.labels),
             cmd: (!spec.command.is_empty()).then_some(spec.command),
+            entrypoint: (!spec.entrypoint.is_empty()).then_some(spec.entrypoint),
             exposed_ports,
             host_config: Some(HostConfig {
                 network_mode: Some(spec.network),
@@ -266,6 +268,31 @@ impl DockerEngine {
             .restart_container(name, Some(options))
             .await
             .map_err(docker_error)
+    }
+
+    pub async fn run_oneshot_container(&self, mut spec: ContainerRunSpec) -> Result<()> {
+        use bollard::query_parameters::{
+            RemoveContainerOptionsBuilder, WaitContainerOptionsBuilder,
+        };
+        if spec.name.is_empty() {
+            spec.name = format!("gumgum-oneshot-{}", unique_suffix());
+        }
+        let name = spec.name.clone();
+        self.pull_image(&spec.image).await?;
+        self.create_and_start_container(spec).await?;
+        let options = WaitContainerOptionsBuilder::new()
+            .condition("not-running")
+            .build();
+        let mut stream = self.client.wait_container(&name, Some(options));
+        while let Some(message) = stream.next().await {
+            message.map_err(docker_error)?;
+        }
+        let remove_options = RemoveContainerOptionsBuilder::new().force(true).build();
+        let _ = self
+            .client
+            .remove_container(&name, Some(remove_options))
+            .await;
+        Ok(())
     }
 
     pub async fn exec_success(
@@ -367,6 +394,13 @@ impl DockerEngine {
             .filter(|name| !name.is_empty())
             .collect())
     }
+}
+
+fn unique_suffix() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_else(|_| "0".to_owned())
 }
 
 fn docker_error(source: DockerError) -> GumgumError {

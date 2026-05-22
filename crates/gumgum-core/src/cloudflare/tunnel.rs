@@ -31,6 +31,7 @@ pub async fn ensure_cloudflared(token: &str) -> Result<Vec<String>> {
                 "--no-autoupdate".to_owned(),
                 "run".to_owned(),
             ],
+            entrypoint: Vec::new(),
         })
         .await?;
 

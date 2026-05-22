@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{ContainerRunSpec, DockerEngine, ErrorCode, GumgumError, Subsystem};
-use tokio::process::Command as TokioCommand;
+use crate::{ContainerRunSpec, DockerEngine};
 
 use super::types::ProviderSpec;
 
@@ -30,26 +29,6 @@ pub(crate) async fn running(container: &str) -> bool {
     match DockerEngine::local() {
         Ok(docker) => docker.container_running(container).await.unwrap_or(false),
         Err(_) => false,
-    }
-}
-
-pub(crate) async fn run_provider_command(
-    cmd: &mut TokioCommand,
-    message: &str,
-) -> crate::Result<()> {
-    let output = cmd.output().await.map_err(|source| {
-        GumgumError::structured(Subsystem::Setup, ErrorCode::Io, message)
-            .likely_cause(source.to_string())
-            .build()
-    })?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(
-            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, message)
-                .likely_cause(String::from_utf8_lossy(&output.stderr).trim().to_owned())
-                .build(),
-        )
     }
 }
 
@@ -91,6 +70,7 @@ pub(crate) async fn create_provider_container(
             binds: Vec::new(),
             ports: Vec::new(),
             command,
+            entrypoint: Vec::new(),
         })
         .await?;
     Ok(created_provider_actions(provider))

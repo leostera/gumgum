@@ -88,6 +88,7 @@ impl ContainerReconciler {
                 binds: Vec::new(),
                 ports: Vec::new(),
                 command: Vec::new(),
+                entrypoint: Vec::new(),
             })
             .await?;
         if network != "gumgum-network"

@@ -2,7 +2,6 @@ use crate::{Capability, ErrorCode, GumgumError, Subsystem, sanitize_name};
 use hmac::{Hmac, KeyInit, Mac};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use sha2::{Digest, Sha256};
-use tokio::process::Command as TokioCommand;
 
 type HmacSha256 = Hmac<Sha256>;
 const PATH_ENCODE_SET: &AsciiSet = &CONTROLS
@@ -17,10 +16,10 @@ const PATH_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'{')
     .add(b'}');
 
-use super::docker::{
-    create_provider_container, ensure_network, inspect, run_provider_command, start_existing,
-};
+use super::docker::{create_provider_container, ensure_network, inspect, start_existing};
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
+use crate::{ContainerRunSpec, DockerEngine};
+use std::collections::HashMap;
 
 pub fn spec() -> ProviderSpec {
     ProviderSpec {
@@ -108,20 +107,7 @@ async fn ensure_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate
         shell_single_quote(&credentials.password),
         shell_single_quote(bucket)
     );
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("run")
-            .arg("--rm")
-            .arg("--network")
-            .arg("gumgum-network")
-            .arg("--entrypoint")
-            .arg("/bin/sh")
-            .arg("minio/mc:latest")
-            .arg("-c")
-            .arg(script),
-        "could not ensure minio bucket",
-    )
-    .await
+    run_minio_mc(script).await
 }
 
 async fn delete_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate::Result<()> {
@@ -131,20 +117,24 @@ async fn delete_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate
         shell_single_quote(&credentials.password),
         shell_single_quote(bucket)
     );
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("run")
-            .arg("--rm")
-            .arg("--network")
-            .arg("gumgum-network")
-            .arg("--entrypoint")
-            .arg("/bin/sh")
-            .arg("minio/mc:latest")
-            .arg("-c")
-            .arg(script),
-        "could not delete minio bucket",
-    )
-    .await
+    run_minio_mc(script).await
+}
+
+async fn run_minio_mc(script: String) -> crate::Result<()> {
+    DockerEngine::local()?
+        .run_oneshot_container(ContainerRunSpec {
+            name: String::new(),
+            image: "minio/mc:latest".to_owned(),
+            network: "gumgum-network".to_owned(),
+            restart_unless_stopped: false,
+            labels: HashMap::new(),
+            env: Vec::new(),
+            binds: Vec::new(),
+            ports: Vec::new(),
+            command: vec!["-c".to_owned(), script],
+            entrypoint: vec!["/bin/sh".to_owned()],
+        })
+        .await
 }
 
 pub async fn list_objects(
@@ -318,24 +308,23 @@ pub async fn sync_objects(
 }
 
 async fn minio_endpoint() -> crate::Result<String> {
-    let output = TokioCommand::new("docker")
-        .arg("inspect")
-        .arg("-f")
-        .arg("{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
-        .arg("gumgum-provider-minio-main")
-        .output()
-        .await
-        .map_err(|source| s3_error("could not inspect minio provider container", source))?;
-    if !output.status.success() {
-        return Err(GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "could not inspect minio provider container",
-        )
-        .likely_cause(String::from_utf8_lossy(&output.stderr).trim().to_owned())
-        .build());
-    }
-    let ip = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let container = DockerEngine::local()?
+        .inspect_container("gumgum-provider-minio-main")
+        .await?
+        .ok_or_else(|| {
+            GumgumError::structured(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                "could not inspect minio provider container",
+            )
+            .build()
+        })?;
+    let ip = container
+        .networks
+        .values()
+        .find(|ip| !ip.is_empty())
+        .cloned()
+        .unwrap_or_default();
     if ip.is_empty() {
         return Err(GumgumError::structured(
             Subsystem::Setup,
