@@ -1600,6 +1600,47 @@ mod tests {
     }
 
     #[test]
+    fn binding_queries_support_safe_delete_guards() {
+        let store = temp_store("binding-queries");
+        let object = GlobalObject {
+            capability: Capability::Kv,
+            name: "user-counters".to_owned(),
+            namespace: "visit-counter".to_owned(),
+            root_domain: "example.test".to_owned(),
+        };
+        store.materialize_object(&object).unwrap();
+        store
+            .materialize_binding(&WorkerBinding {
+                capability: Capability::Kv,
+                object_name: "user-counters".to_owned(),
+                worker: "api".to_owned(),
+                binding: "USER_COUNTERS".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+
+        assert_eq!(store.object_bindings(&object).unwrap().len(), 1);
+        assert_eq!(store.object_bindings(&object).unwrap()[0].worker, "api");
+        assert_eq!(
+            store.worker_bindings("api").unwrap()[0].worker,
+            "kv/user-counters"
+        );
+        assert!(store.worker_bindings("worker").unwrap().is_empty());
+        store
+            .delete_binding(&WorkerBinding {
+                capability: Capability::Kv,
+                object_name: "user-counters".to_owned(),
+                worker: "api".to_owned(),
+                binding: "USER_COUNTERS".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+        assert!(store.object_bindings(&object).unwrap().is_empty());
+        assert!(store.delete_object(&object).unwrap());
+        let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
     fn materialized_state_loads_as_graph_with_bindings_and_routes() {
         let store = temp_store("load");
         store

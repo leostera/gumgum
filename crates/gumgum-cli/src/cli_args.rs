@@ -460,6 +460,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn init_is_workspace_only_and_env_supports_qualified() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "init",
+                "--name",
+                "visit-counter",
+                "--root-domain",
+                "example.com",
+            ])
+            .unwrap()
+            .command,
+            Command::Init(InitArgs {
+                name: Some(ref name),
+                root_domain: Some(ref root_domain),
+                ..
+            }) if name == "visit-counter" && root_domain == "example.com"
+        ));
+        assert!(Cli::try_parse_from(["gumgum", "init", "--kind", "worker"]).is_err());
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "env", "--qualified", "--worker", "api"])
+                .unwrap()
+                .command,
+            Command::Env(EnvArgs { qualified: true, worker: Some(ref worker), .. })
+                if worker == "api"
+        ));
+    }
+
+    #[test]
+    fn logs_follow_is_allowed_without_single_worker_at_parse_layer() {
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "logs", "-f"])
+                .unwrap()
+                .command,
+            Command::Logs(LogsArgs { follow: true, .. })
+        ));
+    }
+
+    #[test]
     fn server_capabilities_command_supports_explicit_requirements() {
         assert!(matches!(
             Cli::try_parse_from([

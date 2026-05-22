@@ -104,13 +104,42 @@ The `curl` mutates only app data by creating a visit; it does not mutate gumgum 
 
 ## Validation gates
 
+Fast local gate:
+
+```bash
+scripts/test-fast.sh
+```
+
+Equivalent manual commands:
+
 ```bash
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+```
+
+Fixture Python gates when touching Python test apps:
+
+```bash
 ( cd examples/visit-counter/api && uv run pytest )
 ( cd examples/visit-counter/worker && uv run pytest )
 find examples/visit-counter -type d -name __pycache__ -prune -exec rm -rf {} +
+```
+
+Testing tiers:
+
+```bash
+# fast unit/integration gate
+scripts/test-fast.sh
+
+# graph/property tests (expand this as property suites land)
+cargo test -p gumgum-core graph
+
+# fuzzing (requires cargo-fuzz; targets will be added under fuzz/)
+cargo fuzz run manifest_parse
+
+# VM E2E (must require an explicit disposable host; never default to starbase2)
+scripts/e2e-vm.sh --host <vm-host> --root-domain <domain>
 ```
 
 Run the Rust/Python gates after implementation changes. For documentation-only changes, `cargo fmt --check` is usually sufficient unless the user asks for more.
