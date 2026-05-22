@@ -188,7 +188,7 @@ pub struct Ingress {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub public_domain: Option<String>,
+    pub record: Option<String>,
     #[serde(default)]
     pub public: bool,
 }

@@ -125,7 +125,19 @@ fn derived_routes(
     } else {
         &server.root_domain
     };
-    let mut routes = vec![format!("{worker}.{project}.{route_domain}")];
+    let mut routes: Vec<String> = manifest
+        .ingress
+        .iter()
+        .map(|ingress| {
+            ingress_route(
+                ingress.record.as_deref(),
+                &worker,
+                &project,
+                route_domain,
+                prod,
+            )
+        })
+        .collect();
     routes.extend(
         manifest
             .ingress
@@ -136,19 +148,27 @@ fn derived_routes(
     if prod {
         routes.extend(
             manifest
-                .ingress
-                .iter()
-                .filter_map(|ingress| ingress.public_domain.clone())
-                .filter(|route| route.ends_with(route_domain)),
-        );
-        routes.extend(
-            manifest
                 .zone
                 .iter()
                 .map(|zone| format!("{worker}.{}", zone.name.trim_start_matches("*."))),
         );
     }
     routes
+}
+
+fn ingress_route(
+    record: Option<&str>,
+    worker: &str,
+    project: &str,
+    route_domain: &str,
+    prod: bool,
+) -> String {
+    match record.unwrap_or(worker) {
+        "@" if prod => route_domain.to_owned(),
+        "@" => format!("{project}.{route_domain}"),
+        record if prod => format!("{record}.{route_domain}"),
+        record => format!("{record}.{project}.{route_domain}"),
+    }
 }
 
 fn stable_deploy_revision(path: &Path, manifest: &WorkerManifest) -> String {
@@ -198,13 +218,7 @@ fn stable_deploy_revision(path: &Path, manifest: &WorkerManifest) -> String {
                 .unwrap_or_default()
                 .as_bytes(),
         );
-        hash.write(
-            ingress
-                .public_domain
-                .as_deref()
-                .unwrap_or_default()
-                .as_bytes(),
-        );
+        hash.write(ingress.record.as_deref().unwrap_or_default().as_bytes());
         hash.write(&[ingress.public as u8]);
     }
     format!("gg{:016x}", hash.finish())
@@ -316,7 +330,7 @@ mod tests {
                 protocol: "http".to_owned(),
                 port: Some(8080),
                 local_domain: Some("hello.local".to_owned()),
-                public_domain: None,
+                record: None,
                 public: false,
             }],
             database: Vec::new(),
@@ -373,7 +387,7 @@ mod tests {
         assert_eq!(
             descriptor.routes,
             vec![
-                "hello-world.hello.hello.example".to_owned(),
+                "hello-world.hello.example".to_owned(),
                 "hello-world.example.com".to_owned(),
             ]
         );

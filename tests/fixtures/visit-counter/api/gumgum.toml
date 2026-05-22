@@ -9,7 +9,7 @@ name = "api-http"
 protocol = "http"
 port = 3000
 local_domain = "api.visit-counter.leostera.dev"
-public_domain = "api.visit-counter.leostera.dev"
+record = "api"
 
 [[kv]]
 kv_id = "user-counters"

@@ -1438,11 +1438,38 @@ async fn daemon_deploy(
         None
     };
     let materialized = materialize_changed.is_some();
+    if materialized && request.publish {
+        if let Some(route) = &request.route {
+            match ConfigStore::from_home_env()
+                .and_then(|store| Ok((store.load_domains()?, store.load_cloudflare_grant()?)))
+            {
+                Ok((domains, Some(grant))) => {
+                    match gumgum_core::cloudflare::dns::ensure_published_route(
+                        &domains, &grant, route,
+                    )
+                    .await
+                    {
+                        Ok(mut dns_actions) => actions.append(&mut dns_actions),
+                        Err(error) => actions
+                            .push(format!("publish DNS failed: {}", error.to_report().message)),
+                    }
+                }
+                Ok((_domains, None)) => actions.push(format!(
+                    "publish DNS skipped for {route}; no Cloudflare grant saved on server"
+                )),
+                Err(error) => actions.push(format!(
+                    "publish DNS skipped: {}",
+                    error.to_report().message
+                )),
+            }
+        }
+    }
     let changed = materialize_changed.unwrap_or(false)
         || actions.iter().any(|action| {
             action.starts_with("pull ")
                 || action.starts_with("recreate ")
                 || action.starts_with("project ")
+                || action.starts_with("ensure Cloudflare")
         });
     Json(DeployApplyReport {
         ok: materialized && reconcile_ok,

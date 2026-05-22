@@ -331,6 +331,7 @@ async fn run_remote_deploy(
         image: report.image.clone(),
         container: report.container.clone(),
         route: route.clone(),
+        publish: manifest.ingress.iter().any(|ingress| ingress.public),
         port: report.port,
         health: manifest.worker.ready_check_path().to_owned(),
     };

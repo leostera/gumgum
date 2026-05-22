@@ -10,8 +10,8 @@ health = "/healthz"
 name = "api-http"
 protocol = "http"
 local_domain = "api.peekaboo.leostera.test"
-public_domain = "api.peekaboo.leostera.dev"
-publish = false
+record = "api"
+public = false
 
 [[database]]
 name = "main"

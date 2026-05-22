@@ -1,1 +1,35 @@
-// DNS record convergence for Cloudflare-managed zones lives here.
+use crate::{CloudflareGrant, DomainProvider, DomainRecord, IngressMode, Result};
+
+use super::api::CloudflareClient;
+
+pub async fn ensure_published_route(
+    domains: &[DomainRecord],
+    grant: &CloudflareGrant,
+    hostname: &str,
+) -> Result<Vec<String>> {
+    let Some(domain) = domains
+        .iter()
+        .filter(|domain| {
+            hostname == domain.name || hostname.ends_with(&format!(".{}", domain.name))
+        })
+        .max_by_key(|domain| domain.name.len())
+    else {
+        return Ok(vec![format!(
+            "no managed domain matches {hostname}; DNS was not changed"
+        )]);
+    };
+    match (domain.provider, domain.ingress) {
+        (DomainProvider::Cloudflare, IngressMode::Cloudflare) => {
+            CloudflareClient::new(grant)
+                .ensure_route(&domain.name, hostname)
+                .await
+        }
+        (DomainProvider::Manual, _) => Ok(vec![format!(
+            "manual DNS required for {hostname} under {}",
+            domain.name
+        )]),
+        (DomainProvider::Cloudflare, IngressMode::Direct) => Ok(vec![format!(
+            "Cloudflare direct DNS for {hostname} is not implemented yet"
+        )]),
+    }
+}
