@@ -75,13 +75,13 @@ pub(crate) enum ConfigSubcommand {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum DeployChannel {
+pub(crate) enum DeployEnv {
     Preview,
     Release,
 }
 
 #[allow(dead_code)]
-impl DeployChannel {
+impl DeployEnv {
     pub(crate) fn is_release(self) -> bool {
         self == Self::Release
     }
@@ -101,7 +101,7 @@ pub(crate) struct DeployArgs {
     #[arg(long)]
     pub(crate) host: Option<String>,
     #[arg(long, value_enum, default_value = "preview")]
-    pub(crate) channel: DeployChannel,
+    pub(crate) env: DeployEnv,
     #[arg(long, help = "Delete the desired deployment for this worker")]
     pub(crate) delete: bool,
 }

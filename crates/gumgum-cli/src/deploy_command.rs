@@ -91,7 +91,7 @@ pub(crate) async fn deploy(
                 },
                 server,
                 dry_run,
-                args.channel,
+                args.env,
                 quiet,
             )
             .await?;
@@ -122,7 +122,7 @@ pub(crate) async fn deploy(
                     },
                     server.clone(),
                     dry_run,
-                    args.channel,
+                    args.env,
                     quiet,
                 )
                 .await?;
@@ -171,7 +171,7 @@ async fn deploy_one(
     project: DeployProjectContext<'_>,
     server: Option<ServerRecord>,
     dry_run: bool,
-    channel: crate::DeployChannel,
+    env: crate::DeployEnv,
     quiet: bool,
 ) -> gumgum_core::Result<DeployReport> {
     let mut report = deploy_report(
@@ -181,7 +181,7 @@ async fn deploy_one(
         project.domain,
         server.as_ref(),
         dry_run,
-        channel,
+        env,
     );
     if dry_run {
         return Ok(report);
@@ -196,7 +196,7 @@ async fn deploy_one(
         .build()
     })?;
     DeployExecutor::new(&server, quiet)
-        .ensure_manifest_bindings(manifest, project.name)
+        .ensure_manifest_bindings(manifest, project.name, env)
         .await?;
     run_remote_deploy(&server, manifest, &report, quiet).await?;
     report.ok = true;
@@ -218,7 +218,7 @@ fn deploy_report(
     project_domain: Option<&str>,
     server: Option<&ServerRecord>,
     dry_run: bool,
-    channel: crate::DeployChannel,
+    env: crate::DeployEnv,
 ) -> DeployReport {
     let descriptor = DeploymentDescriptor::from_manifest_in_project(
         &path,
@@ -226,7 +226,7 @@ fn deploy_report(
         project_name,
         project_domain,
         server,
-        channel.is_release(),
+        env.is_release(),
     );
     DeployReport {
         ok: true,
@@ -245,7 +245,7 @@ fn deploy_report(
         message: if dry_run {
             format!(
                 "validated worker manifest for {} deploy; no containers changed",
-                channel.label()
+                env.label()
             )
         } else {
             "deployment pending".to_owned()

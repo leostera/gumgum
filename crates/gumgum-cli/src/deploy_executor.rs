@@ -1,5 +1,5 @@
 use crate::{progress, server_client::ServerClient};
-use gumgum_api::{BindingRequest, ObjectRequest, ServerRecord};
+use gumgum_api::{BindingReport, BindingRequest, ObjectReport, ObjectRequest, ServerRecord};
 use gumgum_core::{Capability, ObjectBinding, QueueBinding, WorkerManifest};
 
 pub(crate) struct DeployExecutor<'a> {
@@ -56,22 +56,65 @@ impl<'a> DeployExecutor<'a> {
         &self,
         manifest: &WorkerManifest,
         namespace: Option<&str>,
+        env: crate::DeployEnv,
     ) -> gumgum_core::Result<()> {
         for intent in manifest_binding_intents(manifest, self.server, namespace) {
+            let label = format!("{}/{}", env.label(), intent.object_name);
+            let report = self.client.create_object(&intent.object_request()).await?;
             progress(
                 self.quiet,
-                format!("ensuring {}/{}", intent.capability, intent.object_name),
+                format!(
+                    "{} {}/{} — {}",
+                    object_status(&report),
+                    intent.capability,
+                    label,
+                    report.message
+                ),
             );
-            self.client.create_object(&intent.object_request()).await?;
             if let Some(request) = intent.binding_request() {
+                let report = self.client.bind_object(&request).await?;
                 progress(
                     self.quiet,
-                    format!("ensuring binding {}.{}", request.worker, request.binding),
+                    format!(
+                        "{} binding {}/{}.{} — {}",
+                        binding_status(&report),
+                        env.label(),
+                        request.worker,
+                        request.binding,
+                        report.message
+                    ),
                 );
-                self.client.bind_object(&request).await?;
             }
         }
         Ok(())
+    }
+}
+
+fn object_status(report: &ObjectReport) -> &'static str {
+    if !report.ok {
+        "errored"
+    } else if report
+        .provider_actions
+        .iter()
+        .any(|action| action.contains("already"))
+    {
+        "ok"
+    } else {
+        "changed"
+    }
+}
+
+fn binding_status(report: &BindingReport) -> &'static str {
+    if !report.ok {
+        "errored"
+    } else if report
+        .binding_actions
+        .iter()
+        .any(|action| action.contains("already"))
+    {
+        "ok"
+    } else {
+        "changed"
     }
 }
 
