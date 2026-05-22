@@ -1,4 +1,4 @@
-use crate::{ErrorCode, GraphStore, GumgumError, Subsystem};
+use crate::{DockerEngine, ErrorCode, GraphStore, GumgumError, Subsystem};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
 use tokio::process::Command as TokioCommand;
@@ -24,36 +24,25 @@ impl ContainerReconciler {
 
     pub async fn reconcile(&self, request: &DeployRequest) -> crate::Result<(bool, Vec<String>)> {
         let mut actions = Vec::new();
+        let docker = DockerEngine::local()?;
         let binding_env = self.binding_env(logical_worker(&request.worker))?;
         let binding_env_fingerprint = binding_env_fingerprint(&binding_env);
-        let inspect = TokioCommand::new("docker")
-            .arg("inspect")
-            .arg("-f")
-            .arg("{{.Config.Image}} {{index .Config.Labels \"caddy\"}} {{index .Config.Labels \"caddy.reverse_proxy\"}} {{index .Config.Labels \"gumgum.binding_env\"}}")
-            .arg(&request.container)
-            .output()
-            .await
-            .map_err(|source| {
-                GumgumError::structured(
-                    Subsystem::Setup,
-                    ErrorCode::Io,
-                    "could not inspect deployment container",
-                )
-                .likely_cause(source.to_string())
-                .build()
-            })?;
-        let current = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
         let expected_proxy = request
             .route
             .as_ref()
             .map(|_| format!("{{{{upstreams {}}}}}", request.port))
             .unwrap_or_default();
         let expected_route = request.route.clone().unwrap_or_default();
-        let expected = format!(
-            "{} {} {} {}",
-            request.image, expected_route, expected_proxy, binding_env_fingerprint
-        );
-        if inspect.status.success() && current == expected {
+        if docker
+            .inspect_container(&request.container)
+            .await?
+            .is_some_and(|container| {
+                container.image.as_deref() == Some(request.image.as_str())
+                    && container.labels.get("caddy") == Some(&expected_route)
+                    && container.labels.get("caddy.reverse_proxy") == Some(&expected_proxy)
+                    && container.labels.get("gumgum.binding_env") == Some(&binding_env_fingerprint)
+            })
+        {
             actions.push("container already matches desired image, route, and bindings".to_owned());
             return Ok((false, actions));
         }
@@ -63,7 +52,11 @@ impl ContainerReconciler {
             false,
         )
         .await?;
-        let network = if Self::docker_running("gumgum-caddy").await {
+        let network = if docker
+            .container_running("gumgum-caddy")
+            .await
+            .unwrap_or(false)
+        {
             "gumgum-network"
         } else {
             "caddy-network"
@@ -72,14 +65,7 @@ impl ContainerReconciler {
             actions.push(format!("project {} binding env var(s)", binding_env.len()));
         }
         actions.push(format!("recreate {}", request.container));
-        let _ = run_command_streaming(
-            TokioCommand::new("docker")
-                .arg("rm")
-                .arg("-f")
-                .arg(&request.container),
-            true,
-        )
-        .await;
+        let _ = docker.remove_container_force(&request.container).await;
         let mut run = TokioCommand::new("docker");
         run.arg("run")
             .arg("-d")
@@ -111,7 +97,12 @@ impl ContainerReconciler {
         }
         run.arg(&request.image);
         run_command_streaming(&mut run, false).await?;
-        if network != "gumgum-network" && Self::docker_network_exists("gumgum-network").await {
+        if network != "gumgum-network"
+            && docker
+                .network_exists("gumgum-network")
+                .await
+                .unwrap_or(false)
+        {
             actions.push(format!("connect {} to gumgum-network", request.container));
             run_command_streaming(
                 TokioCommand::new("docker")
@@ -123,62 +114,39 @@ impl ContainerReconciler {
             )
             .await?;
         }
-        Self::wait_for_container_health(&request.container, request.port, &request.health).await?;
-        actions.extend(Self::remove_stale_worker_containers(request).await?);
-        actions.extend(Self::remove_stale_route_containers(request).await?);
+        Self::wait_for_container_health(&docker, &request.container, request.port, &request.health)
+            .await?;
+        actions.extend(Self::remove_stale_worker_containers(&docker, request).await?);
+        actions.extend(Self::remove_stale_route_containers(&docker, request).await?);
         Ok((true, actions))
     }
 
-    async fn remove_stale_worker_containers(request: &DeployRequest) -> crate::Result<Vec<String>> {
-        let output = TokioCommand::new("docker")
-            .arg("ps")
-            .arg("-a")
-            .arg("--filter")
-            .arg(format!("label=gumgum.worker={}", request.worker))
-            .arg("--format")
-            .arg("{{.Names}}")
-            .output()
-            .await
-            .map_err(|source| {
-                GumgumError::structured(
-                    Subsystem::Setup,
-                    ErrorCode::Io,
-                    "could not list deployment containers",
-                )
-                .likely_cause(source.to_string())
-                .build()
-            })?;
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-        let mut actions = Vec::new();
-        for container in String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|container| !container.is_empty() && *container != request.container)
-        {
-            actions.push(format!("remove stale deployment container {container}"));
-            run_command_streaming(
-                TokioCommand::new("docker")
-                    .arg("rm")
-                    .arg("-f")
-                    .arg(container),
-                true,
-            )
-            .await?;
-        }
-        Ok(actions)
+    async fn remove_stale_worker_containers(
+        docker: &DockerEngine,
+        request: &DeployRequest,
+    ) -> crate::Result<Vec<String>> {
+        Self::remove_stale_containers(
+            docker,
+            request,
+            vec![format!("gumgum.worker={}", request.worker)],
+            "remove stale deployment container",
+        )
+        .await
     }
 
-    async fn remove_stale_route_containers(request: &DeployRequest) -> crate::Result<Vec<String>> {
+    async fn remove_stale_route_containers(
+        docker: &DockerEngine,
+        request: &DeployRequest,
+    ) -> crate::Result<Vec<String>> {
         let Some(route) = request.route.as_deref() else {
             return Ok(Vec::new());
         };
         Self::remove_stale_containers(
+            docker,
             request,
             vec![
-                "label=gumgum.managed=deployment".to_owned(),
-                format!("label=caddy={route}"),
+                "gumgum.managed=deployment".to_owned(),
+                format!("caddy={route}"),
             ],
             "remove stale deployment container for route",
         )
@@ -186,47 +154,18 @@ impl ContainerReconciler {
     }
 
     async fn remove_stale_containers(
+        docker: &DockerEngine,
         request: &DeployRequest,
-        filters: Vec<String>,
+        labels: Vec<String>,
         action_prefix: &str,
     ) -> crate::Result<Vec<String>> {
-        let mut command = TokioCommand::new("docker");
-        command.arg("ps").arg("-a");
-        for filter in filters {
-            command.arg("--filter").arg(filter);
-        }
-        let output = command
-            .arg("--format")
-            .arg("{{.Names}}")
-            .output()
-            .await
-            .map_err(|source| {
-                GumgumError::structured(
-                    Subsystem::Setup,
-                    ErrorCode::Io,
-                    "could not list deployment containers",
-                )
-                .likely_cause(source.to_string())
-                .build()
-            })?;
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
         let mut actions = Vec::new();
-        for container in String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|container| !container.is_empty() && *container != request.container)
-        {
+        for container in docker.list_container_names_by_label(&labels).await? {
+            if container == request.container {
+                continue;
+            }
             actions.push(format!("{action_prefix} {container}"));
-            run_command_streaming(
-                TokioCommand::new("docker")
-                    .arg("rm")
-                    .arg("-f")
-                    .arg(container),
-                true,
-            )
-            .await?;
+            docker.remove_container_force(&container).await?;
         }
         Ok(actions)
     }
@@ -235,62 +174,23 @@ impl ContainerReconciler {
         GraphStore::new(self.graph_path.clone()).binding_env(worker)
     }
 
-    async fn docker_running(name: &str) -> bool {
-        TokioCommand::new("docker")
-            .arg("inspect")
-            .arg("-f")
-            .arg("{{.State.Running}}")
-            .arg(name)
-            .output()
-            .await
-            .map(|output| {
-                output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
-            })
-            .unwrap_or(false)
-    }
-
-    async fn docker_network_exists(name: &str) -> bool {
-        TokioCommand::new("docker")
-            .arg("network")
-            .arg("inspect")
-            .arg(name)
-            .output()
-            .await
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
-
     async fn wait_for_container_health(
+        docker: &DockerEngine,
         container: &str,
         port: u16,
         health: &str,
     ) -> crate::Result<()> {
         for _ in 0..20 {
-            let output = TokioCommand::new("docker")
-                .arg("inspect")
-                .arg("-f")
-                .arg("{{range.NetworkSettings.Networks}}{{println .IPAddress}}{{end}}")
-                .arg(container)
-                .output()
-                .await
-                .map_err(|source| {
-                    GumgumError::structured(
-                        Subsystem::Setup,
-                        ErrorCode::Io,
-                        "could not inspect deployment IP",
-                    )
-                    .likely_cause(source.to_string())
-                    .build()
-                })?;
-            let ips = String::from_utf8_lossy(&output.stdout);
-            for ip in ips.lines().map(str::trim).filter(|ip| !ip.is_empty()) {
-                let url = format!("http://{ip}:{port}{health}");
-                if reqwest::get(&url)
-                    .await
-                    .map(|response| response.status().is_success())
-                    .unwrap_or(false)
-                {
-                    return Ok(());
+            if let Some(container) = docker.inspect_container(container).await? {
+                for ip in container.networks.values().filter(|ip| !ip.is_empty()) {
+                    let url = format!("http://{ip}:{port}{health}");
+                    if reqwest::get(&url)
+                        .await
+                        .map(|response| response.status().is_success())
+                        .unwrap_or(false)
+                    {
+                        return Ok(());
+                    }
                 }
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
