@@ -111,6 +111,8 @@ pub(crate) struct EnvArgs {
     pub(crate) project: Option<String>,
     #[arg(long, help = "Only print environment for this worker")]
     pub(crate) worker: Option<String>,
+    #[arg(long, help = "Prefix env vars with project and worker names")]
+    pub(crate) qualified: bool,
 }
 
 #[derive(Debug, Args)]

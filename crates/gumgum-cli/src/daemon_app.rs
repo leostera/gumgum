@@ -225,6 +225,36 @@ async fn daemon_delete_object(
     let provider = request.capability.provider().to_owned();
     let provider_plan = object_provider_plan(request.capability, &request.name, &dns);
     let provider_credentials = required_provider_credentials(request.capability).unwrap_or(None);
+    let existing_bindings = tokio::task::spawn_blocking({
+        let graph_path = graph_path.clone();
+        let object = object.clone();
+        move || GraphStore::new(graph_path).object_bindings(&object)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default();
+    if !existing_bindings.is_empty() {
+        return Json(ObjectReport {
+            ok: false,
+            kind: capability_name,
+            name: request.name,
+            dns,
+            provider,
+            connection_examples: Vec::new(),
+            provider_actions: existing_bindings
+                .iter()
+                .map(|binding| {
+                    format!(
+                        "still bound to worker {} as {}",
+                        binding.worker, binding.binding
+                    )
+                })
+                .collect(),
+            reconciliation_steps: Vec::new(),
+            message: "object has active bindings; unbind it before deleting".to_owned(),
+        });
+    }
     let reconciliation_steps = object.delete_reconciliation_steps(graph_path.clone()).await;
     let deleted = if request.preview {
         false
@@ -1616,12 +1646,15 @@ mod tests {
             }),
         )
         .await;
-        assert!(object_report.ok);
-        assert_eq!(object_report.message, "object delete preview");
-        assert!(!object_report.reconciliation_steps.is_empty());
+        assert!(!object_report.ok);
+        assert_eq!(
+            object_report.message,
+            "object has active bindings; unbind it before deleting"
+        );
+        assert!(object_report.reconciliation_steps.is_empty());
         assert_eq!(
             object_report.provider_actions,
-            vec!["preview only; no objects changed"]
+            vec!["still bound to worker api as VISIT_EVENTS_QUEUE"]
         );
         assert_eq!(
             GraphStore::new(path.clone())

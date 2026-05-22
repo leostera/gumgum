@@ -441,7 +441,18 @@ gumgum env --worker api
 gumgum env --project my-app --worker api
 ```
 
-Workspace environment keys are namespaced by project and worker:
+Environment keys are namespaced by worker by default:
+
+```dotenv
+API_DATABASE_URL=...
+API_CACHE_URL=...
+```
+
+Use `--qualified` when exporting a whole workspace and you want project + worker prefixes:
+
+```bash
+gumgum env --qualified
+```
 
 ```dotenv
 MY_APP_API_DATABASE_URL=...
@@ -694,7 +705,7 @@ gumgum worker delete <name> [workspace]
 gumgum deploy [path] [--host <server>] [--prod] [--delete]
 gumgum publish [target] [--host <server>] [--public-domain <domain>] [--tunnel <kind>]
 gumgum logs [path-or-worker] [--host <server>] [--tail <n>] [--follow]
-gumgum env [path] [--host <server>] [--project <name>] [--worker <name>]
+gumgum env [path] [--host <server>] [--project <name>] [--worker <name>] [--qualified]
 gumgum status [--host <server>]
 gumgum events [--host <server>] [--limit <n>] [--kind mutation|reconciliation] [--grouped]
 gumgum graph [--host <server>] [show|affected <target>]

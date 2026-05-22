@@ -2,8 +2,8 @@ use crate::{
     WorkerArgs, WorkerCommand, WorkerCreateArgs, WorkerDeleteArgs, WorkerListArgs, print_value,
 };
 use gumgum_core::{
-    ErrorCode, GumgumError, InitManifestKind, ScaffoldFile, Subsystem, init_plan, load_worker_path,
-    load_workspace_path, validate_path,
+    ConfigStore, ErrorCode, GumgumError, InitManifestKind, ScaffoldFile, Subsystem, init_plan,
+    load_worker_path, load_workspace_path, validate_path,
 };
 use serde::Serialize;
 use std::{
@@ -192,6 +192,40 @@ fn delete_worker(
         .next_command("gumgum worker list")
         .build()
     })?;
+    let entry = matched_entry.clone().expect("matched worker entry exists");
+    let graph_path = ConfigStore::from_home_env()?.root().join("graph.sqlite");
+    let active_bindings = gumgum_core::GraphStore::new(graph_path).worker_bindings(&entry.name)?;
+    if !active_bindings.is_empty() {
+        return Err(GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::InvalidArgs,
+            format!("worker {} has active bindings", entry.name),
+        )
+        .likely_cause(
+            active_bindings
+                .iter()
+                .map(|binding| format!("{} as {}", binding.worker, binding.binding))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .next_command(format!(
+            "gumgum db unbind <name> --to {} --as <binding>",
+            entry.name
+        ))
+        .next_command(format!(
+            "gumgum kv unbind <name> --to {} --as <binding>",
+            entry.name
+        ))
+        .next_command(format!(
+            "gumgum bucket unbind <name> --to {} --as <binding>",
+            entry.name
+        ))
+        .next_command(format!(
+            "gumgum queue unbind <name> --to {} --as <binding>",
+            entry.name
+        ))
+        .build());
+    }
     if !dry_run {
         save_workspace_members(&args.workspace, "", Some(&member))?;
     }

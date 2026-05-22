@@ -42,7 +42,7 @@ pub(crate) async fn env(args: EnvArgs, json: bool) -> gumgum_core::Result<()> {
         }
     } else {
         for report in &reports {
-            for line in dotenv_lines(&project, &report.worker, report) {
+            for line in dotenv_lines(&project, &report.worker, report, args.qualified) {
                 println!("{line}");
             }
         }
@@ -121,24 +121,26 @@ fn env_targets(
     Ok(targets)
 }
 
-fn dotenv_lines(project: &str, worker: &str, report: &EnvReport) -> Vec<String> {
-    let prefix = env_prefix(project, worker);
+fn dotenv_lines(project: &str, worker: &str, report: &EnvReport, qualified: bool) -> Vec<String> {
     report
         .vars
         .iter()
         .map(|var| {
             format!(
-                "{}_{}={}",
-                prefix,
-                env_key(&var.name),
+                "{}={}",
+                dotenv_key(project, worker, &var.name, qualified),
                 dotenv_quote(&var.value)
             )
         })
         .collect()
 }
 
-fn env_prefix(project: &str, worker: &str) -> String {
-    format!("{}_{}", env_key(project), env_key(worker))
+fn dotenv_key(project: &str, worker: &str, name: &str, qualified: bool) -> String {
+    if qualified {
+        format!("{}_{}_{}", env_key(project), env_key(worker), env_key(name))
+    } else {
+        format!("{}_{}", env_key(worker), env_key(name))
+    }
 }
 
 fn env_key(value: &str) -> String {
@@ -163,7 +165,7 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn dotenv_lines_namespace_by_project_and_worker() {
+    fn dotenv_lines_namespace_by_worker_by_default() {
         let report = EnvReport {
             ok: true,
             worker: "api".to_owned(),
@@ -181,7 +183,14 @@ mod tests {
         };
 
         assert_eq!(
-            dotenv_lines("visit-counter", "api", &report),
+            dotenv_lines("visit-counter", "api", &report, false),
+            vec![
+                "API_DATABASE_URL=postgres://api:g@db.example:5432/api",
+                "API_GREETING='hello world'",
+            ]
+        );
+        assert_eq!(
+            dotenv_lines("visit-counter", "api", &report, true),
             vec![
                 "VISIT_COUNTER_API_DATABASE_URL=postgres://api:g@db.example:5432/api",
                 "VISIT_COUNTER_API_GREETING='hello world'",

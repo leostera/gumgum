@@ -28,28 +28,28 @@ pub(crate) async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()>
         .next_command("gumgum logs --json")
         .build());
     }
-    if args.follow && targets.len() > 1 {
-        return Err(GumgumError::structured(
-            Subsystem::Cli,
-            ErrorCode::InvalidArgs,
-            "gumgum logs -f requires a single worker target",
-        )
-        .next_command("gumgum logs api -f")
-        .build());
-    }
     if args.follow {
-        let container = targets[0].container.clone();
-        let mut seen = String::new();
+        let mut seen = targets
+            .iter()
+            .map(|target| (target.container.clone(), String::new()))
+            .collect::<std::collections::BTreeMap<_, _>>();
         loop {
-            let report = ServerClient::new(&server)
-                .logs(&container, args.tail)
-                .await?;
-            if let Some(delta) = report.logs.strip_prefix(&seen) {
-                print!("{delta}");
-            } else {
-                print!("{}", report.logs);
+            for target in &targets {
+                let report = ServerClient::new(&server)
+                    .logs(&target.container, args.tail)
+                    .await?;
+                let previous = seen.entry(target.container.clone()).or_default();
+                let delta = report
+                    .logs
+                    .strip_prefix(previous.as_str())
+                    .unwrap_or(&report.logs);
+                if targets.len() == 1 {
+                    print!("{delta}");
+                } else {
+                    print_prefixed_log_delta(&target.worker, delta);
+                }
+                *previous = report.logs;
             }
-            seen = report.logs;
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => break,
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
@@ -94,6 +94,7 @@ pub(crate) async fn logs(args: LogsArgs, quiet: bool) -> gumgum_core::Result<()>
 
 #[derive(Clone, Debug)]
 struct LogTarget {
+    worker: String,
     container: String,
 }
 
@@ -105,9 +106,7 @@ fn logs_targets(target: &Path, server: &ServerRecord) -> gumgum_core::Result<Vec
             target.to_path_buf()
         };
         return match validate_path(&manifest_path)?.manifest_kind {
-            ManifestKind::Worker => Ok(vec![LogTarget {
-                container: logs_container(&manifest_path, server)?,
-            }]),
+            ManifestKind::Worker => Ok(vec![logs_target(&manifest_path, server)?]),
             ManifestKind::Workspace => {
                 let workspace = load_workspace_path(&manifest_path)?;
                 let root = manifest_path
@@ -119,9 +118,7 @@ fn logs_targets(target: &Path, server: &ServerRecord) -> gumgum_core::Result<Vec
                     .iter()
                     .map(|member| {
                         let member_path = root.join(member).join("gumgum.toml");
-                        Ok(LogTarget {
-                            container: logs_container(&member_path, server)?,
-                        })
+                        logs_target(&member_path, server)
                     })
                     .collect()
             }
@@ -129,21 +126,40 @@ fn logs_targets(target: &Path, server: &ServerRecord) -> gumgum_core::Result<Vec
     }
     let target = target.to_string_lossy();
     Ok(vec![LogTarget {
+        worker: sanitize_name(&target),
         container: format!("gumgum-{}", sanitize_name(&target)),
     }])
 }
 
-fn logs_container(target: &Path, server: &ServerRecord) -> gumgum_core::Result<String> {
+fn logs_target(target: &Path, server: &ServerRecord) -> gumgum_core::Result<LogTarget> {
     let manifest_path = if target.is_dir() {
         target.join("gumgum.toml")
     } else {
         target.to_path_buf()
     };
     let manifest = load_worker_path(&manifest_path)?;
-    Ok(
-        DeploymentDescriptor::from_manifest(&manifest_path, &manifest, Some(server), false)
-            .container,
-    )
+    Ok(LogTarget {
+        worker: manifest.worker.name.clone(),
+        container: DeploymentDescriptor::from_manifest(
+            &manifest_path,
+            &manifest,
+            Some(server),
+            false,
+        )
+        .container,
+    })
+}
+
+fn print_prefixed_log_delta(worker: &str, delta: &str) {
+    for line in delta.split_inclusive('\n') {
+        if line.is_empty() {
+            continue;
+        }
+        print!("{}: {}", worker, line);
+        if !line.ends_with('\n') {
+            println!();
+        }
+    }
 }
 
 #[cfg(test)]

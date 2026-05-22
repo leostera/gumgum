@@ -293,13 +293,24 @@ async fn run_remote_deploy(
             .unwrap_or_else(|| "/healthz".to_owned()),
     };
     apply_deploy_via_daemon(host, &request).await?;
-    verify_route(
-        server,
-        &route,
-        manifest.worker.health.as_deref().unwrap_or("/healthz"),
-        quiet,
-    )
-    .await
+    if manifest.ingress.is_empty() {
+        progress(
+            quiet,
+            format!(
+                "{} has no ingress; container health was verified by gumgumd",
+                report.worker
+            ),
+        );
+        Ok(())
+    } else {
+        verify_route(
+            server,
+            &route,
+            manifest.worker.health.as_deref().unwrap_or("/healthz"),
+            quiet,
+        )
+        .await
+    }
 }
 
 async fn apply_deploy_via_daemon(
@@ -348,7 +359,7 @@ async fn verify_route(
     health: &str,
     quiet: bool,
 ) -> gumgum_core::Result<()> {
-    progress(quiet, format!("verifying http://{route}{health}"));
+    progress(quiet, format!("verifying https://{route}{health}"));
     let url = format!("http://{}{health}", server.host);
     let status = TokioCommand::new("curl")
         .arg("-fsS")

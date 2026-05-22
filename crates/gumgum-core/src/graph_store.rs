@@ -256,6 +256,13 @@ pub struct WorkerBinding {
     pub access: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ObjectBindingRef {
+    pub worker: String,
+    pub binding: String,
+    pub access: String,
+}
+
 impl WorkerBinding {
     pub fn graph_node(&self) -> Result<DesiredGraphNode> {
         Ok(DesiredGraphNode::Binding {
@@ -572,6 +579,49 @@ impl GraphStore {
         Ok(true)
     }
 
+    pub fn object_bindings(&self, object: &GlobalObject) -> Result<Vec<ObjectBindingRef>> {
+        self.init()?;
+        let conn = self.open()?;
+        let kind = object.capability.to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT worker, binding, access FROM bindings WHERE object_kind = ?1 AND object_name = ?2 ORDER BY worker, binding",
+            )
+            .map_err(|source| self.error("could not query object bindings", source))?;
+        let rows = stmt
+            .query_map(params![kind, object.name], |row| {
+                Ok(ObjectBindingRef {
+                    worker: row.get(0)?,
+                    binding: row.get(1)?,
+                    access: row.get(2)?,
+                })
+            })
+            .map_err(|source| self.error("could not read object bindings", source))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|source| self.error("could not decode object bindings", source))
+    }
+
+    pub fn worker_bindings(&self, worker: &str) -> Result<Vec<ObjectBindingRef>> {
+        self.init()?;
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT object_kind || '/' || object_name, binding, access FROM bindings WHERE worker = ?1 ORDER BY binding",
+            )
+            .map_err(|source| self.error("could not query worker bindings", source))?;
+        let rows = stmt
+            .query_map(params![worker], |row| {
+                Ok(ObjectBindingRef {
+                    worker: row.get(0)?,
+                    binding: row.get(1)?,
+                    access: row.get(2)?,
+                })
+            })
+            .map_err(|source| self.error("could not read worker bindings", source))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|source| self.error("could not decode worker bindings", source))
+    }
+
     pub fn delete_object(&self, object: &GlobalObject) -> Result<bool> {
         self.init()?;
         let mut conn = self.open()?;
@@ -579,11 +629,6 @@ impl GraphStore {
             .transaction()
             .map_err(|source| self.error("could not begin object delete transaction", source))?;
         let kind = object.capability.to_string();
-        tx.execute(
-            "DELETE FROM bindings WHERE object_kind = ?1 AND object_name = ?2",
-            params![kind, object.name],
-        )
-        .map_err(|source| self.error("could not delete object bindings", source))?;
         tx.execute(
             "DELETE FROM object_secrets WHERE object_kind = ?1 AND object_name = ?2",
             params![kind, object.name],
