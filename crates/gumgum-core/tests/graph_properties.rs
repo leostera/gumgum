@@ -3,6 +3,7 @@ use gumgum_core::{
     HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName, RouteHost, WorkerId,
 };
 use proptest::prelude::*;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug)]
 enum ModelOp {
@@ -118,6 +119,77 @@ fn provider_node(capability: Capability) -> DesiredGraphNode {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ReferenceModel {
+    providers: BTreeSet<Capability>,
+    objects: BTreeSet<(Capability, String)>,
+    bindings: BTreeSet<(String, String, Capability, String)>,
+    deploys: BTreeSet<String>,
+}
+
+impl ReferenceModel {
+    fn apply(&mut self, op: ModelOp) {
+        match op {
+            ModelOp::AddProvider { capability } => {
+                self.providers.insert(capability);
+            }
+            ModelOp::AddObject { capability, name } => {
+                self.providers.insert(capability);
+                self.objects.insert((capability, name));
+            }
+            ModelOp::Bind {
+                worker,
+                binding,
+                capability,
+                object,
+            } => {
+                self.providers.insert(capability);
+                self.objects.insert((capability, object.clone()));
+                self.bindings.insert((worker, binding, capability, object));
+            }
+            ModelOp::Deploy { worker } => {
+                self.deploys.insert(worker);
+            }
+            ModelOp::RemoveBinding { worker, binding } => {
+                self.bindings
+                    .retain(|(existing_worker, existing_binding, _, _)| {
+                        existing_worker != &worker || existing_binding != &binding
+                    });
+            }
+            ModelOp::RemoveObject { capability, name } => {
+                self.objects.remove(&(capability, name.clone()));
+                self.bindings.retain(|(_, _, binding_capability, object)| {
+                    binding_capability != &capability || object != &name
+                });
+            }
+            ModelOp::RemoveDeploy { worker } => {
+                self.deploys.remove(&worker);
+            }
+        }
+    }
+
+    fn desired_graph(&self) -> DesiredGraph {
+        let nodes = self
+            .providers
+            .iter()
+            .map(|capability| provider_node(*capability))
+            .chain(
+                self.objects
+                    .iter()
+                    .map(|(capability, name)| object_node(*capability, name)),
+            )
+            .chain(
+                self.bindings
+                    .iter()
+                    .map(|(worker, binding, capability, object)| {
+                        binding_node(worker, binding, *capability, object)
+                    }),
+            )
+            .chain(self.deploys.iter().map(|worker| deploy_node(worker)));
+        DesiredGraph::new(nodes)
+    }
+}
+
 fn apply_op(graph: &mut DesiredGraph, op: ModelOp) {
     match op {
         ModelOp::AddProvider { capability } => {
@@ -180,11 +252,15 @@ proptest! {
     #[test]
     fn graph_planning_is_deterministic_and_idempotent(ops in prop::collection::vec(op_strategy(), 0..80)) {
         let mut current = DesiredGraph::default();
+        let mut reference = ReferenceModel::default();
         assert_graph_invariants(&current);
 
         for op in ops {
             let old = current.clone();
+            let reference_op = op.clone();
             apply_op(&mut current, op);
+            reference.apply(reference_op);
+            prop_assert_eq!(&current, &reference.desired_graph());
             assert_graph_invariants(&current);
 
             let first = GraphActionPlanner::plan_transition(&old, &current);
@@ -194,5 +270,24 @@ proptest! {
             let settled = GraphActionPlanner::plan_transition(&current, &current);
             prop_assert!(settled.is_empty());
         }
+    }
+
+    #[test]
+    fn invalid_graph_shapes_do_not_panic_or_mutate_reference(
+        worker in name_strategy("worker"),
+        binding in name_strategy("binding"),
+        capability in capability_strategy(),
+        object in name_strategy("missing"),
+    ) {
+        let invalid = DesiredGraph::new([binding_node(&worker, &binding, capability, &object)]);
+        let empty = DesiredGraph::default();
+
+        let first = GraphActionPlanner::plan_transition(&empty, &invalid);
+        let second = GraphActionPlanner::plan_transition(&empty, &invalid);
+        prop_assert_eq!(first, second);
+
+        let remove = GraphActionPlanner::plan_transition(&invalid, &empty);
+        prop_assert!(!remove.actions.is_empty());
+        prop_assert!(empty.nodes.is_empty());
     }
 }

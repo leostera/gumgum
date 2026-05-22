@@ -66,6 +66,14 @@ fn visit_counter_deploys_from_fixture_manifest() {
         ),
     );
     assert_success(&transcript.run(Command::new(gumgum).arg("server").arg("capabilities").arg("list").arg("--host").arg(&server_name).arg("--require").arg("gumgum:events,gumgum:objects:create_preview,gumgum:bindings:create_preview,gumgum:bindings:delete,gumgum:objects:delete,gumgum:deployments:delete,gumgum:buckets:objects")));
+    assert_success(
+        &transcript.run_to_artifact(
+            Command::new("ssh")
+                .arg(&host)
+                .arg("docker ps --format '{{.Names}} {{.Image}} {{.Status}}'"),
+            "containers-before.txt",
+        ),
+    );
 
     // The point of this E2E is that the fixture manifests carry desired app shape;
     // after VM setup, `gumgum deploy` should do the heavy convergence work.
@@ -74,6 +82,23 @@ fn visit_counter_deploys_from_fixture_manifest() {
         &fixture,
         ["deploy", "--host", &server_name],
     )));
+
+    assert_success(&transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            ["--json", "graph", "--host", &server_name],
+        ),
+        "graph-after-deploy.json",
+    ));
+    assert_success(
+        &transcript.run_to_artifact(
+            Command::new("ssh")
+                .arg(&host)
+                .arg("docker ps --format '{{.Names}} {{.Image}} {{.Status}}'"),
+            "containers-after.txt",
+        ),
+    );
 
     let env_output = transcript.run_owned(in_fixture(
         gumgum,
@@ -304,6 +329,21 @@ impl Transcript {
     fn run(&mut self, command: &mut Command) -> Output {
         self.log.push_str(&format!("+ {:?}\n", command));
         let output = command.output().expect("run command");
+        self.record_output(&output);
+        output
+    }
+
+    fn run_to_artifact(&mut self, command: &mut Command, name: &str) -> Output {
+        self.log.push_str(&format!("+ {:?} > {name}\n", command));
+        let output = command.output().expect("run command");
+        fs::write(self.dir.join(name), &output.stdout).expect("write artifact stdout");
+        fs::write(self.dir.join(format!("{name}.stderr")), &output.stderr)
+            .expect("write artifact stderr");
+        self.record_output(&output);
+        output
+    }
+
+    fn record_output(&mut self, output: &Output) {
         self.log.push_str(&format!("status: {}\n", output.status));
         self.log.push_str("stdout:\n");
         self.log.push_str(&String::from_utf8_lossy(&output.stdout));
@@ -311,7 +351,6 @@ impl Transcript {
         self.log.push_str(&String::from_utf8_lossy(&output.stderr));
         self.log.push_str("\n---\n");
         self.flush();
-        output
     }
 
     fn flush(&self) {
