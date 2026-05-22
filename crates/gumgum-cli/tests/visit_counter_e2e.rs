@@ -1,3 +1,5 @@
+use gumgum_api::ServerRecord;
+use gumgum_core::{DeploymentDescriptor, load_worker_path};
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -18,13 +20,22 @@ fn visit_counter_deploys_from_fixture_manifest() {
 
     let test_domain =
         env::var("GUMGUM_E2E_TEST_DOMAIN").unwrap_or_else(|_| format!("test.{root_domain}"));
-    let server_name = env::var("GUMGUM_E2E_SERVER_NAME")
-        .unwrap_or_else(|_| format!("e2e-{}", sanitize_for_name(&host)));
+    let server_name = env::var("GUMGUM_E2E_SERVER_NAME").unwrap_or_else(|_| "e2e".to_owned());
     let apply = env::var("GUMGUM_E2E_APPLY").is_ok_and(|value| value == "1");
 
     fs::create_dir_all(&artifact_dir).expect("create artifact dir");
     let fixture = copy_fixture_with_domains(&root_domain, &test_domain, &artifact_dir);
     let gumgum = env!("CARGO_BIN_EXE_gumgum");
+
+    let server = ServerRecord {
+        name: server_name.clone(),
+        host: host.clone(),
+        root_domain: root_domain.clone(),
+        test_domain: test_domain.clone(),
+        health_url: format!("http://{host}:4747/health"),
+    };
+    let api_descriptor = fixture_descriptor(&fixture, "api/gumgum.toml", &server);
+    let worker_descriptor = fixture_descriptor(&fixture, "worker/gumgum.toml", &server);
 
     let mut transcript = Transcript::new(artifact_dir.clone());
     transcript.note(format!(
@@ -91,6 +102,21 @@ fn visit_counter_deploys_from_fixture_manifest() {
         ),
         "graph-after-deploy.json",
     ));
+    let api_route = api_descriptor
+        .routes
+        .first()
+        .expect("api fixture declares test ingress route")
+        .clone();
+    let api_response = transcript.run_to_artifact(
+        Command::new("curl")
+            .arg("-kfsS")
+            .arg("--resolve")
+            .arg(format!("{api_route}:443:{host}"))
+            .arg(format!("https://{api_route}/")),
+        "api-response.txt",
+    );
+    assert_success(&api_response);
+    assert_output_contains(&api_response, "Hello visitor");
     assert_success(
         &transcript.run_to_artifact(
             Command::new("ssh")
@@ -99,6 +125,15 @@ fn visit_counter_deploys_from_fixture_manifest() {
             "containers-after.txt",
         ),
     );
+    let worker_container = worker_descriptor.container.clone();
+    let worker_health = transcript.run_to_artifact(
+        Command::new("ssh").arg(&host).arg(format!(
+            "docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {worker_container}"
+        )),
+        "worker-container-health.txt",
+    );
+    assert_success(&worker_health);
+    assert_output_contains(&worker_health, "running");
 
     let env_output = transcript.run_to_artifact(
         &mut in_fixture(
@@ -280,40 +315,37 @@ fn assert_success(output: &Output) {
 }
 
 fn assert_output_contains(output: &Output, needle: &str) {
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let combined = combined_output(output);
     assert!(
         combined.contains(needle),
         "missing {needle:?} in\n{combined}"
     );
 }
 
-fn assert_no_shared_provider_dns(output: &Output) {
-    let combined = format!(
+fn combined_output(output: &Output) -> String {
+    format!(
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
-    );
+    )
+}
+
+fn assert_no_shared_provider_dns(output: &Output) {
+    let combined = combined_output(output);
     assert!(
         !combined.contains(".leostera.dev"),
         "provider env leaked shared domain values:\n{combined}"
     );
 }
 
-fn sanitize_for_name(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect()
+fn fixture_descriptor(
+    fixture: &Path,
+    manifest: &str,
+    server: &ServerRecord,
+) -> DeploymentDescriptor {
+    let path = fixture.join(manifest);
+    let manifest = load_worker_path(&path).expect("load patched fixture worker manifest");
+    DeploymentDescriptor::from_manifest(&path, &manifest, Some(server), false)
 }
 
 struct Transcript {
