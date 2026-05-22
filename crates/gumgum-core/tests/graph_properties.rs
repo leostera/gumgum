@@ -106,7 +106,7 @@ fn deploy_node(worker: &str) -> DesiredGraphNode {
         worker: WorkerId::new(worker).expect("generated workers are valid"),
         image: ImageName::new(format!("example/{worker}:latest")).expect("image is valid"),
         container: ContainerName::new(format!("gumgum-{worker}")).expect("container is valid"),
-        route: RouteHost::new(format!("{worker}.example.test")).expect("route is valid"),
+        route: Some(RouteHost::new(format!("{worker}.example.test")).expect("route is valid")),
         port: Port::new(3000).expect("port is valid"),
         health: HealthPath::new("/healthz").expect("health is valid"),
     }

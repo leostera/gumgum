@@ -1210,7 +1210,8 @@ fn rollback_route_warning(
         } else {
             Some(format!(
                 "warning: rollback would change route from {} to {}",
-                current.route, target.route
+                current.route.as_deref().unwrap_or("<none>"),
+                target.route.as_deref().unwrap_or("<none>")
             ))
         }
     })
@@ -1228,7 +1229,7 @@ fn rollback_report_from_revision(
         image: Some(revision.deploy.image),
         revision_id: Some(revision.id),
         container: Some(revision.deploy.container),
-        route: Some(revision.deploy.route),
+        route: revision.deploy.route,
         port: Some(revision.deploy.port),
         health: Some(revision.deploy.health),
         actions,
@@ -1444,7 +1445,7 @@ mod tests {
             worker: "api".to_owned(),
             image: "registry/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
-            route: "api.example.test".to_owned(),
+            route: Some("api.example.test".to_owned()),
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -1453,7 +1454,7 @@ mod tests {
         second.image = "registry/api:2".to_owned();
         store.materialize_deploy(&second).unwrap();
         let mut third = second.clone();
-        third.route = "api-v3.example.test".to_owned();
+        third.route = Some("api-v3.example.test".to_owned());
         store.materialize_deploy(&third).unwrap();
         store.deployment_revisions("api", 10).unwrap()
     }
@@ -1788,7 +1789,7 @@ mod tests {
                 worker: "api".to_owned(),
                 image: "registry/api:1".to_owned(),
                 container: "gumgum-api".to_owned(),
-                route: "api.example.test".to_owned(),
+                route: Some("api.example.test".to_owned()),
                 port: 3000,
                 health: "/healthz".to_owned(),
             },
@@ -1801,7 +1802,7 @@ mod tests {
             worker: "api".to_owned(),
             image: "registry/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
-            route: "api.example.test".to_owned(),
+            route: Some("api.example.test".to_owned()),
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -1878,7 +1879,7 @@ mod tests {
         assert!(report.ok);
         assert_eq!(report.revision_id, Some(selected.id));
         assert_eq!(report.image, Some(selected.deploy.image));
-        assert_eq!(report.route, Some(selected.deploy.route));
+        assert_eq!(report.route, selected.deploy.route);
         assert!(
             report
                 .actions

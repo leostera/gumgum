@@ -17,7 +17,7 @@ pub struct DesiredDeploy {
     pub worker: String,
     pub image: String,
     pub container: String,
-    pub route: String,
+    pub route: Option<String>,
     pub port: u16,
     pub health: String,
 }
@@ -28,7 +28,7 @@ impl DesiredDeploy {
             worker: WorkerId::new(&self.worker)?,
             image: ImageName::new(&self.image)?,
             container: ContainerName::new(&self.container)?,
-            route: RouteHost::new(&self.route)?,
+            route: self.route.as_deref().map(RouteHost::new).transpose()?,
             port: Port::new(self.port)?,
             health: HealthPath::new(&self.health)?,
         })
@@ -41,8 +41,9 @@ impl DesiredDeploy {
                 .unwrap_or_else(|_| ContainerName::new("container").unwrap()),
             ImageName::new(&self.image)
                 .unwrap_or_else(|_| ImageName::new("invalid:latest").unwrap()),
-            RouteHost::new(&self.route)
-                .unwrap_or_else(|_| RouteHost::new("invalid.local").unwrap()),
+            self.route
+                .as_deref()
+                .and_then(|route| RouteHost::new(route).ok()),
             Port::new(self.port).unwrap_or_else(|_| Port::new(80).unwrap()),
             HealthPath::new(&self.health).unwrap_or_else(|_| HealthPath::new("/healthz").unwrap()),
         )
@@ -345,7 +346,7 @@ impl GraphStore {
                 worker TEXT PRIMARY KEY,
                 image TEXT NOT NULL,
                 container TEXT NOT NULL,
-                route TEXT NOT NULL,
+                route TEXT,
                 port INTEGER NOT NULL,
                 health TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -375,7 +376,7 @@ impl GraphStore {
                 worker TEXT NOT NULL,
                 image TEXT NOT NULL,
                 container TEXT NOT NULL,
-                route TEXT NOT NULL,
+                route TEXT,
                 port INTEGER NOT NULL,
                 health TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1098,7 +1099,7 @@ impl GraphStore {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(3)?,
                     row.get::<_, u16>(4)?,
                     row.get::<_, String>(5)?,
                 ))
@@ -1111,7 +1112,7 @@ impl GraphStore {
                 worker: WorkerId::new(&worker)?,
                 image: ImageName::new(&image)?,
                 container: ContainerName::new(&container)?,
-                route: RouteHost::new(&route)?,
+                route: route.as_deref().map(RouteHost::new).transpose()?,
                 port: Port::new(port)?,
                 health: HealthPath::new(&health)?,
             });
@@ -1665,7 +1666,7 @@ mod tests {
                 worker: "api".to_owned(),
                 image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
                 container: "gumgum-dev-leostera-peekaboo-api".to_owned(),
-                route: "api.peekaboo.leostera.test".to_owned(),
+                route: Some("api.peekaboo.leostera.test".to_owned()),
                 port: 3000,
                 health: "/healthz".to_owned(),
             })
@@ -1724,7 +1725,7 @@ mod tests {
             worker: WorkerId::new("api").unwrap(),
             image: ImageName::new("127.0.0.1:55000/dev.leostera/peekaboo/api:1").unwrap(),
             container: ContainerName::new("gumgum-dev-leostera-peekaboo-api").unwrap(),
-            route: RouteHost::new("api.peekaboo.leostera.test").unwrap(),
+            route: Some(RouteHost::new("api.peekaboo.leostera.test").unwrap()),
             port: Port::new(3000).unwrap(),
             health: HealthPath::new("/healthz").unwrap(),
         }));
@@ -1850,7 +1851,7 @@ mod tests {
             worker: "api".to_owned(),
             image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
-            route: "api.peekaboo.leostera.test".to_owned(),
+            route: Some("api.peekaboo.leostera.test".to_owned()),
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -1859,7 +1860,7 @@ mod tests {
         let mut second = first.clone();
         second.image = "127.0.0.1:55000/dev.leostera/peekaboo/api:2".to_owned();
         second.container = "gumgum-api-v2".to_owned();
-        second.route = "api-v2.peekaboo.leostera.test".to_owned();
+        second.route = Some("api-v2.peekaboo.leostera.test".to_owned());
         second.port = 4000;
         second.health = "/ready".to_owned();
         store.materialize_deploy(&second).unwrap();
@@ -1882,14 +1883,14 @@ mod tests {
             worker: "api".to_owned(),
             image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
-            route: "api.peekaboo.leostera.test".to_owned(),
+            route: Some("api.peekaboo.leostera.test".to_owned()),
             port: 3000,
             health: "/healthz".to_owned(),
         };
         store.materialize_deploy(&first).unwrap();
 
         let mut route_change = first.clone();
-        route_change.route = "api-v2.peekaboo.leostera.test".to_owned();
+        route_change.route = Some("api-v2.peekaboo.leostera.test".to_owned());
         store.materialize_deploy(&route_change).unwrap();
 
         let previous = store.latest_previous_deploy("api").unwrap().unwrap();
@@ -1925,7 +1926,7 @@ mod tests {
             worker: "api".to_owned(),
             image: "registry/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
-            route: "api.example.test".to_owned(),
+            route: Some("api.example.test".to_owned()),
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -1934,7 +1935,7 @@ mod tests {
         second.image = "registry/api:2".to_owned();
         store.materialize_deploy(&second).unwrap();
         let mut third = second.clone();
-        third.route = "api-v3.example.test".to_owned();
+        third.route = Some("api-v3.example.test".to_owned());
         store.materialize_deploy(&third).unwrap();
 
         let revisions = store.deployment_revisions("api", 10).unwrap();

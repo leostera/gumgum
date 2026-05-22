@@ -48,7 +48,8 @@ pub struct DeployRequest {
     pub worker: String,
     pub image: String,
     pub container: String,
-    pub route: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
     pub port: u16,
     pub health: String,
 }

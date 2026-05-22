@@ -214,6 +214,10 @@ fn revision_delete_lines(report: &DeploymentRevisionDeleteReport) -> Vec<String>
     lines
 }
 
+fn deploy_route_label(route: &Option<String>) -> &str {
+    route.as_deref().unwrap_or("<none>")
+}
+
 fn revision_lines(report: &DeploymentRevisionsReport) -> Vec<String> {
     let mut lines = vec![format!(
         "Deployment revisions for {} ({}):",
@@ -223,7 +227,11 @@ fn revision_lines(report: &DeploymentRevisionsReport) -> Vec<String> {
     if let Some(current) = &report.current {
         lines.push(format!(
             "Current: image={} route={} container={} port={} health={}",
-            current.image, current.route, current.container, current.port, current.health
+            current.image,
+            deploy_route_label(&current.route),
+            current.container,
+            current.port,
+            current.health
         ));
     }
     for revision in &report.revisions {
@@ -232,7 +240,7 @@ fn revision_lines(report: &DeploymentRevisionsReport) -> Vec<String> {
             revision.id,
             revision.created_at,
             revision.deploy.image,
-            revision.deploy.route,
+            deploy_route_label(&revision.deploy.route),
             revision.deploy.container,
             revision.deploy.port,
             revision.deploy.health
@@ -241,7 +249,8 @@ fn revision_lines(report: &DeploymentRevisionsReport) -> Vec<String> {
             if revision.deploy.route != current.route {
                 lines.push(format!(
                     "  warning: rollback would change route from {} to {}",
-                    current.route, revision.deploy.route
+                    deploy_route_label(&current.route),
+                    deploy_route_label(&revision.deploy.route)
                 ));
             }
         }
@@ -363,7 +372,7 @@ mod tests {
                 worker: "api".to_owned(),
                 image: "registry/api:2".to_owned(),
                 container: "gumgum-api".to_owned(),
-                route: "api.current.test".to_owned(),
+                route: Some("api.current.test".to_owned()),
                 port: 3000,
                 health: "/healthz".to_owned(),
             }),
@@ -374,7 +383,7 @@ mod tests {
                     worker: "api".to_owned(),
                     image: "registry/api:1".to_owned(),
                     container: "gumgum-api".to_owned(),
-                    route: "api.example.test".to_owned(),
+                    route: Some("api.example.test".to_owned()),
                     port: 3000,
                     health: "/healthz".to_owned(),
                 },

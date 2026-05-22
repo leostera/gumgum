@@ -305,7 +305,7 @@ async fn run_remote_deploy(
     } else {
         verify_route(
             server,
-            &route,
+            route.as_ref().expect("ingress deploy has a route"),
             manifest.worker.health.as_deref().unwrap_or("/healthz"),
             quiet,
         )
@@ -345,12 +345,8 @@ fn local_push_image(image: &str, tunnel_port: u16) -> String {
     image.replacen("127.0.0.1:55000", &format!("localhost:{tunnel_port}"), 1)
 }
 
-fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> String {
-    report
-        .routes
-        .first()
-        .cloned()
-        .unwrap_or_else(|| format!("{}.local", report.worker))
+fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> Option<String> {
+    report.routes.first().cloned()
 }
 
 async fn verify_route(
@@ -434,7 +430,7 @@ mod deploy_hardening_tests {
 
         assert_eq!(
             deploy_route(&report, &server),
-            "api.visit-counter.leostera.test"
+            Some("api.visit-counter.leostera.test".to_owned())
         );
     }
 }

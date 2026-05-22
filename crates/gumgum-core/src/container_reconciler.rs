@@ -8,7 +8,7 @@ pub struct DeployRequest {
     pub worker: String,
     pub image: String,
     pub container: String,
-    pub route: String,
+    pub route: Option<String>,
     pub port: u16,
     pub health: String,
 }
@@ -43,12 +43,16 @@ impl ContainerReconciler {
                 .build()
             })?;
         let current = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
-        let expected_proxy = format!("{{{{upstreams {}}}}}", request.port);
+        let expected_proxy = request
+            .route
+            .as_ref()
+            .map(|_| format!("{{{{upstreams {}}}}}", request.port))
+            .unwrap_or_default();
+        let expected_route = request.route.clone().unwrap_or_default();
         let expected = format!(
             "{} {} {} {}",
-            request.image, request.route, expected_proxy, binding_env_fingerprint
+            request.image, expected_route, expected_proxy, binding_env_fingerprint
         );
-        let route_label = format!("caddy={}", request.route);
         if inspect.status.success() && current == expected {
             actions.push("container already matches desired image, route, and bindings".to_owned());
             return Ok((false, actions));
@@ -84,17 +88,19 @@ impl ContainerReconciler {
             .arg("--restart")
             .arg("unless-stopped")
             .arg("--network")
-            .arg(network)
-            .arg("--label")
-            .arg(route_label)
-            .arg("--label")
-            .arg(format!(
-                "caddy.reverse_proxy={{{{upstreams {}}}}}",
-                request.port
-            ))
-            .arg("--label")
-            .arg("caddy.tls=internal")
-            .arg("--label")
+            .arg(network);
+        if let Some(route) = &request.route {
+            run.arg("--label")
+                .arg(format!("caddy={route}"))
+                .arg("--label")
+                .arg(format!(
+                    "caddy.reverse_proxy={{{{upstreams {}}}}}",
+                    request.port
+                ))
+                .arg("--label")
+                .arg("caddy.tls=internal");
+        }
+        run.arg("--label")
             .arg(format!("gumgum.binding_env={binding_env_fingerprint}"));
         for (name, value) in &binding_env {
             run.arg("-e").arg(format!("{name}={value}"));
