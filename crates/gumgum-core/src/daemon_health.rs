@@ -69,7 +69,7 @@ impl DaemonHealthClient {
 
     pub async fn wait_for_ping(host: &str) -> crate::Result<DaemonPingReport> {
         let mut last_error = None;
-        for _ in 0..20 {
+        for _ in 0..120 {
             match Self::ping(host).await {
                 Ok(report) if report.ok => return Ok(report),
                 Ok(report) => {
@@ -80,12 +80,12 @@ impl DaemonHealthClient {
                     last_error = Some(report.likely_cause.unwrap_or(report.message));
                 }
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
         Err(
             GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to reach gumgumd")
                 .likely_cause(last_error.unwrap_or_else(|| "health check timed out".to_owned()))
-                .next_command("gumgum setup 127.0.0.1 --domain <domain>")
+                .next_command(format!("gumgum setup {host} --domain <domain>"))
                 .build(),
         )
     }
