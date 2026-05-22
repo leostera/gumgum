@@ -295,6 +295,7 @@ async fn run_remote_deploy(
     let build_result = run_command_streaming(
         TokioCommand::new("docker")
             .arg("build")
+            .arg("--no-cache")
             .arg("--platform")
             .arg("linux/amd64")
             .arg("-t")
