@@ -3,6 +3,7 @@ pub mod config_store;
 pub mod container_reconciler;
 pub mod daemon_health;
 pub mod deployment;
+pub mod docker_engine;
 pub mod domain;
 pub mod graph;
 pub mod graph_store;
@@ -19,6 +20,7 @@ pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
+pub use docker_engine::{ContainerSnapshot, DockerEngine};
 pub use domain::{DomainProvider, DomainRecord};
 pub use graph::{
     BindingName, ContainerName, DesiredGraph, DesiredGraphNode, GraphActionExecutor,
