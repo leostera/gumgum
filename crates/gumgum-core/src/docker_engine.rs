@@ -268,6 +268,73 @@ impl DockerEngine {
             .map_err(docker_error)
     }
 
+    pub async fn exec_success(
+        &self,
+        container: &str,
+        env: Vec<(String, String)>,
+        command: Vec<String>,
+    ) -> Result<String> {
+        use bollard::container::LogOutput;
+        use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+        let exec = self
+            .client
+            .create_exec(
+                container,
+                CreateExecOptions {
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    env: Some(
+                        env.into_iter()
+                            .map(|(name, value)| format!("{name}={value}"))
+                            .collect(),
+                    ),
+                    cmd: Some(command),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(docker_error)?;
+        let mut output_text = String::new();
+        if let StartExecResults::Attached { mut output, .. } = self
+            .client
+            .start_exec(
+                &exec.id,
+                Some(StartExecOptions {
+                    detach: false,
+                    tty: false,
+                    output_capacity: None,
+                }),
+            )
+            .await
+            .map_err(docker_error)?
+        {
+            while let Some(chunk) = output.next().await {
+                match chunk.map_err(docker_error)? {
+                    LogOutput::StdOut { message }
+                    | LogOutput::StdErr { message }
+                    | LogOutput::Console { message }
+                    | LogOutput::StdIn { message } => {
+                        output_text.push_str(&String::from_utf8_lossy(&message));
+                    }
+                }
+            }
+        }
+        let inspected = self
+            .client
+            .inspect_exec(&exec.id)
+            .await
+            .map_err(docker_error)?;
+        if inspected.exit_code == Some(0) {
+            Ok(output_text)
+        } else {
+            Err(
+                GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "Docker exec failed")
+                    .likely_cause(output_text.trim().to_owned())
+                    .build(),
+            )
+        }
+    }
+
     pub async fn remove_container_force(&self, name: &str) -> Result<()> {
         use bollard::query_parameters::RemoveContainerOptionsBuilder;
         let options = RemoveContainerOptionsBuilder::new().force(true).build();

@@ -1,9 +1,5 @@
-use tokio::process::Command as TokioCommand;
-
-use super::docker::{
-    create_provider_container, ensure_network, inspect, run_provider_command, start_existing,
-};
-use crate::{Capability, sanitize_name};
+use super::docker::{create_provider_container, ensure_network, inspect, start_existing};
+use crate::{Capability, DockerEngine, sanitize_name};
 
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
 
@@ -104,41 +100,23 @@ async fn database_exists(
     credentials: &ProviderCredentials,
     database: &str,
 ) -> crate::Result<bool> {
-    let output = TokioCommand::new("docker")
-        .arg("exec")
-        .arg("-e")
-        .arg(format!("PGPASSWORD={}", credentials.password))
-        .arg(&provider.container)
-        .arg("psql")
-        .arg("-U")
-        .arg(&credentials.username)
-        .arg("-tAc")
-        .arg(format!(
-            "SELECT 1 FROM pg_database WHERE datname = '{}'",
-            shell_single_quote(database)
-        ))
-        .output()
-        .await
-        .map_err(|source| {
-            crate::GumgumError::structured(
-                crate::Subsystem::Setup,
-                crate::ErrorCode::Io,
-                "could not inspect postgres database",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim() == "1")
-    } else {
-        Err(crate::GumgumError::structured(
-            crate::Subsystem::Setup,
-            crate::ErrorCode::Io,
-            "could not inspect postgres database",
+    let output = DockerEngine::local()?
+        .exec_success(
+            &provider.container,
+            vec![("PGPASSWORD".to_owned(), credentials.password.clone())],
+            vec![
+                "psql".to_owned(),
+                "-U".to_owned(),
+                credentials.username.clone(),
+                "-tAc".to_owned(),
+                format!(
+                    "SELECT 1 FROM pg_database WHERE datname = '{}'",
+                    shell_single_quote(database)
+                ),
+            ],
         )
-        .likely_cause(String::from_utf8_lossy(&output.stderr).trim().to_owned())
-        .build())
-    }
+        .await?;
+    Ok(output.trim() == "1")
 }
 
 async fn create_database(
@@ -147,20 +125,24 @@ async fn create_database(
     database: &str,
     owner: Option<&str>,
 ) -> crate::Result<()> {
-    let mut command = TokioCommand::new("docker");
-    command
-        .arg("exec")
-        .arg("-e")
-        .arg(format!("PGPASSWORD={}", credentials.password))
-        .arg(&provider.container)
-        .arg("createdb")
-        .arg("-U")
-        .arg(&credentials.username);
+    let mut command = vec![
+        "createdb".to_owned(),
+        "-U".to_owned(),
+        credentials.username.clone(),
+    ];
     if let Some(owner) = owner {
-        command.arg("-O").arg(owner);
+        command.push("-O".to_owned());
+        command.push(owner.to_owned());
     }
-    command.arg(database);
-    run_provider_command(&mut command, "could not create postgres database").await
+    command.push(database.to_owned());
+    DockerEngine::local()?
+        .exec_success(
+            &provider.container,
+            vec![("PGPASSWORD".to_owned(), credentials.password.clone())],
+            command,
+        )
+        .await
+        .map(|_| ())
 }
 
 async fn ensure_role(
@@ -210,22 +192,27 @@ async fn run_psql(
     sql: &str,
     error: &str,
 ) -> crate::Result<()> {
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("exec")
-            .arg("-e")
-            .arg(format!("PGPASSWORD={}", credentials.password))
-            .arg(&provider.container)
-            .arg("psql")
-            .arg("-U")
-            .arg(&credentials.username)
-            .arg("-d")
-            .arg("postgres")
-            .arg("-c")
-            .arg(sql),
-        error,
-    )
-    .await
+    DockerEngine::local()?
+        .exec_success(
+            &provider.container,
+            vec![("PGPASSWORD".to_owned(), credentials.password.clone())],
+            vec![
+                "psql".to_owned(),
+                "-U".to_owned(),
+                credentials.username.clone(),
+                "-d".to_owned(),
+                "postgres".to_owned(),
+                "-c".to_owned(),
+                sql.to_owned(),
+            ],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error_value| {
+            crate::GumgumError::structured(crate::Subsystem::Setup, crate::ErrorCode::Io, error)
+                .likely_cause(error_value.to_report().message)
+                .build()
+        })
 }
 
 async fn drop_database(
@@ -233,20 +220,20 @@ async fn drop_database(
     credentials: &ProviderCredentials,
     database: &str,
 ) -> crate::Result<()> {
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("exec")
-            .arg("-e")
-            .arg(format!("PGPASSWORD={}", credentials.password))
-            .arg(&provider.container)
-            .arg("dropdb")
-            .arg("--if-exists")
-            .arg("-U")
-            .arg(&credentials.username)
-            .arg(database),
-        "could not drop postgres database",
-    )
-    .await
+    DockerEngine::local()?
+        .exec_success(
+            &provider.container,
+            vec![("PGPASSWORD".to_owned(), credentials.password.clone())],
+            vec![
+                "dropdb".to_owned(),
+                "--if-exists".to_owned(),
+                "-U".to_owned(),
+                credentials.username.clone(),
+                database.to_owned(),
+            ],
+        )
+        .await
+        .map(|_| ())
 }
 
 fn shell_single_quote(value: &str) -> String {
