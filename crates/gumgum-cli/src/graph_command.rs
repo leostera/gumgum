@@ -163,7 +163,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("api")).unwrap();
         std::fs::write(
             dir.join("gumgum.toml"),
-            "[workspace]\nname = \"visit-counter\"\nmembers = [\"api\"]\n",
+            "[project]\nname = \"visit-counter\"\ndomain = \"visitcounter.dev\"\n\n[workspace]\nmembers = [\"api\"]\n",
         )
         .unwrap();
         std::fs::write(

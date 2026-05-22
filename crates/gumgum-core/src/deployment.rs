@@ -22,18 +22,19 @@ impl DeploymentDescriptor {
         server: Option<&ServerRecord>,
         prod: bool,
     ) -> Self {
-        Self::from_manifest_in_namespace(path, manifest, None, server, prod)
+        Self::from_manifest_in_project(path, manifest, None, None, server, prod)
     }
 
-    pub fn from_manifest_in_namespace(
+    pub fn from_manifest_in_project(
         path: &Path,
         manifest: &WorkerManifest,
-        namespace: Option<&str>,
+        project_name: Option<&str>,
+        project_domain: Option<&str>,
         server: Option<&ServerRecord>,
         prod: bool,
     ) -> Self {
         let worker = manifest.worker.name.clone();
-        let namespace = namespace
+        let project_name = project_name
             .or_else(|| {
                 manifest
                     .project
@@ -45,16 +46,16 @@ impl DeploymentDescriptor {
             .map(|server| dns_scope(&server.root_domain))
             .unwrap_or_else(|| "local".to_owned());
         let revision = stable_deploy_revision(path, manifest);
-        let namespace_slug = sanitize_name(namespace);
+        let project_slug = sanitize_name(project_name);
         let worker_slug = sanitize_name(&worker);
         let image =
-            format!("127.0.0.1:55000/{domain_scope}/{namespace_slug}/{worker_slug}:{revision}");
+            format!("127.0.0.1:55000/{domain_scope}/{project_slug}/{worker_slug}:{revision}");
         let container = format!(
             "gumgum-{}",
-            sanitize_name(&format!("{domain_scope}-{namespace}-{worker_slug}"))
+            sanitize_name(&format!("{domain_scope}-{project_name}-{worker_slug}"))
         );
-        let routes = derived_routes(manifest, namespace, server, prod);
-        let health_url = derived_routes(manifest, namespace, server, false)
+        let routes = derived_routes(manifest, project_name, project_domain, server, prod);
+        let health_url = derived_routes(manifest, project_name, project_domain, server, false)
             .first()
             .map(|route| format!("http://{route}{}", manifest.worker.ready_check_path()));
         let build_context = Some(resolve_build_context(path, manifest));
@@ -98,7 +99,8 @@ fn resolve_build_context(path: &Path, manifest: &WorkerManifest) -> String {
 
 fn derived_routes(
     manifest: &WorkerManifest,
-    namespace: &str,
+    project_name: &str,
+    project_domain: Option<&str>,
     server: Option<&ServerRecord>,
     prod: bool,
 ) -> Vec<String> {
@@ -106,7 +108,7 @@ fn derived_routes(
         return Vec::new();
     }
     let worker = sanitize_name(&manifest.worker.name);
-    let project = namespace_route_label(namespace);
+    let project = sanitize_name(project_name);
     let Some(server) = server else {
         return manifest
             .ingress
@@ -115,13 +117,18 @@ fn derived_routes(
             .collect();
     };
 
-    let mut routes = vec![format!("{worker}.{project}.{}", server.root_domain)];
+    let route_domain = if prod {
+        project_domain.unwrap_or(&server.root_domain)
+    } else {
+        &server.root_domain
+    };
+    let mut routes = vec![format!("{worker}.{project}.{route_domain}")];
     routes.extend(
         manifest
             .ingress
             .iter()
             .filter_map(|ingress| ingress.local_domain.clone())
-            .filter(|route| route.ends_with(&server.root_domain)),
+            .filter(|route| route.ends_with(route_domain)),
     );
     if prod {
         routes.extend(
@@ -129,7 +136,7 @@ fn derived_routes(
                 .ingress
                 .iter()
                 .filter_map(|ingress| ingress.public_domain.clone())
-                .filter(|route| route.ends_with(&server.root_domain)),
+                .filter(|route| route.ends_with(route_domain)),
         );
         routes.extend(
             manifest
@@ -216,14 +223,6 @@ impl Fnv64 {
     fn finish(self) -> u64 {
         self.0
     }
-}
-
-fn namespace_route_label(namespace: &str) -> String {
-    namespace
-        .rsplit('.')
-        .find(|label| !label.trim().is_empty())
-        .map(sanitize_name)
-        .unwrap_or_else(|| "root".to_owned())
 }
 
 fn dns_scope(root_domain: &str) -> String {
@@ -318,22 +317,24 @@ mod tests {
     #[test]
     fn derives_prod_routes_from_project_and_zones() {
         let server = server();
-        let descriptor = DeploymentDescriptor::from_manifest(
+        let descriptor = DeploymentDescriptor::from_manifest_in_project(
             Path::new("gumgum.toml"),
             &manifest(),
+            Some("hello"),
+            Some("hello.example"),
             Some(&server),
             true,
         );
         assert_eq!(
             descriptor.routes,
             vec![
-                "hello-world.experiments.leostera.dev".to_owned(),
+                "hello-world.hello.hello.example".to_owned(),
                 "hello-world.example.com".to_owned(),
             ]
         );
         assert_eq!(
             descriptor.health_url.as_deref(),
-            Some("http://hello-world.experiments.leostera.dev/ready")
+            Some("http://hello-world.hello.leostera.dev/ready")
         );
     }
 

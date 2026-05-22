@@ -1,6 +1,7 @@
-[namespace]
-name = "dev.leostera.visit-counter"
-domain = "leostera.dev"
+[project]
+name = "visit-counter"
+domain = "visitcounter.dev"
+server = "isolated"
 
 [workspace]
 members = ["api", "worker"]

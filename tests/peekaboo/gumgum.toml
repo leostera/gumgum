@@ -1,5 +1,6 @@
-[workspace]
+[project]
 name = "peekaboo"
-namespace = "root"
-domain = "leostera.dev"
+domain = "peekaboo.leostera.dev"
+
+[workspace]
 members = ["api", "jobs/daily"]

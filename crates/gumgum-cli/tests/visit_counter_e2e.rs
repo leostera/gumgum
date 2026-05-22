@@ -354,6 +354,7 @@ fn copy_fixture_with_domains(root_domain: &str, test_domain: &str, artifact_dir:
     ] {
         let raw = fs::read_to_string(&manifest).expect("read fixture manifest");
         let patched = raw
+            .replace("visitcounter.dev", root_domain)
             .replace("leostera.dev", root_domain)
             .replace("leostera.test", test_domain);
         fs::write(&manifest, patched).expect("write patched fixture manifest");

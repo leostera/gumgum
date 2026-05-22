@@ -53,32 +53,25 @@ impl From<ManifestError> for GumgumError {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct WorkspaceManifest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<Namespace>,
+    pub project: WorkspaceProject,
     pub workspace: Workspace,
 }
 
 impl WorkspaceManifest {
-    pub fn namespace_name(&self) -> &str {
-        self.namespace
-            .as_ref()
-            .map(|namespace| namespace.name.as_str())
-            .or(self.workspace.namespace.as_deref())
-            .or(self.workspace.name.as_deref())
-            .unwrap_or("root")
+    pub fn project_name(&self) -> &str {
+        &self.project.name
     }
 
-    pub fn domain(&self) -> Option<&str> {
-        self.namespace
-            .as_ref()
-            .and_then(|namespace| namespace.domain.as_deref())
-            .or(self.workspace.domain.as_deref())
+    pub fn namespace_name(&self) -> &str {
+        self.project_name()
+    }
+
+    pub fn domain(&self) -> &str {
+        &self.project.domain
     }
 
     pub fn server(&self) -> Option<&str> {
-        self.namespace
-            .as_ref()
-            .and_then(|namespace| namespace.server.as_deref())
+        self.project.server.as_deref()
     }
 
     pub fn members(&self) -> &[String] {
@@ -87,22 +80,15 @@ impl WorkspaceManifest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Namespace {
+pub struct WorkspaceProject {
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
+    pub domain: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Workspace {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
     #[serde(default)]
     pub members: Vec<String>,
 }
@@ -412,12 +398,8 @@ pub fn init_plan(
 }
 
 pub fn workspace_manifest_template(name: &str, domain: Option<&str>) -> String {
-    let mut raw = format!("[namespace]\nname = \"{name}\"\n");
-    if let Some(domain) = domain {
-        raw.push_str(&format!("domain = \"{domain}\"\n"));
-    }
-    raw.push_str("\n[workspace]\nmembers = []\n");
-    raw
+    let domain = domain.unwrap_or("example.com");
+    format!("[project]\nname = \"{name}\"\ndomain = \"{domain}\"\n\n[workspace]\nmembers = []\n")
 }
 
 pub fn worker_manifest_template(
@@ -441,7 +423,7 @@ pub fn validate_str(raw: &str, path: &str) -> std::result::Result<ValidationRepo
         source,
     })?;
 
-    if value.get("workspace").is_some() || value.get("namespace").is_some() {
+    if value.get("workspace").is_some() {
         let manifest: WorkspaceManifest =
             toml::from_str(raw).map_err(|source| ManifestError::Parse {
                 path: path.to_owned(),
@@ -477,9 +459,19 @@ pub fn validate_str(raw: &str, path: &str) -> std::result::Result<ValidationRepo
 }
 
 fn validate_workspace(manifest: &WorkspaceManifest) -> std::result::Result<(), ManifestError> {
-    if manifest.namespace_name().trim().is_empty() {
+    if manifest.project.name.trim().is_empty() {
         return Err(ManifestError::Validation(
-            "namespace.name must not be empty".to_owned(),
+            "project.name must not be empty".to_owned(),
+        ));
+    }
+    if manifest.project.name.contains('.') {
+        return Err(ManifestError::Validation(
+            "project.name must be a DNS label, not a domain".to_owned(),
+        ));
+    }
+    if manifest.project.domain.trim().is_empty() {
+        return Err(ManifestError::Validation(
+            "project.domain must not be empty".to_owned(),
         ));
     }
     Ok(())
@@ -581,24 +573,24 @@ mod tests {
         assert!(report.ok);
         assert_eq!(report.manifest_kind, ManifestKind::Workspace);
         let parsed: WorkspaceManifest = toml::from_str(&raw).expect("workspace template parses");
-        assert_eq!(parsed.namespace_name(), "peekaboo");
-        assert_eq!(parsed.domain(), Some("leostera.dev"));
+        assert_eq!(parsed.project_name(), "peekaboo");
+        assert_eq!(parsed.domain(), "leostera.dev");
         assert!(parsed.workspace.members.is_empty());
     }
 
     #[test]
-    fn workspace_manifest_supports_namespace_metadata() {
-        let modern = r#"[namespace]
-name = "dev.example.visit-counter"
-domain = "example.dev"
+    fn workspace_manifest_supports_project_metadata() {
+        let raw = r#"[project]
+name = "visit-counter"
+domain = "visitcounter.dev"
 server = "isolated"
 
 [workspace]
 members = ["api", "worker"]
 "#;
-        let parsed: WorkspaceManifest = toml::from_str(modern).unwrap();
-        assert_eq!(parsed.namespace_name(), "dev.example.visit-counter");
-        assert_eq!(parsed.domain(), Some("example.dev"));
+        let parsed: WorkspaceManifest = toml::from_str(raw).unwrap();
+        assert_eq!(parsed.project_name(), "visit-counter");
+        assert_eq!(parsed.domain(), "visitcounter.dev");
         assert_eq!(parsed.server(), Some("isolated"));
         assert_eq!(parsed.members(), &["api".to_owned(), "worker".to_owned()]);
     }
@@ -690,7 +682,7 @@ access = "write"
             Some("leostera.dev"),
         );
         assert_eq!(workspace.manifest_kind, InitManifestKind::Workspace);
-        assert!(workspace.manifest.contains("[namespace]"));
+        assert!(workspace.manifest.contains("[project]"));
         assert!(workspace.manifest.contains("[workspace]"));
         assert!(workspace.scaffold_files.is_empty());
     }

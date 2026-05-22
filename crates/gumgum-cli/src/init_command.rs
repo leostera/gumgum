@@ -30,32 +30,32 @@ pub(crate) fn print_init_report(report: &InitReport) {
 
 pub(crate) fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitReport> {
     let name = args.name.unwrap_or_else(default_project_name);
-    init_workspace_manifest(name, args.namespace, args.root_domain, args.force, dry_run)
+    init_workspace_manifest(name, args.namespace, args.domain, args.force, dry_run)
 }
 
 pub(crate) fn init_workspace_manifest(
     name: String,
     namespace: Option<String>,
-    root_domain: Option<String>,
+    domain: Option<String>,
     force: bool,
     dry_run: bool,
 ) -> gumgum_core::Result<InitReport> {
     let path = PathBuf::from("gumgum.toml");
-    let root_domain = root_domain.or_else(|| {
+    let domain = domain.or_else(|| {
         ConfigStore::from_home_env()
             .and_then(|store| store.load_default_server())
             .ok()
             .flatten()
             .map(|server| server.root_domain)
     });
-    let namespace = namespace.unwrap_or_else(|| name.clone());
-    let mut plan = init_plan(
+    let project_name = namespace.unwrap_or_else(|| name.clone());
+    let plan = init_plan(
         CoreInitKind::Workspace,
-        &name,
-        &namespace,
+        &project_name,
+        &project_name,
         3000,
         &[],
-        root_domain.as_deref(),
+        domain.as_deref(),
     );
 
     if path.exists() && !force {
@@ -68,11 +68,6 @@ pub(crate) fn init_workspace_manifest(
             files: vec![path.display().to_string()],
             message: "gumgum.toml already exists; use --force to overwrite".to_owned(),
         });
-    }
-
-    if !namespace.is_empty() {
-        plan.manifest
-            .push_str(&format!("namespace = \"{namespace}\"\n"));
     }
 
     let files = vec![path.display().to_string()];

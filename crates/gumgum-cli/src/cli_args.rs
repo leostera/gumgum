@@ -314,7 +314,7 @@ pub(crate) struct InitArgs {
     #[arg(long)]
     pub(crate) name: Option<String>,
     #[arg(long)]
-    pub(crate) root_domain: Option<String>,
+    pub(crate) domain: Option<String>,
     #[arg(long)]
     pub(crate) namespace: Option<String>,
     #[arg(long)]
@@ -473,16 +473,16 @@ mod tests {
                 "init",
                 "--name",
                 "visit-counter",
-                "--root-domain",
+                "--domain",
                 "example.com",
             ])
             .unwrap()
             .command,
             Command::Init(InitArgs {
                 name: Some(ref name),
-                root_domain: Some(ref root_domain),
+                domain: Some(ref domain),
                 ..
-            }) if name == "visit-counter" && root_domain == "example.com"
+            }) if name == "visit-counter" && domain == "example.com"
         ));
         assert!(Cli::try_parse_from(["gumgum", "init", "--kind", "worker"]).is_err());
         assert!(matches!(

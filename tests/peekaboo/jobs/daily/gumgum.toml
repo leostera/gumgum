@@ -1,6 +1,3 @@
-[project]
-namespace = "root"
-
 [worker]
 name = "peekaboo-daily"
 image = "./Dockerfile"

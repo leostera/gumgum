@@ -1,6 +1,7 @@
-[namespace]
-name = "dev.leostera.visit-counter"
-domain = "leostera.dev"
+[project]
+name = "visit-counter"
+domain = "visitcounter.dev"
+server = "starbase2"
 
 [workspace]
 members = ["api", "worker"]

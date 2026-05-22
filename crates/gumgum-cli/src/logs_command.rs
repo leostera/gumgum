@@ -199,7 +199,7 @@ mod tests {
         fs::create_dir_all(dir.join("worker")).unwrap();
         fs::write(
             dir.join("gumgum.toml"),
-            "[workspace]\nname = \"visit-counter\"\nmembers = [\"api\", \"worker\"]\n",
+            "[project]\nname = \"visit-counter\"\ndomain = \"visitcounter.dev\"\n\n[workspace]\nmembers = [\"api\", \"worker\"]\n",
         )
         .unwrap();
         for worker in ["api", "worker"] {

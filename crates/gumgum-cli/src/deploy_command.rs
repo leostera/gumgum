@@ -85,7 +85,10 @@ pub(crate) async fn deploy(
             let report = deploy_one(
                 args.path.clone(),
                 &manifest,
-                namespace,
+                DeployProjectContext {
+                    name: namespace,
+                    domain: None,
+                },
                 server,
                 dry_run,
                 args.prod,
@@ -106,14 +109,17 @@ pub(crate) async fn deploy(
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."));
             let mut workers = Vec::new();
-            let mut plan = vec![format!("namespace {}", workspace.namespace_name())];
+            let mut plan = vec![format!("project {}", workspace.project_name())];
             for member in workspace.members() {
                 let member_path = root.join(member).join("gumgum.toml");
                 let manifest = load_worker_path(&member_path)?;
                 let report = deploy_one(
                     member_path,
                     &manifest,
-                    Some(workspace.namespace_name()),
+                    DeployProjectContext {
+                        name: Some(workspace.project_name()),
+                        domain: Some(workspace.domain()),
+                    },
                     server.clone(),
                     dry_run,
                     args.prod,
@@ -132,7 +138,7 @@ pub(crate) async fn deploy(
                 ok: true,
                 dry_run,
                 path: args.path.display().to_string(),
-                workspace: workspace.namespace_name().to_owned(),
+                workspace: workspace.project_name().to_owned(),
                 workers,
                 plan,
                 message: if dry_run {
@@ -153,16 +159,30 @@ fn resolve_deploy_server(host: Option<String>) -> gumgum_core::Result<Option<Ser
     }
 }
 
+#[derive(Clone, Copy)]
+struct DeployProjectContext<'a> {
+    name: Option<&'a str>,
+    domain: Option<&'a str>,
+}
+
 async fn deploy_one(
     path: PathBuf,
     manifest: &WorkerManifest,
-    namespace: Option<&str>,
+    project: DeployProjectContext<'_>,
     server: Option<ServerRecord>,
     dry_run: bool,
     prod: bool,
     quiet: bool,
 ) -> gumgum_core::Result<DeployReport> {
-    let mut report = deploy_report(path, manifest, namespace, server.as_ref(), dry_run, prod);
+    let mut report = deploy_report(
+        path,
+        manifest,
+        project.name,
+        project.domain,
+        server.as_ref(),
+        dry_run,
+        prod,
+    );
     if dry_run {
         return Ok(report);
     }
@@ -176,7 +196,7 @@ async fn deploy_one(
         .build()
     })?;
     DeployExecutor::new(&server, quiet)
-        .ensure_manifest_bindings(manifest, namespace)
+        .ensure_manifest_bindings(manifest, project.name)
         .await?;
     run_remote_deploy(&server, manifest, &report, quiet).await?;
     report.ok = true;
@@ -194,13 +214,20 @@ async fn deploy_one(
 fn deploy_report(
     path: PathBuf,
     manifest: &WorkerManifest,
-    namespace: Option<&str>,
+    project_name: Option<&str>,
+    project_domain: Option<&str>,
     server: Option<&ServerRecord>,
     dry_run: bool,
     prod: bool,
 ) -> DeployReport {
-    let descriptor =
-        DeploymentDescriptor::from_manifest_in_namespace(&path, manifest, namespace, server, prod);
+    let descriptor = DeploymentDescriptor::from_manifest_in_project(
+        &path,
+        manifest,
+        project_name,
+        project_domain,
+        server,
+        prod,
+    );
     DeployReport {
         ok: true,
         dry_run,

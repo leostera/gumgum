@@ -75,7 +75,7 @@ fn create_worker(
         &namespace,
         args.port,
         &args.zones,
-        workspace.domain(),
+        Some(workspace.domain()),
     );
     let mut files = vec![manifest_path.display().to_string()];
     files.extend(
@@ -406,7 +406,7 @@ mod tests {
         let workspace_path = root.join("gumgum.toml");
         fs::write(
             &workspace_path,
-            "[workspace]\nname = \"visit-counter\"\nmembers = [\"worker\", \"api\", \"crates/*\"]\n",
+            "[project]\nname = \"visit-counter\"\ndomain = \"visitcounter.dev\"\n\n[workspace]\nmembers = [\"worker\", \"api\", \"crates/*\"]\n",
         )
         .unwrap();
         for (dir, name, port) in [("api", "api", 3000), ("worker", "worker", 3001)] {

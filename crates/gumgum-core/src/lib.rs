@@ -29,9 +29,9 @@ pub use graph_store::{
 pub use manifest::{
     Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,
     Project, QueueBinding, QueueBindings, ScaffoldFile, ValidationReport, Worker, WorkerManifest,
-    Workspace, WorkspaceManifest, Zone, init_plan, load_worker_path, load_workspace_path,
-    validate_path, validate_str, worker_manifest_template, worker_scaffold_files,
-    workspace_manifest_template,
+    Workspace, WorkspaceManifest, WorkspaceProject, Zone, init_plan, load_worker_path,
+    load_workspace_path, validate_path, validate_str, worker_manifest_template,
+    worker_scaffold_files, workspace_manifest_template,
 };
 pub use platform::LocalPlatform;
 pub use process::{run_setup_command, run_setup_command_streaming};

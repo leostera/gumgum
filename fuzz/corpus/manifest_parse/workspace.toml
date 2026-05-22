@@ -1,2 +1,6 @@
+[project]
 name = "visit-counter"
-root_domain = "example.test"
+domain = "visitcounter.example"
+
+[workspace]
+members = []
