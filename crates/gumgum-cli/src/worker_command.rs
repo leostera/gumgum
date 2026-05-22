@@ -321,3 +321,90 @@ fn print_worker_report(report: &WorkerCommandReport) {
         println!("  - {file}");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gumgum_core::{load_workspace_path, worker_manifest_template, workspace_manifest_template};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("gumgum-worker-{name}-{nonce}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn workspace_member_mutation_adds_sorts_and_removes_without_source_delete() {
+        let root = temp_dir("members");
+        let workspace_path = root.join("gumgum.toml");
+        fs::write(
+            &workspace_path,
+            workspace_manifest_template("visit-counter", Some("example.test")),
+        )
+        .unwrap();
+        let api_dir = root.join("api");
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::write(api_dir.join("server.py"), "print('keep me')\n").unwrap();
+
+        save_workspace_members(&workspace_path, "worker", None).unwrap();
+        save_workspace_members(&workspace_path, "api", None).unwrap();
+        save_workspace_members(&workspace_path, "api", None).unwrap();
+        assert_eq!(
+            load_workspace_path(&workspace_path)
+                .unwrap()
+                .workspace
+                .members,
+            vec!["api".to_owned(), "worker".to_owned()]
+        );
+
+        save_workspace_members(&workspace_path, "", Some("api")).unwrap();
+        assert_eq!(
+            load_workspace_path(&workspace_path)
+                .unwrap()
+                .workspace
+                .members,
+            vec!["worker".to_owned()]
+        );
+        assert!(api_dir.join("server.py").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn list_workers_reads_workspace_members_and_ignores_globs_or_missing_manifests() {
+        let root = temp_dir("list");
+        let workspace_path = root.join("gumgum.toml");
+        fs::write(
+            &workspace_path,
+            "[workspace]\nname = \"visit-counter\"\nmembers = [\"worker\", \"api\", \"crates/*\"]\n",
+        )
+        .unwrap();
+        for (dir, name, port) in [("api", "api", 3000), ("worker", "worker", 3001)] {
+            let worker_dir = root.join(dir);
+            fs::create_dir_all(&worker_dir).unwrap();
+            fs::write(
+                worker_dir.join("gumgum.toml"),
+                worker_manifest_template(name, "visit-counter", port, &[]),
+            )
+            .unwrap();
+        }
+
+        let report = list_workers(WorkerListArgs {
+            workspace: workspace_path,
+        })
+        .unwrap();
+        assert_eq!(report.message, "2 worker(s)");
+        assert_eq!(
+            report
+                .workers
+                .iter()
+                .map(|worker| worker.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api", "worker"]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+}
