@@ -146,6 +146,10 @@ fn visit_counter_deploys_from_fixture_manifest() {
     assert_success(&env_output);
     assert_output_contains(&env_output, "VISIT_COUNTER_API_USER_COUNTERS");
     assert_output_contains(&env_output, "VISIT_COUNTER_WORKER_DATABASE_URL");
+    assert_output_contains(&env_output, "gumgum-provider-redis-main");
+    assert_output_contains(&env_output, "gumgum-provider-minio-main");
+    assert_output_contains(&env_output, "gumgum-provider-redpanda-main");
+    assert_output_contains(&env_output, "gumgum-provider-postgres-main");
     assert_no_shared_provider_dns(&env_output);
 
     let events = transcript.run_to_artifact(
@@ -273,6 +277,50 @@ fn visit_counter_deploys_from_fixture_manifest() {
     );
     assert_failure(&guarded_delete);
     assert_output_contains(&guarded_delete, "object has active bindings");
+    assert_success(&transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            [
+                "bucket",
+                "unbind",
+                "visit-requests",
+                "--to",
+                "visit-counter-api",
+                "--as",
+                "VISIT_REQUESTS_BUCKET",
+                "--host",
+                &server_name,
+            ],
+        ),
+        "cleanup-bucket-unbind-api.txt",
+    ));
+    assert_success(&transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            [
+                "bucket",
+                "unbind",
+                "visit-requests",
+                "--to",
+                "visit-counter-worker",
+                "--as",
+                "VISIT_REQUESTS_BUCKET",
+                "--host",
+                &server_name,
+            ],
+        ),
+        "cleanup-bucket-unbind-worker.txt",
+    ));
+    assert_success(&transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            ["bucket", "delete", "visit-requests", "--host", &server_name],
+        ),
+        "cleanup-bucket-delete.txt",
+    ));
     transcript.write_checksums();
 }
 

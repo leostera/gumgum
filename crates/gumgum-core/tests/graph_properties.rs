@@ -248,6 +248,37 @@ fn assert_graph_invariants(graph: &DesiredGraph) {
     }
 }
 
+#[test]
+fn regression_missing_object_binding_is_removable() {
+    let invalid = DesiredGraph::new([binding_node(
+        "worker-regression",
+        "DATABASE_URL",
+        Capability::Db,
+        "missing-db",
+    )]);
+    let empty = DesiredGraph::default();
+
+    let plan = GraphActionPlanner::plan_transition(&invalid, &empty);
+    assert!(!plan.actions.is_empty());
+    assert!(GraphActionPlanner::plan_transition(&empty, &empty).is_empty());
+}
+
+#[test]
+fn regression_conflicting_binding_id_is_deterministic() {
+    let invalid = DesiredGraph::new([
+        object_node(Capability::Kv, "left-cache"),
+        object_node(Capability::Kv, "right-cache"),
+        binding_node("api", "USER_COUNTERS", Capability::Kv, "left-cache"),
+        binding_node("api", "USER_COUNTERS", Capability::Kv, "right-cache"),
+    ]);
+    let empty = DesiredGraph::default();
+
+    assert_eq!(
+        GraphActionPlanner::plan_transition(&empty, &invalid),
+        GraphActionPlanner::plan_transition(&empty, &invalid)
+    );
+}
+
 proptest! {
     #[test]
     fn graph_planning_is_deterministic_and_idempotent(ops in prop::collection::vec(op_strategy(), 0..80)) {
