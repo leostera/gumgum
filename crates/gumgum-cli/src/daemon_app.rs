@@ -1360,22 +1360,23 @@ async fn daemon_deploy(
     let reconcile_ok = !actions
         .iter()
         .any(|action| action.starts_with("reconcile failed:"));
-    let materialized = if reconcile_ok {
+    let materialize_changed = if reconcile_ok {
         let deploy_for_db = request_for_db.clone();
-        tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .unwrap_or(false)
+        match tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db)).await {
+            Ok(Ok(changed)) => Some(changed),
+            _ => None,
+        }
     } else {
         actions.push("desired deployment was not changed".to_owned());
-        false
+        None
     };
-    let changed = actions.iter().any(|action| {
-        action.starts_with("pull ")
-            || action.starts_with("recreate ")
-            || action.starts_with("project ")
-    });
+    let materialized = materialize_changed.is_some();
+    let changed = materialize_changed.unwrap_or(false)
+        || actions.iter().any(|action| {
+            action.starts_with("pull ")
+                || action.starts_with("recreate ")
+                || action.starts_with("project ")
+        });
     Json(DeployApplyReport {
         ok: materialized && reconcile_ok,
         worker: request.worker,
