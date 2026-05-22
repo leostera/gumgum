@@ -142,13 +142,16 @@ impl CloudflareClient {
 
     pub async fn delete_route_dns(&self, zone_name: &str, hostname: &str) -> Result<Vec<String>> {
         let zone = self.zone(zone_name).await?;
-        let deleted = self.delete_cname(&zone.id, hostname).await?;
-        if deleted {
-            Ok(vec![format!("delete Cloudflare DNS CNAME {hostname}")])
-        } else {
-            Ok(vec![format!(
+        match self.delete_cname(&zone.id, hostname).await? {
+            DeleteCnameResult::Deleted => {
+                Ok(vec![format!("delete Cloudflare DNS CNAME {hostname}")])
+            }
+            DeleteCnameResult::Absent => Ok(vec![format!(
                 "Cloudflare DNS CNAME {hostname} was already absent"
-            )])
+            )]),
+            DeleteCnameResult::Unmanaged => Ok(vec![format!(
+                "Cloudflare DNS CNAME {hostname} was not deleted because it is not marked managed-by=gumgum"
+            )]),
         }
     }
 
@@ -164,7 +167,8 @@ impl CloudflareClient {
             "name": hostname,
             "content": target,
             "proxied": true,
-            "ttl": 1
+            "ttl": 1,
+            "comment": "managed-by=gumgum"
         });
         if let Some(record_id) = result_array(&existing).and_then(|records| {
             records
@@ -182,25 +186,30 @@ impl CloudflareClient {
         Ok(())
     }
 
-    async fn delete_cname(&self, zone_id: &str, hostname: &str) -> Result<bool> {
+    async fn delete_cname(&self, zone_id: &str, hostname: &str) -> Result<DeleteCnameResult> {
         let existing = self
             .get_json(&format!(
                 "/zones/{zone_id}/dns_records?type=CNAME&name={}",
                 url_encode(hostname)
             ))
             .await?;
-        let Some(record_id) = result_array(&existing).and_then(|records| {
-            records
-                .first()
-                .and_then(|record| record.get("id"))
-                .and_then(|id| id.as_str())
-                .map(ToOwned::to_owned)
-        }) else {
-            return Ok(false);
+        let Some(record) = result_array(&existing).and_then(|records| records.first().cloned())
+        else {
+            return Ok(DeleteCnameResult::Absent);
+        };
+        let managed = record
+            .get("comment")
+            .and_then(|comment| comment.as_str())
+            .is_some_and(|comment| comment == "managed-by=gumgum");
+        if !managed {
+            return Ok(DeleteCnameResult::Unmanaged);
+        }
+        let Some(record_id) = record.get("id").and_then(|id| id.as_str()) else {
+            return Ok(DeleteCnameResult::Absent);
         };
         self.delete_json(&format!("/zones/{zone_id}/dns_records/{record_id}"))
             .await?;
-        Ok(true)
+        Ok(DeleteCnameResult::Deleted)
     }
 
     async fn get_json(&self, path: &str) -> Result<serde_json::Value> {
@@ -271,6 +280,12 @@ struct Tunnel {
     deleted: Option<bool>,
     #[serde(default)]
     deleted_at: Option<serde_json::Value>,
+}
+
+enum DeleteCnameResult {
+    Deleted,
+    Absent,
+    Unmanaged,
 }
 
 fn result_value(response: &serde_json::Value) -> Result<&serde_json::Value> {
