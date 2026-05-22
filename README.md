@@ -15,6 +15,7 @@ gumgum is a self-hosted app platform for your VPS or local machine. It gives sma
 - [Create a project or workspace](#create-a-project-or-workspace)
   - [Create a workspace](#create-a-workspace)
   - [Create workers](#create-workers)
+- [Manage domains and ingress](#manage-domains-and-ingress)
 - [Manage resources](#manage-resources)
   - [Databases](#databases)
   - [KV namespaces](#kv-namespaces)
@@ -212,6 +213,16 @@ gumgum worker delete api
 `worker delete` only removes the worker from the workspace manifest. It never deletes source files.
 
 Workspace-aware commands such as `logs`, `env`, and `publish --dry-run` can operate across all workers from the workspace root.
+
+## Manage domains and ingress
+
+Servers run the GumGum control plane; domains describe DNS zones that a server can use for routes. Add a domain after a server is available:
+
+```bash
+gumgum domain add leostera.dev --server starbase2 --provider cloudflare --ingress cloudflare
+```
+
+`--provider manual` records the domain and prints the desired intent without changing DNS. `--provider cloudflare` starts a browser OAuth flow, then saves the Cloudflare grant on the GumGum server so future route convergence can manage DNS/tunnel state there. As setup sugar, `gumgum server add ... --root-domain leostera.dev --ingress cloudflare` installs the server and then adds that domain with Cloudflare ingress.
 
 ## Manage resources
 
@@ -684,6 +695,12 @@ gumgum server ping --host <host-or-name>
 gumgum server capabilities list --host <host-or-name> [--require <capability,...>]
 gumgum server config --host <host-or-name> list|get|set
 gumgum server upgrade --host <host-or-name>
+```
+
+Domain commands:
+
+```bash
+gumgum domain add <domain> [--server <server>] [--provider manual|cloudflare] [--ingress direct|cloudflare]
 ```
 
 Project/runtime commands:

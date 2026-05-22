@@ -1,9 +1,9 @@
 use gumgum_api::{
     AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, BucketObjectReport,
     BucketObjectRequest, DaemonVersionReport, DeployApplyReport, DeployRequest,
-    DeploymentDeleteRequest, DeploymentRevisionsReport, EnvReport, EventsReport, GraphReport,
-    LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest, ProviderBootReport,
-    ProviderStatusReport, RollbackReport, RollbackRequest,
+    DeploymentDeleteRequest, DeploymentRevisionsReport, DomainAddRequest, DomainReport, EnvReport,
+    EventsReport, GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest,
+    ProviderBootReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
 
@@ -70,6 +70,13 @@ impl ServerClient {
     ) -> gumgum_core::Result<ObjectReport> {
         self.delete_json("/v0/objects", request, "object delete")
             .await
+    }
+
+    pub(crate) async fn add_domain(
+        &self,
+        request: &DomainAddRequest,
+    ) -> gumgum_core::Result<DomainReport> {
+        self.post_json("/v0/domains", request, "domain").await
     }
 
     pub(crate) async fn providers(&self) -> gumgum_core::Result<ProviderStatusReport> {

@@ -7,17 +7,17 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use gumgum_api::{
     AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, BucketObjectReport,
     BucketObjectRequest, DaemonVersionReport, DeployApplyReport, DeployRequest,
-    DeploymentDeleteRequest, DeploymentRevisionDeleteReport, DeploymentRevisionsReport, EnvReport,
-    EnvVar, EventsReport, GraphNode, GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport,
-    ObjectRequest, ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
-    ProviderCredentialsInitReport, ProviderCredentialsReport, ProviderStatusReport, RollbackReport,
-    RollbackRequest,
+    DeploymentDeleteRequest, DeploymentRevisionDeleteReport, DeploymentRevisionsReport,
+    DomainAddRequest, DomainReport, EnvReport, EnvVar, EventsReport, GraphNode, GraphReport,
+    LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest, ProviderBootReport,
+    ProviderConfigureReport, ProviderConfigureRequest, ProviderCredentialsInitReport,
+    ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
-    ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject,
-    GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore, GumgumError,
-    LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph, internal_db,
-    not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
+    ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, DomainRecord, ErrorCode,
+    GlobalObject, GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore,
+    GumgumError, LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph,
+    internal_db, not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -93,6 +93,7 @@ impl DaemonApp {
                 "/v0/bindings",
                 post(daemon_create_binding).delete(daemon_delete_binding),
             )
+            .route("/v0/domains", post(daemon_add_domain))
             .route("/v0/providers", get(daemon_providers))
             .route("/v0/providers/configure", post(daemon_configure_provider))
             .route(
@@ -152,6 +153,72 @@ fn daemon_version_report() -> DaemonVersionReport {
 
 async fn status() -> Json<gumgum_core::StatusReport> {
     Json(not_configured_status())
+}
+
+async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<DomainReport> {
+    let mut actions = vec![format!(
+        "record domain {} with {} provider",
+        request.name,
+        request.provider.as_str()
+    )];
+    let store = match ConfigStore::from_home_env() {
+        Ok(store) => store,
+        Err(error) => {
+            return Json(DomainReport {
+                ok: false,
+                name: request.name,
+                provider: request.provider,
+                ingress: request.ingress,
+                actions: vec![error.to_report().message],
+                message: "domain was not saved".to_owned(),
+            });
+        }
+    };
+    if request.provider == gumgum_core::DomainProvider::Cloudflare {
+        if let Some(grant) = request.cloudflare_grant {
+            if let Err(error) = store.save_cloudflare_grant(&grant) {
+                return Json(DomainReport {
+                    ok: false,
+                    name: request.name,
+                    provider: request.provider,
+                    ingress: request.ingress,
+                    actions: vec![error.to_report().message],
+                    message: "Cloudflare grant was not saved".to_owned(),
+                });
+            }
+            actions.push("saved Cloudflare grant on server".to_owned());
+        } else {
+            return Json(DomainReport {
+                ok: false,
+                name: request.name,
+                provider: request.provider,
+                ingress: request.ingress,
+                actions: vec!["Cloudflare grant is required".to_owned()],
+                message: "domain was not saved".to_owned(),
+            });
+        }
+    }
+    let record = DomainRecord {
+        name: request.name.clone(),
+        provider: request.provider,
+        ingress: request.ingress,
+    };
+    let ok = store.save_domain(record).is_ok();
+    if request.ingress == gumgum_core::IngressMode::Cloudflare {
+        actions.push("Cloudflare tunnel ingress will be converged for this domain".to_owned());
+    }
+    Json(DomainReport {
+        ok,
+        name: request.name,
+        provider: request.provider,
+        ingress: request.ingress,
+        actions,
+        message: if ok {
+            "domain saved".to_owned()
+        } else {
+            "domain was not saved".to_owned()
+        },
+    })
 }
 
 async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {

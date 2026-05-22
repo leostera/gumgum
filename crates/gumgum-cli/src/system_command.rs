@@ -4,7 +4,8 @@ use crate::{
     print_config_report, print_value, progress,
 };
 use gumgum_api::{
-    DaemonVersionReport, GraphReport, PingReport, ProviderStatusReport, ServerListReport,
+    DaemonVersionReport, DomainAddRequest, GraphReport, PingReport, ProviderStatusReport,
+    ServerListReport,
 };
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DaemonPingReport, ErrorCode, GumgumError, GumgumInstaller,
@@ -168,6 +169,7 @@ async fn add_server(
         user: args.user,
         root_domain: args.root_domain,
         test_domain: args.test_domain,
+        ingress: Some(args.ingress.into()),
     })
     .await?;
     reject_accidental_domain_replacement(&setup)?;
@@ -206,11 +208,26 @@ async fn add_server(
     DaemonHealthClient::wait_for_ping(&setup.host).await?;
     ConfigStore::from_home_env()?.save_server(server.clone())?;
     progress(quiet, "initializing built-in providers");
-    let provider_report = ServerClient::new(setup.host.clone())
-        .boot_default_providers()
-        .await?;
+    let client = ServerClient::new(setup.host.clone());
+    let provider_report = client.boot_default_providers().await?;
     let mut actions = server_add_actions(&setup, false);
     actions.extend(provider_report.actions);
+    if setup.ingress == gumgum_core::IngressMode::Cloudflare {
+        progress(
+            quiet,
+            format!("authorizing Cloudflare for {}", setup.root_domain),
+        );
+        let grant = gumgum_core::cloudflare::authorize_zone(&setup.root_domain).await?;
+        let domain_report = client
+            .add_domain(&DomainAddRequest {
+                name: setup.root_domain.clone(),
+                provider: gumgum_core::DomainProvider::Cloudflare,
+                ingress: setup.ingress,
+                cloudflare_grant: Some(grant),
+            })
+            .await?;
+        actions.extend(domain_report.actions);
+    }
     Ok(ServerMutationReport {
         ok: true,
         dry_run: false,
@@ -256,6 +273,12 @@ fn server_add_actions(setup: &SetupTarget, dry_run: bool) -> Vec<String> {
         actions.push("preview only; no install, config, or provider changes".to_owned());
     }
     actions.extend(setup_actions(setup.local));
+    if setup.ingress == gumgum_core::IngressMode::Cloudflare {
+        actions.push(format!(
+            "authorize Cloudflare for {} and configure Cloudflare ingress",
+            setup.root_domain
+        ));
+    }
     actions.push(format!("save server {} ({})", setup.name, setup.host));
     actions.push("initialize built-in db/kv/queue/bucket/secret providers".to_owned());
     actions
@@ -373,6 +396,7 @@ async fn upgrade_server(
         root_domain: server.root_domain.clone(),
         test_domain: server.test_domain.clone(),
         local: false,
+        ingress: gumgum_core::IngressMode::Direct,
     };
     let target = setup.ssh_target();
     let actions = server_upgrade_actions(dry_run);

@@ -1,7 +1,9 @@
+pub mod cloudflare;
 pub mod config_store;
 pub mod container_reconciler;
 pub mod daemon_health;
 pub mod deployment;
+pub mod domain;
 pub mod graph;
 pub mod graph_store;
 pub mod internal_db;
@@ -12,10 +14,12 @@ pub mod providers;
 pub mod setup;
 pub mod setup_installer;
 
+pub use cloudflare::{CloudflareGrant, IngressMode};
 pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
+pub use domain::{DomainProvider, DomainRecord};
 pub use graph::{
     BindingName, ContainerName, DesiredGraph, DesiredGraphNode, GraphActionExecutor,
     GraphActionPlanner, GraphExecutionContext, GraphExecutionStep, GraphExecutionTarget,

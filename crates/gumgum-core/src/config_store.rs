@@ -1,5 +1,6 @@
 use crate::{
-    ErrorCode, GumgumError, ProviderConfig, ProviderCredentials, Result, Subsystem, sanitize_name,
+    CloudflareGrant, DomainRecord, ErrorCode, GumgumError, ProviderConfig, ProviderCredentials,
+    Result, Subsystem, sanitize_name,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -85,6 +86,52 @@ impl ConfigStore {
         self.save_config_map(self.server_config_path(name), values)
     }
 
+    pub fn load_domains(&self) -> Result<Vec<DomainRecord>> {
+        let path = self.domains_path();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = fs::read_to_string(&path).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not read domain list",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        serde_json::from_str(&raw).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not parse domain list",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })
+    }
+
+    pub fn save_domain(&self, domain: DomainRecord) -> Result<()> {
+        let path = self.domains_path();
+        self.ensure_parent(&path)?;
+        let mut domains = self.load_domains()?;
+        domains.retain(|existing| existing.name != domain.name);
+        domains.push(domain);
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&domains).expect("serialize domains"),
+        )
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not write domain list",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })
+    }
+
     pub fn load_servers(&self) -> Result<Vec<ServerRecord>> {
         let path = self.servers_path();
         if !path.exists() {
@@ -112,6 +159,49 @@ impl ConfigStore {
 
     pub fn load_default_server(&self) -> Result<Option<ServerRecord>> {
         Ok(self.load_servers()?.into_iter().next())
+    }
+
+    pub fn load_cloudflare_grant(&self) -> Result<Option<CloudflareGrant>> {
+        let path = self.cloudflare_grant_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&path).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not read Cloudflare grant",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })?;
+        serde_json::from_str(&raw).map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not parse Cloudflare grant",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })
+    }
+
+    pub fn save_cloudflare_grant(&self, grant: &CloudflareGrant) -> Result<()> {
+        let path = self.cloudflare_grant_path();
+        self.ensure_parent(&path)?;
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(grant).expect("serialize Cloudflare grant"),
+        )
+        .map_err(|source| {
+            GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::Io,
+                "could not write Cloudflare grant",
+            )
+            .likely_cause(source.to_string())
+            .build()
+        })
     }
 
     pub fn load_provider_config(&self, provider: &str) -> Result<Option<ProviderConfig>> {
@@ -294,6 +384,10 @@ impl ConfigStore {
         self.root.join("servers.json")
     }
 
+    fn domains_path(&self) -> PathBuf {
+        self.root.join("domains.json")
+    }
+
     fn local_config_path(&self) -> PathBuf {
         self.root.join("config.json")
     }
@@ -310,6 +404,10 @@ impl ConfigStore {
             .join("providers")
             .join(sanitize_name(provider))
             .join("credentials.json")
+    }
+
+    fn cloudflare_grant_path(&self) -> PathBuf {
+        self.root.join("cloudflare").join("grant.json")
     }
 
     fn provider_config_path(&self, provider: &str) -> PathBuf {

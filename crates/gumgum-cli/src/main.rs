@@ -5,6 +5,7 @@ mod config_command;
 mod daemon_app;
 mod deploy_command;
 mod deploy_executor;
+mod domain_command;
 mod env_command;
 mod events_command;
 mod graph_command;
@@ -28,6 +29,7 @@ pub(crate) use cli_output::{print_error, print_value, progress};
 use config_command::{config_command, print_config_report};
 use daemon_app::DaemonApp;
 use deploy_command::{deploy, print_deploy_output};
+use domain_command::domain_command;
 use env_command::env;
 use events_command::events;
 use graph_command::graph;
@@ -124,6 +126,9 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Secret(args) => {
             object_command("secret", args, cli.json, cli.dry_run).await?;
         }
+        Command::Domain(args) => {
+            domain_command(args, cli.json, cli.dry_run).await?;
+        }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
             if cli.dry_run {
@@ -198,6 +203,7 @@ mod tests {
             root_domain: "leostera.dev".to_owned(),
             test_domain: "leostera.test".to_owned(),
             local: false,
+            ingress: gumgum_core::IngressMode::Direct,
         };
         assert_eq!(target.ssh_target(), "192.168.0.3");
         target.user = Some("root".to_owned());

@@ -1,8 +1,8 @@
-use crate::{SetupArgs, progress};
-use gumgum_api::{ServerRecord, SetupReport};
+use crate::{SetupArgs, progress, server_client::ServerClient};
+use gumgum_api::{DomainAddRequest, ServerRecord, SetupReport};
 use gumgum_core::{
-    ConfigStore, DaemonHealthClient, ErrorCode, GumgumError, GumgumInstaller, SetupOptions,
-    SetupTarget, Subsystem, setup_actions,
+    ConfigStore, DaemonHealthClient, DomainProvider, ErrorCode, GumgumError, GumgumInstaller,
+    IngressMode, SetupOptions, SetupTarget, Subsystem, cloudflare, setup_actions,
 };
 pub(crate) async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<SetupTarget> {
     if args.host.is_none() {
@@ -22,6 +22,7 @@ pub(crate) async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<SetupT
         user: args.user,
         root_domain: args.root_domain,
         test_domain: args.test_domain,
+        ingress: Some(args.ingress.into()),
     })
     .await
 }
@@ -45,6 +46,21 @@ pub(crate) async fn install_gumgumd(
     progress(quiet, "checking gumgumd health");
     DaemonHealthClient::wait_for_ping(&setup.host).await?;
     let health_url = format!("http://{}:7777/healthz", setup.host);
+    if setup.ingress == IngressMode::Cloudflare {
+        progress(
+            quiet,
+            format!("authorizing Cloudflare for {}", setup.root_domain),
+        );
+        let grant = cloudflare::authorize_zone(&setup.root_domain).await?;
+        ServerClient::new(setup.host.clone())
+            .add_domain(&DomainAddRequest {
+                name: setup.root_domain.clone(),
+                provider: DomainProvider::Cloudflare,
+                ingress: setup.ingress,
+                cloudflare_grant: Some(grant),
+            })
+            .await?;
+    }
     ConfigStore::from_home_env()?.save_server(ServerRecord {
         name: setup.name.clone(),
         host: setup.host.clone(),

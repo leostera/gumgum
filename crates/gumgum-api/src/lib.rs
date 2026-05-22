@@ -1,4 +1,4 @@
-use gumgum_core::Capability;
+use gumgum_core::{Capability, CloudflareGrant, DomainProvider, IngressMode};
 pub use gumgum_core::{
     DeploymentRevision, GraphEdge, GraphExecutionStep, GraphNode, ProviderConfig, ProviderStatus,
     ReconcileEvent, ServerRecord,
@@ -32,6 +32,25 @@ pub struct SetupReport {
 pub struct ServerListReport {
     pub ok: bool,
     pub servers: Vec<ServerRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DomainAddRequest {
+    pub name: String,
+    pub provider: DomainProvider,
+    pub ingress: IngressMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloudflare_grant: Option<CloudflareGrant>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DomainReport {
+    pub ok: bool,
+    pub name: String,
+    pub provider: DomainProvider,
+    pub ingress: IngressMode,
+    pub actions: Vec<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

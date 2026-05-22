@@ -1,4 +1,6 @@
-use crate::{ErrorCode, GumgumError, Subsystem, run_setup_command_streaming, sanitize_name};
+use crate::{
+    ErrorCode, GumgumError, IngressMode, Subsystem, run_setup_command_streaming, sanitize_name,
+};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 use tokio::process::Command as TokioCommand;
@@ -11,6 +13,7 @@ pub struct SetupTarget {
     pub root_domain: String,
     pub test_domain: String,
     pub local: bool,
+    pub ingress: IngressMode,
 }
 
 impl SetupTarget {
@@ -26,6 +29,7 @@ pub struct SetupOptions {
     pub user: Option<String>,
     pub root_domain: Option<String>,
     pub test_domain: Option<String>,
+    pub ingress: Option<IngressMode>,
 }
 
 pub struct GumgumInstaller;
@@ -51,6 +55,7 @@ impl GumgumInstaller {
             root_domain,
             test_domain,
             local,
+            ingress: options.ingress.unwrap_or_default(),
         })
     }
 

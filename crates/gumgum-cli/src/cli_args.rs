@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -35,6 +35,7 @@ pub(crate) enum Command {
     Queue(ObjectArgs),
     Secret(ObjectArgs),
     Setup(SetupArgs),
+    Domain(DomainArgs),
     Server(ServerCommand),
     Daemon,
 }
@@ -365,6 +366,21 @@ pub(crate) struct WorkerDeleteArgs {
     pub(crate) workspace: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum IngressArg {
+    Direct,
+    Cloudflare,
+}
+
+impl From<IngressArg> for gumgum_core::IngressMode {
+    fn from(value: IngressArg) -> Self {
+        match value {
+            IngressArg::Direct => Self::Direct,
+            IngressArg::Cloudflare => Self::Cloudflare,
+        }
+    }
+}
+
 #[derive(Debug, Args)]
 pub(crate) struct SetupArgs {
     pub(crate) host: Option<String>,
@@ -376,6 +392,45 @@ pub(crate) struct SetupArgs {
     pub(crate) root_domain: Option<String>,
     #[arg(long)]
     pub(crate) test_domain: Option<String>,
+    #[arg(long, value_enum, default_value_t = IngressArg::Direct)]
+    pub(crate) ingress: IngressArg,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum DomainProviderArg {
+    Manual,
+    Cloudflare,
+}
+
+impl From<DomainProviderArg> for gumgum_core::DomainProvider {
+    fn from(value: DomainProviderArg) -> Self {
+        match value {
+            DomainProviderArg::Manual => Self::Manual,
+            DomainProviderArg::Cloudflare => Self::Cloudflare,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct DomainArgs {
+    #[command(subcommand)]
+    pub(crate) command: DomainCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum DomainCommand {
+    Add(DomainAddArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct DomainAddArgs {
+    pub(crate) name: String,
+    #[arg(long, value_enum, default_value_t = DomainProviderArg::Manual)]
+    pub(crate) provider: DomainProviderArg,
+    #[arg(long)]
+    pub(crate) server: Option<String>,
+    #[arg(long, value_enum, default_value_t = IngressArg::Direct)]
+    pub(crate) ingress: IngressArg,
 }
 
 #[derive(Debug, Args)]
@@ -409,6 +464,8 @@ pub(crate) struct ServerAddArgs {
     pub(crate) root_domain: Option<String>,
     #[arg(long)]
     pub(crate) test_domain: Option<String>,
+    #[arg(long, value_enum, default_value_t = IngressArg::Direct)]
+    pub(crate) ingress: IngressArg,
 }
 
 #[derive(Debug, Args)]
