@@ -35,8 +35,8 @@ pub struct GumgumInstaller;
 
 impl GumgumInstaller {
     pub async fn resolve_target(options: SetupOptions) -> crate::Result<SetupTarget> {
-        let local = options.host.is_none();
         let host = options.host.unwrap_or_else(|| "127.0.0.1".to_owned());
+        let local = matches!(host.as_str(), "127.0.0.1" | "localhost" | "0.0.0.0");
         let target = ssh_target(options.user.as_deref(), &host);
         let name = match options.name {
             Some(name) => name,
@@ -209,8 +209,7 @@ impl GumgumInstaller {
 
 fn remote_setup_command(setup: &SetupTarget, quiet: bool) -> String {
     format!(
-        "~/.gumgum/bin/gumgum setup {} --name {} --root-domain {} --test-domain {}{}",
-        shell_quote(&setup.host),
+        "~/.gumgum/bin/gumgum setup 127.0.0.1 --name {} --root-domain {} --test-domain {}{}",
         shell_quote(&setup.name),
         shell_quote(&setup.root_domain),
         shell_quote(&setup.test_domain),
