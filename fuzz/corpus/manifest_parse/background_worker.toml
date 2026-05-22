@@ -1,0 +1,12 @@
+[project]
+namespace = "visit-counter"
+
+[worker]
+name = "visit-counter-worker"
+build_context = "."
+health = "/healthz"
+
+[[database]]
+name = "visits"
+binding = "DATABASE_URL"
+access = "read-write"

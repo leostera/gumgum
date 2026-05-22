@@ -1,0 +1,6 @@
+route/api.visit-counter.test.example.invalid
+binding/visit-counter-api/USER_COUNTERS
+blob/visit-requests
+postgres.main
+/healthz
+bad host

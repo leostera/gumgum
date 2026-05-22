@@ -1,0 +1,3 @@
+{"capability":"queue","object_name":"visit-events","worker":"visit-counter-api","binding":"VISIT_EVENTS_QUEUE","access":"write","preview":true}
+{"capability":"bucket","name":"visit-requests","namespace":"visit-counter","root_domain":"example.invalid","preview":false}
+{"worker":"visit-counter-worker","image":"127.0.0.1:55000/example/worker:gg1","container":"gumgum-worker","route":"","port":3000,"health":"/healthz"}

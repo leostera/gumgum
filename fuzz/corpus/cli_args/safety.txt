@@ -1,0 +1,5 @@
+init --name visit-counter --root-domain example.invalid
+init --kind worker
+worker delete api
+bucket sync ./local visit-requests/prefix
+server capabilities list --host isolated --require gumgum:events,gumgum:buckets:objects

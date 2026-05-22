@@ -95,6 +95,9 @@ fn derived_routes(
     server: Option<&ServerRecord>,
     prod: bool,
 ) -> Vec<String> {
+    if manifest.ingress.is_empty() {
+        return Vec::new();
+    }
     let worker = sanitize_name(&manifest.worker.name);
     let project = manifest
         .project
@@ -347,5 +350,24 @@ mod tests {
             DeploymentDescriptor::from_manifest(Path::new("gumgum.toml"), &manifest(), None, false);
         assert_eq!(descriptor.routes, vec!["hello.local"]);
         assert_eq!(descriptor.container, "gumgum-local-experiments-hello-world");
+    }
+
+    #[test]
+    fn background_worker_without_ingress_has_no_invented_external_routes() {
+        let mut manifest = manifest();
+        manifest.ingress.clear();
+        manifest.worker.name = "queue worker".to_owned();
+        manifest.worker.port = None;
+
+        let descriptor = DeploymentDescriptor::from_manifest(
+            Path::new("worker/gumgum.toml"),
+            &manifest,
+            Some(&server()),
+            false,
+        );
+
+        assert!(descriptor.routes.is_empty());
+        assert_eq!(descriptor.health_url, None);
+        assert_eq!(descriptor.port, 3000);
     }
 }

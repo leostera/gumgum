@@ -1,0 +1,6 @@
+visit-requests/e2e/README.md
+visit-requests//double-slash
+/visit-requests/leading-slash.txt
+visit-requests/
+./README.md
+../outside.txt
