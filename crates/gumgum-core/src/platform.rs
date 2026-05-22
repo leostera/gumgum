@@ -1,7 +1,9 @@
 use crate::{ErrorCode, GumgumError, Subsystem};
 use std::{
+    future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
     path::PathBuf,
+    time::Instant,
 };
 use tokio::process::Command as TokioCommand;
 
@@ -14,10 +16,22 @@ pub struct LocalPlatform;
 
 impl LocalPlatform {
     pub async fn ensure(quiet: bool) -> crate::Result<()> {
-        ensure_network(GUMGUM_NETWORK, quiet).await?;
-        Self::ensure_registry(quiet).await?;
-        Self::ensure_dnsmasq(quiet).await?;
-        Self::ensure_caddy(quiet).await
+        platform_step(quiet, "checking Docker network gumgum-network", async {
+            ensure_network(GUMGUM_NETWORK, quiet).await
+        })
+        .await?;
+        platform_step(quiet, "checking local registry container", async {
+            Self::ensure_registry(quiet).await
+        })
+        .await?;
+        platform_step(quiet, "checking DNS forwarding container", async {
+            Self::ensure_dnsmasq(quiet).await
+        })
+        .await?;
+        platform_step(quiet, "checking HTTP gateway container", async {
+            Self::ensure_caddy(quiet).await
+        })
+        .await
     }
 
     async fn ensure_registry(quiet: bool) -> crate::Result<()> {
@@ -49,6 +63,9 @@ impl LocalPlatform {
         let upstream = upstream_dns(host_ip)
             .await
             .unwrap_or(Ipv4Addr::new(1, 1, 1, 1));
+        if !quiet {
+            eprintln!("  DNS bind address: {host_ip}; upstream: {upstream}");
+        }
         write_dnsmasq_config(upstream)?;
 
         if container_exists(DNSMASQ_CONTAINER).await? {
@@ -149,6 +166,26 @@ impl LocalPlatform {
             .await
         }
     }
+}
+
+async fn platform_step<T>(
+    quiet: bool,
+    label: impl AsRef<str>,
+    future: impl Future<Output = crate::Result<T>>,
+) -> crate::Result<T> {
+    let label = label.as_ref();
+    if !quiet {
+        eprintln!("→ {label}");
+    }
+    let started = Instant::now();
+    let result = future.await;
+    if !quiet {
+        match &result {
+            Ok(_) => eprintln!("✓ {label} ({:.1}s)", started.elapsed().as_secs_f32()),
+            Err(_) => eprintln!("✗ {label} ({:.1}s)", started.elapsed().as_secs_f32()),
+        }
+    }
+    result
 }
 
 async fn ensure_network(name: &str, quiet: bool) -> crate::Result<()> {
@@ -257,6 +294,10 @@ async fn docker<'a, I>(args: I, quiet: bool) -> crate::Result<()>
 where
     I: IntoIterator<Item = &'a str>,
 {
+    let args: Vec<&str> = args.into_iter().collect();
+    if !quiet {
+        eprintln!("  docker {}", args.join(" "));
+    }
     let mut command = TokioCommand::new("docker");
     command.args(args);
     run_command(&mut command, quiet).await
