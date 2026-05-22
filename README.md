@@ -89,7 +89,7 @@ gumgum version
 
 ## Set up a server
 
-`gumgum server add` is the main setup command. It installs/configures `gumgumd`, starts built-in providers, saves the server locally, and configures local resolver entries for the server's test domain.
+`gumgum server add` is the main setup command. It installs/configures `gumgumd`, starts built-in providers, saves the server locally, and configures local resolver entries for the server's test domain. GumGum upgrades also migrate the daemon's own internal SQLite graph database automatically before the daemon starts serving requests.
 
 ### Local server
 
@@ -698,8 +698,8 @@ gumgum server upgrade --host <host-or-name>
 Project/runtime commands:
 
 ```bash
-gumgum init [--name <name>] [--root-domain <domain>] [--namespace <namespace>] [--force]
-gumgum worker create <name> [--port <port>] [--namespace <namespace>] [--dir <path>] [--zone <domain>] [--force]
+gumgum init [--name <name>] [--domain <domain>] [--server <server>] [--force]
+gumgum worker create <name> [--port <port>] [--dir <path>] [--force]
 gumgum worker list [workspace]
 gumgum worker delete <name> [workspace]
 gumgum deploy [path] [--host <server>] [--prod] [--delete]

@@ -31,6 +31,10 @@ These remain raw strings for now because they are edge/persistence/presentation 
 - `DesiredGraphNode::{Daemon,Worker,Container,Route}` fields: legacy/presentation-style desired nodes retained for compatibility with older graph projections. New deployment execution should prefer `DesiredGraphNode::Deployment`.
 - Provider/user config values such as namespaces, root domains, access labels, DNS strings, and secret field names: these are still DTO/config/persistence values and should be typed only when they become graph-domain invariants.
 
+## Persistence and migrations
+
+The daemon persists desired graph state in GumGum's own SQLite database (`graph.sqlite`). Schema changes belong in embedded sqlx migrations under `crates/gumgum-core/migrations`; daemon startup runs those migrations before opening `GraphStore`. Avoid one-off Rust migration patches for GumGum-owned internal tables.
+
 ## Direction
 
 When adding new reconciliation behavior:

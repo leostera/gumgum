@@ -51,6 +51,10 @@ User-facing commands mutate desired state, the daemon plans graph transitions, e
   - MinIO buckets/blob storage
   - Redpanda queues/topics
   - secret provider plumbing
+- Internal state:
+  - GumGum owns an internal SQLite graph database at `graph.sqlite`.
+  - Daemon startup runs embedded sqlx migrations from `crates/gumgum-core/migrations` before opening `GraphStore`.
+  - Do not add ad-hoc Rust schema patches for GumGum-owned DB changes; add a sqlx migration.
 - Deployment flow:
   - build stable revision-tagged images
   - push via local registry tunnel when needed
