@@ -100,38 +100,48 @@ fn visit_counter_deploys_from_fixture_manifest() {
         ),
     );
 
-    let env_output = transcript.run_owned(in_fixture(
-        gumgum,
-        &fixture,
-        ["env", "--host", &server_name, "--qualified"],
-    ));
+    let env_output = transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            ["env", "--host", &server_name, "--qualified"],
+        ),
+        "env-qualified.txt",
+    );
     assert_success(&env_output);
     assert_output_contains(&env_output, "VISIT_COUNTER_API_USER_COUNTERS");
     assert_output_contains(&env_output, "VISIT_COUNTER_WORKER_DATABASE_URL");
     assert_no_shared_provider_dns(&env_output);
 
-    let events = transcript.run_owned(in_fixture(
-        gumgum,
-        &fixture,
-        [
-            "events",
-            "--host",
-            &server_name,
-            "--grouped",
-            "--limit",
-            "20",
-        ],
-    ));
+    let events = transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            [
+                "events",
+                "--host",
+                &server_name,
+                "--grouped",
+                "--limit",
+                "20",
+            ],
+        ),
+        "events-grouped.txt",
+    );
     assert_success(&events);
     assert_output_contains(&events, "operation");
 
-    let logs = transcript.run_owned(in_fixture(
-        gumgum,
-        &fixture,
-        ["logs", "--host", &server_name, "--tail", "20"],
-    ));
+    let logs = transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            ["logs", "--host", &server_name, "--tail", "20"],
+        ),
+        "logs-workspace.txt",
+    );
     assert_success(&logs);
-    assert_output_contains(&logs, "visit-counter-");
+    assert_output_contains(&logs, "visit-counter-api:");
+    assert_output_contains(&logs, "visit-counter-worker:");
 
     assert_success(&transcript.run_owned(in_fixture(
         gumgum,
@@ -157,18 +167,21 @@ fn visit_counter_deploys_from_fixture_manifest() {
             &server_name,
         ],
     )));
-    let bucket_ls = transcript.run_owned(in_fixture(
-        gumgum,
-        &fixture,
-        [
-            "bucket",
-            "ls",
-            "visit-requests",
-            "e2e/",
-            "--host",
-            &server_name,
-        ],
-    ));
+    let bucket_ls = transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            [
+                "bucket",
+                "ls",
+                "visit-requests",
+                "e2e/",
+                "--host",
+                &server_name,
+            ],
+        ),
+        "bucket-ls.txt",
+    );
     assert_success(&bucket_ls);
     assert_output_contains(&bucket_ls, "README");
 

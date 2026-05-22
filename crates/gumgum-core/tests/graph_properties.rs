@@ -290,4 +290,29 @@ proptest! {
         prop_assert!(!remove.actions.is_empty());
         prop_assert!(empty.nodes.is_empty());
     }
+
+    #[test]
+    fn conflicting_binding_ids_are_still_deterministic_and_removable(
+        worker in name_strategy("worker"),
+        binding in name_strategy("binding"),
+        left in name_strategy("left"),
+        right in name_strategy("right"),
+    ) {
+        prop_assume!(left != right);
+        let invalid = DesiredGraph::new([
+            object_node(Capability::Kv, &left),
+            object_node(Capability::Kv, &right),
+            binding_node(&worker, &binding, Capability::Kv, &left),
+            binding_node(&worker, &binding, Capability::Kv, &right),
+        ]);
+        let empty = DesiredGraph::default();
+
+        let first = GraphActionPlanner::plan_transition(&empty, &invalid);
+        let second = GraphActionPlanner::plan_transition(&empty, &invalid);
+        prop_assert_eq!(&first, &second);
+        prop_assert!(first.actions.len() >= 4);
+
+        let remove = GraphActionPlanner::plan_transition(&invalid, &empty);
+        prop_assert!(!remove.actions.is_empty());
+    }
 }

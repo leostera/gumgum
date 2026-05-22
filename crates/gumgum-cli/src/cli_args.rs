@@ -741,6 +741,80 @@ mod tests {
     }
 
     #[test]
+    fn object_delete_preview_grammar_covers_all_resource_kinds() {
+        for (kind, expected) in [
+            ("db", "visits"),
+            ("kv", "user-counters"),
+            ("bucket", "visit-requests"),
+            ("queue", "visit-events"),
+            ("secret", "stripe-api-key"),
+        ] {
+            let command = Cli::try_parse_from(["gumgum", kind, "delete", expected, "--preview"])
+                .unwrap()
+                .command;
+            match (kind, command) {
+                (
+                    "bucket",
+                    Command::Bucket(BucketArgs {
+                        command:
+                            BucketCommand::Delete(DeleteObjectArgs {
+                                name,
+                                preview: true,
+                                ..
+                            }),
+                    }),
+                ) => assert_eq!(name, expected),
+                (
+                    _,
+                    Command::Db(ObjectArgs {
+                        command:
+                            ObjectCommand::Delete(DeleteObjectArgs {
+                                name,
+                                preview: true,
+                                ..
+                            }),
+                    })
+                    | Command::Kv(ObjectArgs {
+                        command:
+                            ObjectCommand::Delete(DeleteObjectArgs {
+                                name,
+                                preview: true,
+                                ..
+                            }),
+                    })
+                    | Command::Queue(ObjectArgs {
+                        command:
+                            ObjectCommand::Delete(DeleteObjectArgs {
+                                name,
+                                preview: true,
+                                ..
+                            }),
+                    })
+                    | Command::Secret(ObjectArgs {
+                        command:
+                            ObjectCommand::Delete(DeleteObjectArgs {
+                                name,
+                                preview: true,
+                                ..
+                            }),
+                    }),
+                ) => assert_eq!(name, expected),
+                _ => panic!("unexpected parsed command for {kind}"),
+            }
+        }
+    }
+
+    #[test]
+    fn bucket_object_transfer_commands_are_bucket_only() {
+        for kind in ["db", "kv", "queue", "secret"] {
+            assert!(Cli::try_parse_from(["gumgum", kind, "ls", "objects"]).is_err());
+            assert!(Cli::try_parse_from(["gumgum", kind, "get", "objects", "key"]).is_err());
+            assert!(Cli::try_parse_from(["gumgum", kind, "cp", "a", "b"]).is_err());
+            assert!(Cli::try_parse_from(["gumgum", kind, "sync", "a", "b"]).is_err());
+        }
+    }
+
+    #[test]
     fn queue_command_grammar_covers_create_bind_delete_unbind() {
         assert!(matches!(
             Cli::try_parse_from(["gumgum", "queue", "create", "visit-events"])
