@@ -73,7 +73,7 @@ impl CloudflareClient {
         if let Some(tunnel) = result_array(&existing).and_then(|tunnels| {
             tunnels.into_iter().find_map(|value| {
                 let tunnel: Tunnel = serde_json::from_value(value).ok()?;
-                if !tunnel.deleted_at.is_some() && !tunnel.deleted.unwrap_or(false) {
+                if tunnel.deleted_at.is_none() && !tunnel.deleted.unwrap_or(false) {
                     Some(tunnel)
                 } else {
                     None
