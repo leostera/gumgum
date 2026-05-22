@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 const API_BASE: &str = "https://api.cloudflare.com/client/v4";
-const CADDY_SERVICE: &str = "http://caddy-gateway:80";
+const CADDY_SERVICE: &str = "http://gumgum-caddy:80";
 
 #[derive(Clone)]
 pub struct CloudflareClient {
