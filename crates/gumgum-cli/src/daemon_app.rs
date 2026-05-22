@@ -1450,8 +1450,15 @@ async fn daemon_deploy(
                     .await
                     {
                         Ok(mut dns_actions) => actions.append(&mut dns_actions),
-                        Err(error) => actions
-                            .push(format!("publish DNS failed: {}", error.to_report().message)),
+                        Err(error) => {
+                            let report = error.to_report();
+                            let cause = report
+                                .likely_cause
+                                .map(|cause| format!(" ({cause})"))
+                                .unwrap_or_default();
+                            actions
+                                .push(format!("publish DNS failed: {}{}", report.message, cause));
+                        }
                     }
                 }
                 Ok((_domains, None)) => actions.push(format!(
