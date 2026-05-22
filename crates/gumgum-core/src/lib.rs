@@ -5,6 +5,7 @@ pub mod daemon_health;
 pub mod deployment;
 pub mod docker_engine;
 pub mod domain;
+pub mod events;
 pub mod graph;
 pub mod graph_store;
 pub mod internal_db;
@@ -22,6 +23,7 @@ pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
 pub use deployment::DeploymentDescriptor;
 pub use docker_engine::{ContainerRunSpec, ContainerSnapshot, DockerEngine, PortBindingSpec};
 pub use domain::{DomainProvider, DomainRecord};
+pub use events::GumgumEvent;
 pub use graph::{
     BindingName, ContainerName, DesiredGraph, DesiredGraphNode, GraphActionExecutor,
     GraphActionPlanner, GraphExecutionContext, GraphExecutionStep, GraphExecutionTarget,
