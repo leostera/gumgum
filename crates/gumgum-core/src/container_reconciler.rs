@@ -101,6 +101,10 @@ impl ContainerReconciler {
                 .arg("caddy.tls=internal");
         }
         run.arg("--label")
+            .arg("gumgum.managed=deployment")
+            .arg("--label")
+            .arg(format!("gumgum.worker={}", request.worker))
+            .arg("--label")
             .arg(format!("gumgum.binding_env={binding_env_fingerprint}"));
         for (name, value) in &binding_env {
             run.arg("-e").arg(format!("{name}={value}"));
@@ -120,7 +124,49 @@ impl ContainerReconciler {
             .await?;
         }
         Self::wait_for_container_health(&request.container, request.port, &request.health).await?;
+        actions.extend(Self::remove_stale_worker_containers(request).await?);
         Ok((true, actions))
+    }
+
+    async fn remove_stale_worker_containers(request: &DeployRequest) -> crate::Result<Vec<String>> {
+        let output = TokioCommand::new("docker")
+            .arg("ps")
+            .arg("-a")
+            .arg("--filter")
+            .arg(format!("label=gumgum.worker={}", request.worker))
+            .arg("--format")
+            .arg("{{.Names}}")
+            .output()
+            .await
+            .map_err(|source| {
+                GumgumError::structured(
+                    Subsystem::Setup,
+                    ErrorCode::Io,
+                    "could not list deployment containers",
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })?;
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        let mut actions = Vec::new();
+        for container in String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|container| !container.is_empty() && *container != request.container)
+        {
+            actions.push(format!("remove stale deployment container {container}"));
+            run_command_streaming(
+                TokioCommand::new("docker")
+                    .arg("rm")
+                    .arg("-f")
+                    .arg(container),
+                true,
+            )
+            .await?;
+        }
+        Ok(actions)
     }
 
     fn binding_env(&self, worker: &str) -> crate::Result<Vec<(String, String)>> {
