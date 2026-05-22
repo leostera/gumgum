@@ -75,7 +75,7 @@ fn create_worker(
         &namespace,
         args.port,
         &args.zones,
-        workspace.root_domain(),
+        workspace.domain(),
     );
     let mut files = vec![manifest_path.display().to_string()];
     files.extend(

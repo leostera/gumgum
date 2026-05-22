@@ -75,14 +75,6 @@ impl WorkspaceManifest {
             .or(self.workspace.domain.as_deref())
     }
 
-    pub fn root_domain(&self) -> Option<&str> {
-        self.domain()
-    }
-
-    pub fn test_domain(&self) -> Option<&str> {
-        self.domain()
-    }
-
     pub fn server(&self) -> Option<&str> {
         self.namespace
             .as_ref()
@@ -97,14 +89,8 @@ impl WorkspaceManifest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Namespace {
     pub name: String,
-    #[serde(
-        default,
-        alias = "root_domain",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub test_domain: Option<String>,
+    pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,
 }
@@ -115,14 +101,8 @@ pub struct Workspace {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
-    #[serde(
-        default,
-        alias = "root_domain",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub test_domain: Option<String>,
+    pub domain: Option<String>,
     #[serde(default)]
     pub members: Vec<String>,
 }
@@ -415,12 +395,12 @@ pub fn init_plan(
     namespace: &str,
     port: u16,
     zones: &[String],
-    root_domain: Option<&str>,
+    domain: Option<&str>,
 ) -> InitPlan {
     match kind {
         InitManifestKind::Workspace => InitPlan {
             manifest_kind: kind,
-            manifest: workspace_manifest_template(name, root_domain),
+            manifest: workspace_manifest_template(name, domain),
             scaffold_files: Vec::new(),
         },
         InitManifestKind::Worker => InitPlan {
@@ -607,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_manifest_supports_namespace_metadata_and_legacy_shape() {
+    fn workspace_manifest_supports_namespace_metadata() {
         let modern = r#"[namespace]
 name = "dev.example.visit-counter"
 domain = "example.dev"
@@ -619,19 +599,8 @@ members = ["api", "worker"]
         let parsed: WorkspaceManifest = toml::from_str(modern).unwrap();
         assert_eq!(parsed.namespace_name(), "dev.example.visit-counter");
         assert_eq!(parsed.domain(), Some("example.dev"));
-        assert_eq!(parsed.test_domain(), Some("example.dev"));
         assert_eq!(parsed.server(), Some("isolated"));
         assert_eq!(parsed.members(), &["api".to_owned(), "worker".to_owned()]);
-
-        let legacy = r#"[workspace]
-name = "visit-counter"
-root_domain = "example.dev"
-members = ["api"]
-"#;
-        let parsed: WorkspaceManifest = toml::from_str(legacy).unwrap();
-        assert_eq!(parsed.namespace_name(), "visit-counter");
-        assert_eq!(parsed.root_domain(), Some("example.dev"));
-        assert_eq!(parsed.members(), &["api".to_owned()]);
     }
 
     #[test]
