@@ -397,10 +397,10 @@ Target a specific server:
 gumgum deploy --host prod
 ```
 
-Deploy in production mode:
+Deploy the release channel:
 
 ```bash
-gumgum deploy --prod
+gumgum deploy --channel release
 ```
 
 Delete desired deployment state for a worker:
@@ -432,7 +432,7 @@ Default deploy routes use the server/control-plane domain:
 # api.visit-counter.leostera.dev
 ```
 
-`deploy --prod` uses the project domain from the workspace manifest:
+`deploy --channel release` uses the project domain from the workspace manifest:
 
 ```toml
 [project]
@@ -443,7 +443,7 @@ server = "starbase2"
 
 Ingress records are relative to that route base:
 
-| `record` | Default deploy route | `deploy --prod` route |
+| `record` | Preview channel route | Release channel route |
 | --- | --- | --- |
 | omitted | `<worker>.<project>.<server-domain>` | `<worker>.<project-domain>` |
 | `"api"` | `api.<project>.<server-domain>` | `api.<project-domain>` |
@@ -770,7 +770,7 @@ gumgum init [--name <name>] [--domain <domain>] [--server <server>] [--force]
 gumgum worker create <name> [--port <port>] [--dir <path>] [--force]
 gumgum worker list [workspace]
 gumgum worker delete <name> [workspace]
-gumgum deploy [path] [--host <server>] [--prod] [--delete]
+gumgum deploy [path] [--host <server>] [--channel preview|release] [--delete]
 gumgum publish [target] [--host <server>] [--public-domain <domain>] [--tunnel <kind>]
 gumgum logs [path-or-worker] [--host <server>] [--tail <n>] [--follow]
 gumgum env [path] [--host <server>] [--project <name>] [--worker <name>] [--qualified]

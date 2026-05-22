@@ -74,14 +74,34 @@ pub(crate) enum ConfigSubcommand {
     Set { key: String, value: String },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum DeployChannel {
+    Preview,
+    Release,
+}
+
+#[allow(dead_code)]
+impl DeployChannel {
+    pub(crate) fn is_release(self) -> bool {
+        self == Self::Release
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Preview => "preview",
+            Self::Release => "release",
+        }
+    }
+}
+
 #[derive(Debug, Args)]
 pub(crate) struct DeployArgs {
     #[arg(default_value = "gumgum.toml")]
     pub(crate) path: PathBuf,
     #[arg(long)]
     pub(crate) host: Option<String>,
-    #[arg(long)]
-    pub(crate) prod: bool,
+    #[arg(long, value_enum, default_value = "preview")]
+    pub(crate) channel: DeployChannel,
     #[arg(long, help = "Delete the desired deployment for this worker")]
     pub(crate) delete: bool,
 }

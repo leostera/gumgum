@@ -91,7 +91,7 @@ pub(crate) async fn deploy(
                 },
                 server,
                 dry_run,
-                args.prod,
+                args.channel,
                 quiet,
             )
             .await?;
@@ -122,7 +122,7 @@ pub(crate) async fn deploy(
                     },
                     server.clone(),
                     dry_run,
-                    args.prod,
+                    args.channel,
                     quiet,
                 )
                 .await?;
@@ -171,7 +171,7 @@ async fn deploy_one(
     project: DeployProjectContext<'_>,
     server: Option<ServerRecord>,
     dry_run: bool,
-    prod: bool,
+    channel: crate::DeployChannel,
     quiet: bool,
 ) -> gumgum_core::Result<DeployReport> {
     let mut report = deploy_report(
@@ -181,7 +181,7 @@ async fn deploy_one(
         project.domain,
         server.as_ref(),
         dry_run,
-        prod,
+        channel,
     );
     if dry_run {
         return Ok(report);
@@ -218,7 +218,7 @@ fn deploy_report(
     project_domain: Option<&str>,
     server: Option<&ServerRecord>,
     dry_run: bool,
-    prod: bool,
+    channel: crate::DeployChannel,
 ) -> DeployReport {
     let descriptor = DeploymentDescriptor::from_manifest_in_project(
         &path,
@@ -226,7 +226,7 @@ fn deploy_report(
         project_name,
         project_domain,
         server,
-        prod,
+        channel.is_release(),
     );
     DeployReport {
         ok: true,
@@ -245,7 +245,7 @@ fn deploy_report(
         message: if dry_run {
             format!(
                 "validated worker manifest for {} deploy; no containers changed",
-                if prod { "prod" } else { "test" }
+                channel.label()
             )
         } else {
             "deployment pending".to_owned()
