@@ -4,3 +4,4 @@ autoresearch*
 .DS_Store
 
 /dist/
+.env
