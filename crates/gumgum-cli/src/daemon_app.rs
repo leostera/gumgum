@@ -936,9 +936,11 @@ async fn daemon_events(
             .ok()
             .and_then(Result::ok)
             .unwrap_or_default();
+    let typed_events = events.iter().cloned().map(Into::into).collect();
     Json(EventsReport {
         ok: true,
         message: format!("{} reconciliation event(s)", events.len()),
+        typed_events,
         events,
     })
 }

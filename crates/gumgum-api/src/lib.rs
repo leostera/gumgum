@@ -1,7 +1,7 @@
 use gumgum_core::{Capability, CloudflareGrant, DomainProvider, IngressMode};
 pub use gumgum_core::{
-    DeploymentRevision, GraphEdge, GraphExecutionStep, GraphNode, ProviderConfig, ProviderStatus,
-    ReconcileEvent, ServerRecord,
+    DeploymentRevision, GraphEdge, GraphExecutionStep, GraphNode, GumgumEvent, ProviderConfig,
+    ProviderStatus, ReconcileEvent, ServerRecord,
 };
 use serde::{Deserialize, Serialize};
 
@@ -216,6 +216,8 @@ pub struct BindingReport {
 pub struct EventsReport {
     pub ok: bool,
     pub events: Vec<ReconcileEvent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed_events: Vec<GumgumEvent>,
     pub message: String,
 }
 
