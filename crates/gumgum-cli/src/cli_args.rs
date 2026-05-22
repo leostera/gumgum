@@ -388,7 +388,7 @@ pub(crate) struct SetupArgs {
     pub(crate) name: Option<String>,
     #[arg(long)]
     pub(crate) user: Option<String>,
-    #[arg(long, alias = "root-domain")]
+    #[arg(long)]
     pub(crate) domain: Option<String>,
     #[arg(long, value_enum, default_value_t = IngressArg::Direct)]
     pub(crate) ingress: IngressArg,
@@ -458,7 +458,7 @@ pub(crate) struct ServerAddArgs {
     pub(crate) name: Option<String>,
     #[arg(long)]
     pub(crate) user: Option<String>,
-    #[arg(long, alias = "root-domain")]
+    #[arg(long)]
     pub(crate) domain: Option<String>,
     #[arg(long, value_enum, default_value_t = IngressArg::Direct)]
     pub(crate) ingress: IngressArg,

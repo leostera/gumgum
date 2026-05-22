@@ -17,6 +17,7 @@ User-facing commands mutate desired state, the daemon plans graph transitions, e
 
 - Do not run `./autoresearch.sh` unless the user explicitly asks.
 - Use conventional commit messages.
+- Pre-1.0 product changes do not need backwards compatibility; prefer removing old flags/shapes entirely.
 - Prefer direct `gumgum` / `cargo run` commands for validation so raw output is visible.
 - Human-readable CLI output/errors by default; JSON only under `--json`.
 - Keep Docker direct. Do not add a runtime abstraction without concrete need.
@@ -143,7 +144,7 @@ cargo test -p gumgum-core graph
 cargo fuzz run manifest_parse
 
 # VM E2E (must require an explicit disposable host; never default to starbase2)
-scripts/e2e-vm.sh --host <vm-host> --root-domain <domain>
+scripts/e2e-vm.sh --host <vm-host> --domain <domain>
 ```
 
 Run the Rust/Python gates after implementation changes. For documentation-only changes, `cargo fmt --check` is usually sufficient unless the user asks for more.
