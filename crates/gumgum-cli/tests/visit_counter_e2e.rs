@@ -177,6 +177,17 @@ fn visit_counter_deploys_from_fixture_manifest() {
     assert_success(&logs);
     assert_output_contains(&logs, "visit-counter-api:");
     assert_output_contains(&logs, "visit-counter-worker:");
+    let follow_logs = transcript.run_to_artifact(
+        &mut timeout_in_fixture(
+            gumgum,
+            &fixture,
+            ["logs", "-f", "--host", &server_name, "--tail", "5"],
+        ),
+        "logs-follow-workspace.txt",
+    );
+    assert_status_code(&follow_logs, 124);
+    assert_output_contains(&follow_logs, "visit-counter-api:");
+    assert_output_contains(&follow_logs, "visit-counter-worker:");
 
     assert_success(&transcript.run_owned(in_fixture(
         gumgum,
@@ -220,30 +231,48 @@ fn visit_counter_deploys_from_fixture_manifest() {
     assert_success(&bucket_ls);
     assert_output_contains(&bucket_ls, "README");
 
-    assert_success(&transcript.run_owned(in_fixture(
-        gumgum,
-        &fixture,
-        [
-            "rollback",
-            "api/gumgum.toml",
-            "--host",
-            &server_name,
-            "--worker",
-            "visit-counter-api",
-            "--preview",
-        ],
-    )));
-    assert_success(&transcript.run_owned(in_fixture(
-        gumgum,
-        &fixture,
-        [
-            "--dry-run",
-            "publish",
-            "api/gumgum.toml",
-            "--host",
-            &server_name,
-        ],
-    )));
+    let rollback = transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            [
+                "rollback",
+                "api/gumgum.toml",
+                "--host",
+                &server_name,
+                "--worker",
+                "visit-counter-api",
+                "--preview",
+            ],
+        ),
+        "rollback-api-preview.txt",
+    );
+    assert_success(&rollback);
+    let publish = transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            [
+                "--dry-run",
+                "publish",
+                "api/gumgum.toml",
+                "--host",
+                &server_name,
+            ],
+        ),
+        "publish-api-dry-run.txt",
+    );
+    assert_success(&publish);
+    let guarded_delete = transcript.run_to_artifact(
+        &mut in_fixture(
+            gumgum,
+            &fixture,
+            ["bucket", "delete", "visit-requests", "--host", &server_name],
+        ),
+        "delete-guard-bucket.txt",
+    );
+    assert_failure(&guarded_delete);
+    assert_output_contains(&guarded_delete, "object has active bindings");
     transcript.write_checksums();
 }
 
@@ -304,11 +333,40 @@ fn in_fixture<const N: usize>(gumgum: &str, fixture: &Path, args: [&str; N]) -> 
     command
 }
 
+fn timeout_in_fixture<const N: usize>(gumgum: &str, fixture: &Path, args: [&str; N]) -> Command {
+    let mut command = Command::new("timeout");
+    command
+        .current_dir(fixture)
+        .arg("12s")
+        .arg(gumgum)
+        .args(args);
+    command
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
         "command failed with status {}\nstdout:\n{}\nstderr:\n{}",
         output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_failure(output: &Output) {
+    assert!(
+        !output.status.success(),
+        "command unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_status_code(output: &Output, expected: i32) {
+    assert_eq!(
+        output.status.code(),
+        Some(expected),
+        "unexpected status\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
