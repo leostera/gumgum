@@ -1,0 +1,5 @@
+worker/api
+db/main
+binding/api/DATABASE_URL
+api.example.test
+/healthz

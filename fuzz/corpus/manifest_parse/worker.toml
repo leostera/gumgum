@@ -1,0 +1,3 @@
+name = "api"
+image = "example/api:latest"
+port = 3000

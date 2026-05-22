@@ -5,6 +5,7 @@ members = [
   "crates/gumgum-cli",
 ]
 resolver = "3"
+exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"
