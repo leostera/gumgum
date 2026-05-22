@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 const API_BASE: &str = "https://api.cloudflare.com/client/v4";
-const CADDY_SERVICE: &str = "http://gumgum-caddy:80";
+const CADDY_SERVICE: &str = "https://gumgum-caddy:443";
 
 #[derive(Clone)]
 pub struct CloudflareClient {
@@ -107,7 +107,11 @@ impl CloudflareClient {
             &serde_json::json!({
                 "config": {
                     "ingress": [
-                        { "hostname": hostname, "service": CADDY_SERVICE },
+                        {
+                            "hostname": hostname,
+                            "service": CADDY_SERVICE,
+                            "originRequest": { "noTLSVerify": true }
+                        },
                         { "service": "http_status:404" }
                     ]
                 }
