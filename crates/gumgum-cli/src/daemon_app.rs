@@ -187,6 +187,8 @@ async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<Domain
                 });
             }
             actions.push("saved Cloudflare grant on server".to_owned());
+        } else if matches!(store.load_cloudflare_grant(), Ok(Some(_))) {
+            actions.push("using existing Cloudflare grant saved on server".to_owned());
         } else {
             return Json(DomainReport {
                 ok: false,

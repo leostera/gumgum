@@ -53,19 +53,32 @@ pub(crate) async fn add_domain(
             message: "domain add plan".to_owned(),
         });
     }
-    let grant = if provider == DomainProvider::Cloudflare {
-        Some(cloudflare::authorize_zone(&args.name).await?)
-    } else {
-        None
-    };
-    let report = ServerClient::new(server.host)
+    let client = ServerClient::new(server.host);
+    let mut report = client
         .add_domain(&DomainAddRequest {
-            name: args.name,
+            name: args.name.clone(),
             provider,
             ingress,
-            cloudflare_grant: grant,
+            cloudflare_grant: None,
         })
         .await?;
+    if !report.ok
+        && provider == DomainProvider::Cloudflare
+        && report
+            .actions
+            .iter()
+            .any(|action| action == "Cloudflare grant is required")
+    {
+        let grant = cloudflare::authorize_zone(&args.name).await?;
+        report = client
+            .add_domain(&DomainAddRequest {
+                name: args.name,
+                provider,
+                ingress,
+                cloudflare_grant: Some(grant),
+            })
+            .await?;
+    }
     if !report.ok {
         return Err(gumgum_core::GumgumError::structured(
             gumgum_core::Subsystem::Config,
