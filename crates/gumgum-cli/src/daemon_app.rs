@@ -16,7 +16,7 @@ use gumgum_api::{
 use gumgum_core::{
     ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject,
     GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore, GumgumError,
-    LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph,
+    LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph, internal_db,
     not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -43,6 +43,7 @@ impl DaemonApp {
         LocalPlatform::ensure(false).await?;
         let graph_path = ConfigStore::from_home_env()?.root().join("graph.sqlite");
         eprintln!("Using graph store: {}", graph_path.display());
+        internal_db::migrate_graph_store(&graph_path).await?;
         GraphStore::new(graph_path.clone()).init()?;
         let app = self.router(DaemonState {
             graph_path: Arc::new(graph_path),

@@ -13,6 +13,7 @@ hmac.workspace = true
 percent-encoding.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
+sqlx.workspace = true
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

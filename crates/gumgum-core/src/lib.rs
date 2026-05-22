@@ -4,6 +4,7 @@ pub mod daemon_health;
 pub mod deployment;
 pub mod graph;
 pub mod graph_store;
+pub mod internal_db;
 pub mod manifest;
 pub mod platform;
 pub mod process;
