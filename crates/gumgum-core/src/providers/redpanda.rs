@@ -1,9 +1,6 @@
-use crate::{Capability, sanitize_name};
-use tokio::process::Command as TokioCommand;
+use crate::{Capability, DockerEngine, sanitize_name};
 
-use super::docker::{
-    create_provider_container, ensure_network, inspect, run_provider_command, start_existing,
-};
+use super::docker::{create_provider_container, ensure_network, inspect, start_existing};
 use super::types::{ObjectProviderPlan, ProviderSpec};
 
 pub fn spec() -> ProviderSpec {
@@ -83,32 +80,36 @@ pub(crate) async fn ensure_provider(provider: &ProviderSpec) -> crate::Result<Ve
 }
 
 async fn ensure_topic(topic: &str) -> crate::Result<()> {
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("exec")
-            .arg("gumgum-provider-redpanda-main")
-            .arg("rpk")
-            .arg("topic")
-            .arg("create")
-            .arg(topic)
-            .arg("--if-not-exists"),
-        "could not ensure redpanda topic",
-    )
-    .await
+    DockerEngine::local()?
+        .exec_success(
+            "gumgum-provider-redpanda-main",
+            Vec::new(),
+            vec![
+                "rpk".to_owned(),
+                "topic".to_owned(),
+                "create".to_owned(),
+                topic.to_owned(),
+                "--if-not-exists".to_owned(),
+            ],
+        )
+        .await
+        .map(|_| ())
 }
 
 async fn delete_topic(topic: &str) -> crate::Result<()> {
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("exec")
-            .arg("gumgum-provider-redpanda-main")
-            .arg("rpk")
-            .arg("topic")
-            .arg("delete")
-            .arg(topic),
-        "could not delete redpanda topic",
-    )
-    .await
+    DockerEngine::local()?
+        .exec_success(
+            "gumgum-provider-redpanda-main",
+            Vec::new(),
+            vec![
+                "rpk".to_owned(),
+                "topic".to_owned(),
+                "delete".to_owned(),
+                topic.to_owned(),
+            ],
+        )
+        .await
+        .map(|_| ())
 }
 
 #[cfg(test)]
