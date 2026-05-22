@@ -1,0 +1,22 @@
+[project]
+name = "visit-counter-worker"
+version = "0.1.0"
+description = "GumGum visit-counter queue worker"
+requires-python = ">=3.12"
+dependencies = [
+  "boto3>=1.35.0",
+  "confluent-kafka>=2.6.0",
+  "psycopg[binary]>=3.2.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[project.scripts]
+visit-counter-worker = "visit_counter_worker.worker:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

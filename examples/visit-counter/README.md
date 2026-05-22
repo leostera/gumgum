@@ -1,6 +1,8 @@
 # Visit Counter GumGum Example
 
-This is the canonical end-to-end GumGum fixture. It is intentionally small, but it exercises the platform shape:
+This directory is a user-facing copy of the visit-counter app. The maintained E2E fixture lives at `tests/fixtures/visit-counter`; keep changes in sync there when changing app behavior.
+
+The app is intentionally small, but it exercises the platform shape:
 
 - API worker receives visits.
 - KV stores per-visitor counters.
