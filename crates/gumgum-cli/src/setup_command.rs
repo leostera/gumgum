@@ -37,11 +37,6 @@ pub(crate) async fn install_gumgumd(
             "installing local binary into ~/.gumgum/bin and daemon service into ~/.gumgum/daemon",
         );
         GumgumInstaller::install_local_user_service(quiet).await?;
-        progress(
-            quiet,
-            format!("configuring host DNS for *.{}", setup.test_domain),
-        );
-        GumgumInstaller::configure_host_dns(&setup.test_domain, quiet).await?;
     } else {
         let target = setup.ssh_target();
         progress(quiet, format!("running remote bootstrap on {target}"));
@@ -57,16 +52,6 @@ pub(crate) async fn install_gumgumd(
         test_domain: setup.test_domain.clone(),
         health_url: health_url.clone(),
     })?;
-    if !setup.local {
-        progress(
-            quiet,
-            format!(
-                "configuring local resolver for {} -> {}",
-                setup.test_domain, setup.host
-            ),
-        );
-        GumgumInstaller::configure_client_resolver(&setup.test_domain, &setup.host, quiet).await?;
-    }
     Ok(SetupReport {
         ok: true,
         name: setup.name,

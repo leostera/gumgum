@@ -1,7 +1,4 @@
-use crate::{
-    ErrorCode, GumgumError, Subsystem, derive_test_domain, run_setup_command_streaming,
-    sanitize_name,
-};
+use crate::{ErrorCode, GumgumError, Subsystem, run_setup_command_streaming, sanitize_name};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 use tokio::process::Command as TokioCommand;
@@ -46,9 +43,7 @@ impl GumgumInstaller {
                 .unwrap_or_else(|_| sanitize_name(&host)),
         };
         let root_domain = options.root_domain.unwrap_or_else(|| format!("{name}.dev"));
-        let test_domain = options
-            .test_domain
-            .unwrap_or_else(|| derive_test_domain(&root_domain));
+        let test_domain = options.test_domain.unwrap_or_default();
         Ok(SetupTarget {
             name,
             host,
@@ -208,11 +203,16 @@ impl GumgumInstaller {
 }
 
 fn remote_setup_command(setup: &SetupTarget, quiet: bool) -> String {
+    let test_domain = if setup.test_domain.is_empty() {
+        String::new()
+    } else {
+        format!(" --test-domain {}", shell_quote(&setup.test_domain))
+    };
     format!(
-        "~/.gumgum/bin/gumgum setup 127.0.0.1 --name {} --root-domain {} --test-domain {}{}",
+        "~/.gumgum/bin/gumgum setup 127.0.0.1 --name {} --root-domain {}{}{}",
         shell_quote(&setup.name),
         shell_quote(&setup.root_domain),
-        shell_quote(&setup.test_domain),
+        test_domain,
         if quiet { " --json" } else { "" }
     )
 }

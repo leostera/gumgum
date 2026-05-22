@@ -184,7 +184,7 @@ async fn add_server(
             ok: true,
             dry_run: true,
             action: "add".to_owned(),
-            message: "server add setup preview; no install, config, providers, or resolver changed"
+            message: "server add setup preview; no install, config, or providers changed"
                 .to_owned(),
             server: Some(server),
             actions,
@@ -197,11 +197,6 @@ async fn add_server(
             "installing local binary into ~/.gumgum/bin and daemon service into ~/.gumgum/daemon",
         );
         GumgumInstaller::install_local_user_service(quiet).await?;
-        progress(
-            quiet,
-            format!("configuring host DNS for *.{}", setup.test_domain),
-        );
-        GumgumInstaller::configure_host_dns(&setup.test_domain, quiet).await?;
     } else {
         let target = setup.ssh_target();
         progress(quiet, format!("running remote bootstrap on {target}"));
@@ -210,16 +205,6 @@ async fn add_server(
     progress(quiet, "checking gumgumd health");
     DaemonHealthClient::wait_for_ping(&setup.host).await?;
     ConfigStore::from_home_env()?.save_server(server.clone())?;
-    if !setup.local {
-        progress(
-            quiet,
-            format!(
-                "configuring local resolver for {} -> {}",
-                setup.test_domain, setup.host
-            ),
-        );
-        GumgumInstaller::configure_client_resolver(&setup.test_domain, &setup.host, quiet).await?;
-    }
     progress(quiet, "initializing built-in providers");
     let provider_report = ServerClient::new(setup.host.clone())
         .boot_default_providers()
@@ -268,17 +253,11 @@ fn reject_accidental_domain_replacement(setup: &SetupTarget) -> gumgum_core::Res
 fn server_add_actions(setup: &SetupTarget, dry_run: bool) -> Vec<String> {
     let mut actions = Vec::new();
     if dry_run {
-        actions.push("preview only; no install, config, providers, or resolver changes".to_owned());
+        actions.push("preview only; no install, config, or provider changes".to_owned());
     }
     actions.extend(setup_actions(setup.local));
     actions.push(format!("save server {} ({})", setup.name, setup.host));
     actions.push("initialize built-in db/kv/queue/bucket/secret providers".to_owned());
-    if !setup.test_domain.is_empty() {
-        actions.push(format!(
-            "configure local resolver for *.{} -> {}",
-            setup.test_domain, setup.host
-        ));
-    }
     actions
 }
 

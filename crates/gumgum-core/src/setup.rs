@@ -17,7 +17,6 @@ pub fn setup_actions(local: bool) -> Vec<String> {
         "run ~/.gumgum/bin/gumgum setup on the host".to_owned(),
         "exit ssh".to_owned(),
         "save server locally".to_owned(),
-        "configure local resolver for test domain".to_owned(),
         "check http://<host>:7777/healthz".to_owned(),
     ]
 }

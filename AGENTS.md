@@ -60,7 +60,7 @@ User-facing commands mutate desired state, the daemon plans graph transitions, e
   - push via local registry tunnel when needed
   - replace only gumgum-managed containers
   - inject binding env/secrets
-  - configure `.test` Caddy routes
+  - configure explicit Caddy routes
   - health check containers over attached Docker networks
 - Observability/control-plane UX:
   - `gumgum status`

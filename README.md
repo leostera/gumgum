@@ -89,7 +89,7 @@ gumgum version
 
 ## Set up a server
 
-`gumgum server add` is the main setup command. It installs/configures `gumgumd`, starts built-in providers, saves the server locally, and configures local resolver entries for the server's test domain. GumGum upgrades also migrate the daemon's own internal SQLite graph database automatically before the daemon starts serving requests.
+`gumgum server add` is the main setup command. It installs/configures `gumgumd`, starts built-in providers, and saves the server locally. GumGum upgrades also migrate the daemon's own internal SQLite graph database automatically before the daemon starts serving requests.
 
 ### Local server
 
@@ -99,16 +99,7 @@ Use this when you want to run apps on your own machine:
 gumgum server add 0.0.0.0 --name local --root-domain example.dev
 ```
 
-This configures a local gumgum server named `local`. gumgum derives a test domain from the root domain, for example `example.test` from `example.dev`.
-
-You can choose an explicit test domain:
-
-```bash
-gumgum server add 0.0.0.0 \
-  --name local \
-  --root-domain example.dev \
-  --test-domain example.test
-```
+This configures a local gumgum server named `local`. GumGum does not install local DNS resolver entries; use real DNS, `/etc/hosts`, or `curl --resolve` for local testing.
 
 ### Remote server
 
