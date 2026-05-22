@@ -47,7 +47,7 @@ HEALTH_PORT = int(os.environ.get("PORT", "3000"))
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
-        if self.path == "/healthz":
+        if self.path in {"/healthz", "/_/live", "/_/ready"}:
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"ok\n")

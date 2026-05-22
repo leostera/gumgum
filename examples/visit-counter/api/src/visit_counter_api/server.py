@@ -209,6 +209,8 @@ def record_visit(
 
 
 @app.get("/healthz", response_class=PlainTextResponse)
+@app.get("/_/live", response_class=PlainTextResponse)
+@app.get("/_/ready", response_class=PlainTextResponse)
 def healthz() -> str:
     return "ok\n"
 
