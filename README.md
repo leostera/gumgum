@@ -44,8 +44,9 @@ gumgum is a self-hosted app platform for your VPS or local machine. It gives sma
 
 ## Core concepts
 
-- **Server**: the machine that runs `gumgumd`, Docker workloads, the gateway, and built-in providers. A server owns the root/test domains used by apps hosted there.
-- **Project**: one app/worker with a `gumgum.toml` manifest.
+- **Server**: the machine that runs `gumgumd`, Docker workloads, the gateway, and built-in providers. A server can have a public control-plane domain used for default routes.
+- **Domain**: a DNS zone or delegated domain GumGum may use for routes. Domains can be manual or Cloudflare-managed.
+- **Project**: one app/workspace with a production domain in `gumgum.toml`.
 - **Workspace**: a directory containing multiple worker projects.
 - **Resource**: a backing service object such as a database, KV namespace, bucket, queue, or secret.
 - **Binding**: an environment projection from a resource into a worker, for example `DATABASE_URL` or `UPLOADS_BUCKET`.
@@ -56,7 +57,7 @@ gumgum is a self-hosted app platform for your VPS or local machine. It gives sma
 gumgum can manage:
 
 - app/worker deployment to Docker
-- local `.test` routes through the gumgum gateway
+- explicit HTTP routes through the gumgum gateway
 - Postgres databases
 - Redis KV namespaces
 - MinIO/S3 buckets and bucket objects
@@ -232,7 +233,11 @@ Required Cloudflare token permissions:
 | Zone | Zone: Read | Every domain GumGum should manage |
 | Account | Cloudflare Tunnel: Edit | Account used for Cloudflare Tunnel ingress |
 
-If `Cloudflare Tunnel: Edit` is not available in your dashboard, use `Account / Zero Trust: Edit` as the broader fallback. You do not need Zone Access permissions unless you are separately creating Cloudflare Access apps/policies. When adding another Cloudflare-managed domain, update or recreate the token to include the new domain. As setup sugar, `gumgum server add ... --domain leostera.dev --ingress cloudflare` installs the server and then adds that domain with Cloudflare ingress.
+If `Cloudflare Tunnel: Edit` is not available in your dashboard, use `Account / Zero Trust: Edit` as the broader fallback. You do not need Zone Access permissions unless you are separately creating Cloudflare Access apps/policies. Scoping the token to all zones is convenient when one GumGum server will host multiple domains; for stricter isolation, scope it only to domains GumGum should manage and update/recreate it before adding another domain.
+
+As setup sugar, `gumgum server add ... --domain leostera.dev --ingress cloudflare` installs the server and then adds that domain with Cloudflare ingress.
+
+When a deployed worker has `public = true`, GumGum converges public ingress for its derived route. For a Cloudflare-managed domain with Cloudflare ingress, deploy ensures a proxied CNAME to the GumGum Cloudflare Tunnel and adds a tunnel rule to the server gateway.
 
 ## Manage resources
 
@@ -408,6 +413,51 @@ Preview deploy behavior without mutating state:
 
 ```bash
 gumgum --dry-run deploy
+```
+
+Ingress routes are declared in worker manifests:
+
+```toml
+[[ingress]]
+name = "http"
+protocol = "http"
+port = 3000
+public = true
+```
+
+Default deploy routes use the server/control-plane domain:
+
+```text
+<worker>.<project>.<server-domain>
+# api.visit-counter.leostera.dev
+```
+
+`deploy --prod` uses the project domain from the workspace manifest:
+
+```toml
+[project]
+name = "visit-counter"
+domain = "visit-counter.leostera.dev"
+server = "starbase2"
+```
+
+Ingress records are relative to that route base:
+
+| `record` | Default deploy route | `deploy --prod` route |
+| --- | --- | --- |
+| omitted | `<worker>.<project>.<server-domain>` | `<worker>.<project-domain>` |
+| `"api"` | `api.<project>.<server-domain>` | `api.<project-domain>` |
+| `"@"` | `<project>.<server-domain>` | `<project-domain>` |
+
+For example, to publish the project apex instead of `api.<project-domain>`:
+
+```toml
+[[ingress]]
+name = "http"
+protocol = "http"
+port = 3000
+public = true
+record = "@"
 ```
 
 ## Logs, environment, status, and events
@@ -699,7 +749,7 @@ Server commands:
 ```bash
 gumgum server
 gumgum server list
-gumgum server add <host> [--name <name>] [--user <user>] [--domain <domain>]
+gumgum server add <host> [--name <name>] [--user <user>] [--domain <domain>] [--ingress direct|cloudflare]
 gumgum server rm <host-or-name>
 gumgum server ping --host <host-or-name>
 gumgum server capabilities list --host <host-or-name> [--require <capability,...>]
