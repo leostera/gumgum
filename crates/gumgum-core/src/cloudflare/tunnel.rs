@@ -4,10 +4,10 @@ use crate::{ErrorCode, GumgumError, Result, Subsystem, process::run_setup_comman
 
 const CLOUDFLARED_CONTAINER: &str = "gumgum-cloudflared";
 const CLOUDFLARED_IMAGE: &str = "cloudflare/cloudflared:latest";
-const GUMGUM_NETWORK: &str = "gumgum-network";
+const CADDY_NETWORK: &str = "caddy-network";
 
 pub async fn ensure_cloudflared(token: &str) -> Result<Vec<String>> {
-    if cloudflared_running().await? {
+    if cloudflared_running_on_caddy_network().await? {
         return Ok(vec![format!(
             "ensure Cloudflare connector container {CLOUDFLARED_CONTAINER}"
         )]);
@@ -29,7 +29,7 @@ pub async fn ensure_cloudflared(token: &str) -> Result<Vec<String>> {
             .arg("--restart")
             .arg("unless-stopped")
             .arg("--network")
-            .arg(GUMGUM_NETWORK)
+            .arg(CADDY_NETWORK)
             .arg("-e")
             .arg(format!("TUNNEL_TOKEN={token}"))
             .arg(CLOUDFLARED_IMAGE)
@@ -44,11 +44,13 @@ pub async fn ensure_cloudflared(token: &str) -> Result<Vec<String>> {
     )])
 }
 
-async fn cloudflared_running() -> Result<bool> {
+async fn cloudflared_running_on_caddy_network() -> Result<bool> {
     let output = TokioCommand::new("docker")
         .arg("inspect")
         .arg("-f")
-        .arg("{{.State.Running}}")
+        .arg(format!(
+            "{{{{.State.Running}}}} {{{{if index .NetworkSettings.Networks \"{CADDY_NETWORK}\"}}}}{CADDY_NETWORK}{{{{end}}}}"
+        ))
         .arg(CLOUDFLARED_CONTAINER)
         .output()
         .await
@@ -64,5 +66,5 @@ async fn cloudflared_running() -> Result<bool> {
     if !output.status.success() {
         return Ok(false);
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == format!("true {CADDY_NETWORK}"))
 }
