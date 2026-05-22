@@ -88,7 +88,7 @@ fn publish_output(args: PublishArgs, server: &ServerRecord) -> gumgum_core::Resu
             let workspace = load_workspace_path(&path)?;
             let root = path.parent().unwrap_or_else(|| std::path::Path::new("."));
             let mut workers = Vec::new();
-            for member in &workspace.workspace.members {
+            for member in workspace.members() {
                 let member_path = root.join(member).join("gumgum.toml");
                 let manifest = load_worker_path(&member_path)?;
                 workers.push(publish_report(
@@ -102,7 +102,7 @@ fn publish_output(args: PublishArgs, server: &ServerRecord) -> gumgum_core::Resu
             Ok(PublishOutput::Workspace(WorkspacePublishReport {
                 ok: true,
                 dry_run: true,
-                workspace: workspace.workspace.name,
+                workspace: workspace.namespace_name().to_owned(),
                 workers,
                 message: "workspace publish dry-run; no public routes changed".to_owned(),
             }))

@@ -68,15 +68,14 @@ fn create_worker(
     let namespace = args
         .namespace
         .clone()
-        .or_else(|| workspace.workspace.namespace.clone())
-        .unwrap_or_else(|| workspace.workspace.name.clone());
+        .unwrap_or_else(|| workspace.namespace_name().to_owned());
     let plan = init_plan(
         InitManifestKind::Worker,
         &args.name,
         &namespace,
         args.port,
         &args.zones,
-        workspace.workspace.root_domain.as_deref(),
+        workspace.root_domain(),
     );
     let mut files = vec![manifest_path.display().to_string()];
     files.extend(
@@ -306,6 +305,9 @@ fn write_scaffold_files(worker_dir: &Path, files: &[ScaffoldFile]) -> gumgum_cor
 
 fn print_worker_report(report: &WorkerCommandReport) {
     println!("{}", report.message);
+    if !report.workers.is_empty() {
+        println!("{:<24} {:<8} PATH", "WORKER", "PORT");
+    }
     for worker in &report.workers {
         println!(
             "{:<24} {:<8} {}",

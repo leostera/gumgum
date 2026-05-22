@@ -1,6 +1,3 @@
-[project]
-namespace = "visit-counter"
-
 [worker]
 name = "visit-counter-api"
 image = "./Dockerfile"

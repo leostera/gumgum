@@ -55,8 +55,9 @@ impl<'a> DeployExecutor<'a> {
     pub(crate) async fn ensure_manifest_bindings(
         &self,
         manifest: &WorkerManifest,
+        namespace: Option<&str>,
     ) -> gumgum_core::Result<()> {
-        for intent in manifest_binding_intents(manifest, self.server) {
+        for intent in manifest_binding_intents(manifest, self.server, namespace) {
             progress(
                 self.quiet,
                 format!("ensuring {}/{}", intent.capability, intent.object_name),
@@ -77,11 +78,16 @@ impl<'a> DeployExecutor<'a> {
 fn manifest_binding_intents(
     manifest: &WorkerManifest,
     server: &ServerRecord,
+    namespace: Option<&str>,
 ) -> Vec<ManifestBindingIntent> {
-    let namespace = manifest
-        .project
-        .as_ref()
-        .map(|project| project.namespace.clone())
+    let namespace = namespace
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            manifest
+                .project
+                .as_ref()
+                .map(|project| project.namespace.clone())
+        })
         .unwrap_or_else(|| "root".to_owned());
     let mut intents = Vec::new();
     extend_binding_intents(
@@ -195,7 +201,7 @@ mod tests {
             limits: None,
         };
 
-        let intents = manifest_binding_intents(&manifest, &server());
+        let intents = manifest_binding_intents(&manifest, &server(), None);
         assert_eq!(intents.len(), 4);
         assert_eq!(
             intents
@@ -253,8 +259,8 @@ mod tests {
             limits: None,
         };
 
-        let intents = manifest_binding_intents(&manifest, &server());
-        assert_eq!(intents[0].namespace, "root");
+        let intents = manifest_binding_intents(&manifest, &server(), Some("workspace-ns"));
+        assert_eq!(intents[0].namespace, "workspace-ns");
         assert_eq!(intents[0].access, "read-write");
         assert!(intents[0].binding_request().is_none());
         assert_eq!(intents[0].object_request().name, "cache");

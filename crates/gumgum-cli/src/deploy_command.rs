@@ -81,9 +81,14 @@ pub(crate) async fn deploy(
                     .await?;
                 return Ok(DeployOutput::Delete(report));
             }
+            let namespace = manifest
+                .project
+                .as_ref()
+                .map(|project| project.namespace.as_str());
             let report = deploy_one(
                 args.path.clone(),
                 &manifest,
+                namespace,
                 server,
                 dry_run,
                 args.prod,
@@ -99,13 +104,14 @@ pub(crate) async fn deploy(
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."));
             let mut workers = Vec::new();
-            let mut plan = vec![format!("workspace {}", workspace.workspace.name)];
-            for member in &workspace.workspace.members {
+            let mut plan = vec![format!("namespace {}", workspace.namespace_name())];
+            for member in workspace.members() {
                 let member_path = root.join(member).join("gumgum.toml");
                 let manifest = load_worker_path(&member_path)?;
                 let report = deploy_one(
                     member_path,
                     &manifest,
+                    Some(workspace.namespace_name()),
                     server.clone(),
                     dry_run,
                     args.prod,
@@ -124,7 +130,7 @@ pub(crate) async fn deploy(
                 ok: true,
                 dry_run,
                 path: args.path.display().to_string(),
-                workspace: workspace.workspace.name,
+                workspace: workspace.namespace_name().to_owned(),
                 workers,
                 plan,
                 message: if dry_run {
@@ -141,6 +147,7 @@ pub(crate) async fn deploy(
 async fn deploy_one(
     path: PathBuf,
     manifest: &WorkerManifest,
+    namespace: Option<&str>,
     server: Option<ServerRecord>,
     dry_run: bool,
     prod: bool,
@@ -160,7 +167,7 @@ async fn deploy_one(
         .build()
     })?;
     DeployExecutor::new(&server, quiet)
-        .ensure_manifest_bindings(manifest)
+        .ensure_manifest_bindings(manifest, namespace)
         .await?;
     run_remote_deploy(&server, manifest, &report, quiet).await?;
     report.ok = true;

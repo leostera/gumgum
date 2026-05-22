@@ -84,14 +84,14 @@ fn env_targets(
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."));
             let mut targets = Vec::new();
-            for member in &workspace.workspace.members {
+            for member in workspace.members() {
                 let member_path = root.join(member).join("gumgum.toml");
                 let manifest = load_worker_path(&member_path)?;
                 targets.push(EnvTarget {
                     project: manifest
                         .project
                         .map(|project| project.namespace)
-                        .unwrap_or_else(|| "root".to_owned()),
+                        .unwrap_or_else(|| workspace.namespace_name().to_owned()),
                     worker: manifest.worker.name,
                 });
             }

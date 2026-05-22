@@ -63,7 +63,7 @@ fn resolve_graph_target_arg_from_path(
                 let root = manifest_path
                     .parent()
                     .unwrap_or_else(|| std::path::Path::new("."));
-                for member in &workspace.workspace.members {
+                for member in workspace.members() {
                     let member_path = root.join(member).join("gumgum.toml");
                     let manifest = load_worker_path(&member_path)?;
                     if target == member || target == manifest.worker.name {

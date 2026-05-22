@@ -66,7 +66,7 @@ async fn info_report(args: InfoArgs) -> gumgum_core::Result<InfoOutput> {
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."));
             let mut workers = Vec::new();
-            for member in &workspace.workspace.members {
+            for member in workspace.members() {
                 let member_path = root.join(member).join("gumgum.toml");
                 let worker = load_worker_path(&member_path)?.worker.name;
                 if args
@@ -79,7 +79,7 @@ async fn info_report(args: InfoArgs) -> gumgum_core::Result<InfoOutput> {
             }
             Ok(InfoOutput::Workspace(WorkspaceInfoReport {
                 ok: true,
-                workspace: workspace.workspace.name,
+                workspace: workspace.namespace_name().to_owned(),
                 workers,
                 message: "current workspace info".to_owned(),
             }))

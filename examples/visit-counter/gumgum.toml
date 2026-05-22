@@ -1,6 +1,7 @@
-[workspace]
+[namespace]
 name = "visit-counter"
-namespace = "root"
 root_domain = "leostera.dev"
 test_domain = "leostera.test"
+
+[workspace]
 members = ["api", "worker"]
