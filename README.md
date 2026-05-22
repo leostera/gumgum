@@ -1,104 +1,172 @@
-# GumGum.dev
+# gumgum
 
-GumGum is a local-first PaaS/control-plane experiment for running small apps on a single host with typed desired-state graph convergence.
+gumgum is a self-hosted app platform for your VPS or local machine. It gives small projects a Cloudflare-like workflow without handing the runtime to a hosted control plane: deploy workers, attach databases and queues, inspect logs/events, and publish routes from one CLI.
 
-The current implementation centers on this flow:
+## Why gumgum?
 
-```rust
-let plan = GraphActionPlanner::plan_transition(&old_graph, &new_graph);
-let actions = GraphActionExecutor::execute_steps(&plan.steps, context).await?;
-```
+- **One server, one simple platform.** Turn a Linux host or your local computer into a small PaaS.
+- **Batteries included.** gumgum brings the core backing services most apps need: Postgres, Redis, MinIO/S3 buckets, Redpanda queues, and secrets.
+- **Project-first workflow.** Create resources, bind them to workers, deploy, view logs, and inspect events from the project directory.
+- **Local-first control.** The daemon runs on your server and converges desired state there; your CLI sends intent, not manual Docker choreography.
+- **Human CLI by default.** Commands print readable output unless you ask for `--json`.
 
-User-facing commands mutate desired state, the daemon plans the graph transition, executes provider/runtime changes, and records durable events with grouped event views. There is intentionally no normal user-facing `gumgum reconcile`; convergence is automatic.
+## What gumgum manages
 
-## What exists now
+gumgum can manage:
 
-- Rust workspace:
-  - `crates/gumgum-core` — graph model, provider reconciliation, deployment state, container reconciliation, config store.
-  - `crates/gumgum-api` — daemon HTTP API and reports.
-  - `crates/gumgum-cli` — CLI, server setup/upgrade/client commands, deploy/log/status/publish/rollback/object commands.
-- Provider-backed object lifecycle for:
-  - Postgres DBs
-  - Redis KV namespaces
-  - MinIO buckets/blob storage
-  - Redpanda queues/topics
-- Deployment flow for local/remote Docker hosts:
-  - build stable revision-tagged images
-  - push via local registry tunnel when needed
-  - replace only GumGum-managed containers
-  - inject binding env/secrets
-  - configure `.test` Caddy routes
-  - health check containers over attached Docker networks
-- Durable observability/control-plane UX:
-  - `gumgum status`
-  - `gumgum events`
-  - `gumgum events --grouped`
-  - `gumgum logs`
-  - rollback revision listing/preview/apply safety
-  - metadata-only rollback revision pruning
-  - publish dry-run with explicit public-route planning
-  - bucket object commands (`ls`, `get`, `rm`, `cp`, `sync`) through MinIO-backed daemon APIs
+- app/worker deployment to Docker
+- `.test` local routes through the gumgum gateway
+- Postgres databases
+- Redis KV namespaces
+- MinIO/S3 buckets and bucket objects
+- Redpanda queues/topics
+- worker environment bindings
+- logs, events, grouped event summaries, rollback metadata, and publish previews
 
-## Canonical fixture
+## Install
 
-`examples/visit-counter` is the canonical end-to-end fixture. It exercises DB/KV/blob/queue objects, bindings, image build/push/deploy, local DNS/gateway, logs, events/grouped events, health, rollback safety, cleanup safety, and publish dry-run.
-
-Current known starbase2 state is summarized in `examples/visit-counter/README.md`.
-
-## Current starbase2 snapshot
-
-As of the CLI UX cleanup pass:
-
-- host: `starbase2` / `192.168.0.3`
-- configured server record points at `192.168.0.3`
-- direct checks currently show the remote daemon as older `dc996d4`; intentionally upgrade/install the current local daemon before relying on newer event/bucket/revision-delete APIs
-- after upgrade, this is the required capability gate:
+Build the CLI from this repository for now:
 
 ```bash
-gumgum server capabilities list --host starbase2 \
-  --require gumgum:events,gumgum:rollback:revision_id,gumgum:rollback:revision_delete,gumgum:objects:create_preview,gumgum:bindings:create_preview,gumgum:bindings:delete,gumgum:objects:delete,gumgum:deployments:delete,gumgum:buckets:objects
+git clone https://github.com/leostera/gumgum.git
+cd gumgum
+cargo build --release
+install -m 0755 target/release/gumgum ~/.local/bin/gumgum
 ```
 
-- repeat visit-counter deployment was intentionally left running for observation during hardening
-- before any further starbase2 mutation, re-check daemon version/capabilities and status
-- do not prune unrelated desired objects/secrets without explicit owner approval
-- do not apply rollback unless clean historical revisions have intentionally been created
+Make sure `~/.local/bin` is on your `PATH`.
 
-## Common commands
+## Set up a server
+
+A gumgum server is the host that owns your app runtime and root domain. `server add` installs/configures `gumgumd`, starts the built-in providers, saves the server locally, and configures local resolver entries for the server's test domain.
+
+### Local machine
 
 ```bash
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-
-cd examples/visit-counter
-uv run --directory api pytest
-uv run --directory worker pytest
-
-gumgum status --host starbase2
-gumgum events --host starbase2 --limit 20
-gumgum events --host starbase2 --grouped --limit 10
-gumgum logs api --host starbase2 --tail 60
-gumgum logs worker --host starbase2 --tail 60
-curl -k --resolve api.visit-counter.leostera.test:443:192.168.0.3 \
-  https://api.visit-counter.leostera.test/
+gumgum server add 0.0.0.0 --name local --root-domain example.dev
 ```
 
-Do not run setup/upgrade/object apply/deploy/cleanup/rollback apply/publish apply/server add against starbase2 unless that mutation is explicitly intended.
+### Remote host
 
-## Documentation map
+```bash
+gumgum server add 203.0.113.10 --name prod --root-domain example.com
+```
 
-- `docs/README.md` — older planning/research pack and RFD map.
-- `crates/gumgum-core/src/graph/README.md` — canonical graph/domain model direction.
-- `examples/visit-counter/README.md` — fixture usage, starbase2 status, safe smoke modes, and validation notes.
-- `scripts/smoke-visit-counter-starbase2.sh` — staged safety harness retained for intentional evidence gathering; direct `gumgum` commands are currently preferred for day-to-day validation.
+Use `--user` if SSH needs an explicit user:
 
-## Development rules
+```bash
+gumgum server add 203.0.113.10 --user root --name prod --root-domain example.com
+```
 
-- Prefer typed graph/domain values and `impl` methods over stringly helpers.
-- Keep provider details in provider-specific modules.
-- Keep Docker direct; do not add a runtime abstraction without a concrete need.
-- Use graph planning/execution for desired-state transitions.
-- Keep dry-run/preview paths non-mutating and capability-gated when talking to remote daemons.
-- Use conventional commit messages.
-- Do not run `./autoresearch.sh` unless explicitly requested.
+Inspect configured servers:
+
+```bash
+gumgum server list
+gumgum server ping --host prod
+gumgum server capabilities list --host prod
+```
+
+Remove a server from your local list:
+
+```bash
+gumgum server rm prod
+```
+
+## Create a project
+
+Initialize a worker or workspace:
+
+```bash
+gumgum init --name api --kind worker
+```
+
+Create backing resources:
+
+```bash
+gumgum db create app-db
+gumgum kv create app-cache
+gumgum bucket create uploads
+gumgum queue create jobs
+```
+
+Bind resources to a worker:
+
+```bash
+gumgum db bind app-db --to api --as DATABASE_URL
+gumgum kv bind app-cache --to api --as CACHE
+gumgum bucket bind uploads --to api --as UPLOADS_BUCKET
+gumgum queue bind jobs --to api --as JOBS_QUEUE
+```
+
+Deploy:
+
+```bash
+gumgum deploy
+```
+
+## Day-to-day commands
+
+```bash
+gumgum status
+gumgum logs
+gumgum env
+gumgum events
+gumgum events --grouped
+gumgum graph
+gumgum graph affected worker/api
+```
+
+List resources:
+
+```bash
+gumgum db list
+gumgum kv list
+gumgum bucket list
+gumgum queue list
+gumgum secret list
+```
+
+Work with bucket objects:
+
+```bash
+gumgum bucket ls uploads
+gumgum bucket get uploads path/to/file.json
+gumgum bucket cp ./local.json uploads/local.json
+gumgum bucket cp uploads/local.json ./local-copy.json
+gumgum bucket cp uploads/local.json uploads/archive/local.json
+gumgum bucket rm uploads archive/local.json
+```
+
+Preview public publishing before changing public route state:
+
+```bash
+gumgum --dry-run publish
+```
+
+## Configuration
+
+View local gumgum config:
+
+```bash
+gumgum config list
+```
+
+Config keys are schema-backed, not arbitrary key/value storage:
+
+```bash
+gumgum config get ui.color
+gumgum config set ui.color true
+```
+
+## JSON output
+
+Use `--json` when scripting:
+
+```bash
+gumgum --json status
+gumgum --json events --limit 10
+```
+
+## Example
+
+See `examples/visit-counter` for an end-to-end app that uses DB, KV, bucket, queue, worker bindings, logs, events, rollback previews, and publish dry-runs.
