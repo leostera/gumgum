@@ -125,6 +125,7 @@ impl ContainerReconciler {
         }
         Self::wait_for_container_health(&request.container, request.port, &request.health).await?;
         actions.extend(Self::remove_stale_worker_containers(request).await?);
+        actions.extend(Self::remove_stale_route_containers(request).await?);
         Ok((true, actions))
     }
 
@@ -157,6 +158,67 @@ impl ContainerReconciler {
             .filter(|container| !container.is_empty() && *container != request.container)
         {
             actions.push(format!("remove stale deployment container {container}"));
+            run_command_streaming(
+                TokioCommand::new("docker")
+                    .arg("rm")
+                    .arg("-f")
+                    .arg(container),
+                true,
+            )
+            .await?;
+        }
+        Ok(actions)
+    }
+
+    async fn remove_stale_route_containers(request: &DeployRequest) -> crate::Result<Vec<String>> {
+        let Some(route) = request.route.as_deref() else {
+            return Ok(Vec::new());
+        };
+        Self::remove_stale_containers(
+            request,
+            vec![
+                "label=gumgum.managed=deployment".to_owned(),
+                format!("label=caddy={route}"),
+            ],
+            "remove stale deployment container for route",
+        )
+        .await
+    }
+
+    async fn remove_stale_containers(
+        request: &DeployRequest,
+        filters: Vec<String>,
+        action_prefix: &str,
+    ) -> crate::Result<Vec<String>> {
+        let mut command = TokioCommand::new("docker");
+        command.arg("ps").arg("-a");
+        for filter in filters {
+            command.arg("--filter").arg(filter);
+        }
+        let output = command
+            .arg("--format")
+            .arg("{{.Names}}")
+            .output()
+            .await
+            .map_err(|source| {
+                GumgumError::structured(
+                    Subsystem::Setup,
+                    ErrorCode::Io,
+                    "could not list deployment containers",
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })?;
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        let mut actions = Vec::new();
+        for container in String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|container| !container.is_empty() && *container != request.container)
+        {
+            actions.push(format!("{action_prefix} {container}"));
             run_command_streaming(
                 TokioCommand::new("docker")
                     .arg("rm")
