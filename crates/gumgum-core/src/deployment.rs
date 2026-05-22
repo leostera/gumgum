@@ -1,6 +1,9 @@
 use crate::{PlanGraph, ServerRecord, WorkerManifest, sanitize_name};
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DeploymentDescriptor {
@@ -176,6 +179,7 @@ fn stable_deploy_revision(path: &Path, manifest: &WorkerManifest) -> String {
             .unwrap_or_default()
             .as_bytes(),
     );
+    hash_build_context(path, manifest, &mut hash);
     hash.write(&manifest.worker.port.unwrap_or_default().to_be_bytes());
     hash.write(
         manifest
@@ -204,6 +208,47 @@ fn stable_deploy_revision(path: &Path, manifest: &WorkerManifest) -> String {
         hash.write(&[ingress.public as u8]);
     }
     format!("gg{:016x}", hash.finish())
+}
+
+fn hash_build_context(path: &Path, manifest: &WorkerManifest, hash: &mut Fnv64) {
+    let context = resolve_build_context(path, manifest);
+    let context_path = Path::new(&context);
+    let mut files = Vec::new();
+    collect_context_files(context_path, context_path, &mut files);
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    for (relative_path, absolute_path) in files {
+        hash.write(relative_path.to_string_lossy().as_bytes());
+        if let Ok(contents) = fs::read(&absolute_path) {
+            hash.write(&contents);
+        }
+    }
+}
+
+fn collect_context_files(root: &Path, current: &Path, files: &mut Vec<(PathBuf, PathBuf)>) {
+    let Ok(metadata) = fs::symlink_metadata(current) else {
+        return;
+    };
+    if metadata.is_file() {
+        let relative = current.strip_prefix(root).unwrap_or(current).to_path_buf();
+        files.push((relative, current.to_path_buf()));
+        return;
+    }
+    if !metadata.is_dir() || should_skip_context_entry(current) {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(current) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        collect_context_files(root, &entry.path(), files);
+    }
+}
+
+fn should_skip_context_entry(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(".git" | ".pytest_cache" | ".venv" | "__pycache__" | "node_modules" | "target")
+    )
 }
 
 #[derive(Default)]
@@ -357,6 +402,40 @@ mod tests {
         let tag = first.image.rsplit(':').next().unwrap();
         assert!(tag.starts_with("gg"));
         assert_eq!(tag.len(), 18);
+    }
+
+    #[test]
+    fn deploy_revision_changes_when_build_context_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "gumgum-deploy-revision-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let api_dir = root.join("api");
+        fs::create_dir_all(api_dir.join("src")).unwrap();
+        fs::write(api_dir.join("gumgum.toml"), "").unwrap();
+        fs::write(api_dir.join("src/main.py"), "print('one')\n").unwrap();
+
+        let mut manifest = manifest();
+        manifest.worker.build_context = None;
+        let before = DeploymentDescriptor::from_manifest(
+            &api_dir.join("gumgum.toml"),
+            &manifest,
+            Some(&server()),
+            false,
+        );
+        fs::write(api_dir.join("src/main.py"), "print('two')\n").unwrap();
+        let after = DeploymentDescriptor::from_manifest(
+            &api_dir.join("gumgum.toml"),
+            &manifest,
+            Some(&server()),
+            false,
+        );
+
+        let _ = fs::remove_dir_all(root);
+        assert_ne!(before.image, after.image);
     }
 
     #[test]
