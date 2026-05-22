@@ -64,10 +64,10 @@ pub(crate) async fn add_domain(
         .await?;
     if !report.ok
         && provider == DomainProvider::Cloudflare
-        && report
-            .actions
-            .iter()
-            .any(|action| action == "Cloudflare grant is required")
+        && report.actions.iter().any(|action| {
+            action == "Cloudflare grant is required"
+                || action.starts_with("Cloudflare zone verification failed:")
+        })
     {
         let grant = cloudflare::authorize_zone(&args.name).await?;
         report = client

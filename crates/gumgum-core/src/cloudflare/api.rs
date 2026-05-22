@@ -19,6 +19,10 @@ impl CloudflareClient {
         }
     }
 
+    pub async fn validate_zone_access(&self, zone_name: &str) -> Result<()> {
+        self.zone(zone_name).await.map(|_| ())
+    }
+
     pub async fn ensure_route(&self, zone_name: &str, hostname: &str) -> Result<CloudflareRoute> {
         let zone = self.zone(zone_name).await?;
         let account_id = zone.account.id.clone();
