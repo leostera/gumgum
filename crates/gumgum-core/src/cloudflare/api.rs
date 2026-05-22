@@ -110,7 +110,10 @@ impl CloudflareClient {
                         {
                             "hostname": hostname,
                             "service": CADDY_SERVICE,
-                            "originRequest": { "noTLSVerify": true }
+                            "originRequest": {
+                                "noTLSVerify": true,
+                                "originServerName": hostname
+                            }
                         },
                         { "service": "http_status:404" }
                     ]
