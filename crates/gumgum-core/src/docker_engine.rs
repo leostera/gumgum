@@ -28,6 +28,7 @@ pub struct ContainerRunSpec {
     pub env: Vec<(String, String)>,
     pub binds: Vec<String>,
     pub ports: Vec<PortBindingSpec>,
+    pub command: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,6 +193,7 @@ impl DockerEngine {
                     .collect(),
             ),
             labels: Some(spec.labels),
+            cmd: (!spec.command.is_empty()).then_some(spec.command),
             exposed_ports,
             host_config: Some(HostConfig {
                 network_mode: Some(spec.network),

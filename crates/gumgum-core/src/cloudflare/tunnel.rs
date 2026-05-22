@@ -1,70 +1,49 @@
-use tokio::process::Command as TokioCommand;
+use std::collections::HashMap;
 
-use crate::{ErrorCode, GumgumError, Result, Subsystem, process::run_setup_command};
+use crate::{ContainerRunSpec, DockerEngine, Result};
 
 const CLOUDFLARED_CONTAINER: &str = "gumgum-cloudflared";
 const CLOUDFLARED_IMAGE: &str = "cloudflare/cloudflared:latest";
 const GUMGUM_NETWORK: &str = "gumgum-network";
 
 pub async fn ensure_cloudflared(token: &str) -> Result<Vec<String>> {
-    if cloudflared_running_on_gumgum_network().await? {
+    let docker = DockerEngine::local()?;
+    if cloudflared_running_on_gumgum_network(&docker).await? {
         return Ok(vec![format!(
             "ensure Cloudflare connector container {CLOUDFLARED_CONTAINER}"
         )]);
     }
 
-    let _ = TokioCommand::new("docker")
-        .arg("rm")
-        .arg("-f")
-        .arg(CLOUDFLARED_CONTAINER)
-        .output()
-        .await;
-
-    run_setup_command(
-        TokioCommand::new("docker")
-            .arg("run")
-            .arg("-d")
-            .arg("--name")
-            .arg(CLOUDFLARED_CONTAINER)
-            .arg("--restart")
-            .arg("unless-stopped")
-            .arg("--network")
-            .arg(GUMGUM_NETWORK)
-            .arg("-e")
-            .arg(format!("TUNNEL_TOKEN={token}"))
-            .arg(CLOUDFLARED_IMAGE)
-            .arg("tunnel")
-            .arg("--no-autoupdate")
-            .arg("run"),
-    )
-    .await?;
+    let _ = docker.remove_container_force(CLOUDFLARED_CONTAINER).await;
+    docker.pull_image(CLOUDFLARED_IMAGE).await?;
+    docker
+        .create_and_start_container(ContainerRunSpec {
+            name: CLOUDFLARED_CONTAINER.to_owned(),
+            image: CLOUDFLARED_IMAGE.to_owned(),
+            network: GUMGUM_NETWORK.to_owned(),
+            restart_unless_stopped: true,
+            labels: HashMap::new(),
+            env: vec![("TUNNEL_TOKEN".to_owned(), token.to_owned())],
+            binds: Vec::new(),
+            ports: Vec::new(),
+            command: vec![
+                "tunnel".to_owned(),
+                "--no-autoupdate".to_owned(),
+                "run".to_owned(),
+            ],
+        })
+        .await?;
 
     Ok(vec![format!(
         "started Cloudflare connector container {CLOUDFLARED_CONTAINER}"
     )])
 }
 
-async fn cloudflared_running_on_gumgum_network() -> Result<bool> {
-    let output = TokioCommand::new("docker")
-        .arg("inspect")
-        .arg("-f")
-        .arg(format!(
-            "{{{{.State.Running}}}} {{{{if index .NetworkSettings.Networks \"{GUMGUM_NETWORK}\"}}}}{GUMGUM_NETWORK}{{{{end}}}}"
-        ))
-        .arg(CLOUDFLARED_CONTAINER)
-        .output()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "failed to inspect Cloudflare connector container",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    if !output.status.success() {
-        return Ok(false);
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim() == format!("true {GUMGUM_NETWORK}"))
+async fn cloudflared_running_on_gumgum_network(docker: &DockerEngine) -> Result<bool> {
+    Ok(docker
+        .inspect_container(CLOUDFLARED_CONTAINER)
+        .await?
+        .is_some_and(|container| {
+            container.running && container.networks.contains_key(GUMGUM_NETWORK)
+        }))
 }
