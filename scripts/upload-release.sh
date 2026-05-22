@@ -26,11 +26,11 @@ upload() {
     --content-type "$content_type"
 }
 
-upload "$DIST_ROOT/install.sh" "install.sh" "text/x-shellscript; charset=utf-8"
-upload "$DIST_ROOT/gumgum/$VERSION/release.json" "gumgum/$VERSION/release.json" "application/json; charset=utf-8"
-upload "$DIST_ROOT/gumgum/$VERSION/release.json" "gumgum/latest/release.json" "application/json; charset=utf-8"
 for archive in "$DIST_ROOT/gumgum/$VERSION"/*.tar.gz; do
   upload "$archive" "gumgum/$VERSION/$(basename "$archive")" "application/gzip"
 done
+upload "$DIST_ROOT/gumgum/$VERSION/release.json" "gumgum/$VERSION/release.json" "application/json; charset=utf-8"
+upload "$DIST_ROOT/gumgum/$VERSION/release.json" "gumgum/latest/release.json" "application/json; charset=utf-8"
+upload "$DIST_ROOT/install.sh" "install.sh" "text/x-shellscript; charset=utf-8"
 
 echo "METRIC upload_ok=1"
