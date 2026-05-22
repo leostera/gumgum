@@ -403,7 +403,7 @@ impl GraphStore {
             );",
         )
         .map_err(|source| self.error("could not initialize graph database", source))?;
-        let conn = self.open()?;
+        let mut conn = self.open()?;
         let _ = conn.execute(
             "ALTER TABLE reconciliation_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'reconciliation'",
             [],
@@ -412,6 +412,8 @@ impl GraphStore {
             "ALTER TABLE reconciliation_events ADD COLUMN operation_id TEXT",
             [],
         );
+        migrate_nullable_deploy_routes(&mut conn)
+            .map_err(|source| self.error("could not migrate deployment route schema", source))?;
         Ok(())
     }
 
@@ -1372,6 +1374,38 @@ impl GraphStore {
             .likely_cause(source.to_string())
             .build()
     }
+}
+
+fn migrate_nullable_deploy_routes(conn: &mut Connection) -> rusqlite::Result<()> {
+    let route_not_null = {
+        let mut stmt = conn.prepare("PRAGMA table_info(desired_deployments)")?;
+        let columns = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+        })?;
+        columns
+            .filter_map(|row| row.ok())
+            .any(|(name, not_null)| name == "route" && not_null != 0)
+    };
+    if !route_not_null {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    tx.execute_batch(
+        "ALTER TABLE desired_deployments RENAME TO desired_deployments_old;
+         CREATE TABLE desired_deployments (
+             worker TEXT PRIMARY KEY,
+             image TEXT NOT NULL,
+             container TEXT NOT NULL,
+             route TEXT,
+             port INTEGER NOT NULL,
+             health TEXT NOT NULL,
+             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+         );
+         INSERT INTO desired_deployments (worker, image, container, route, port, health, updated_at)
+         SELECT worker, image, container, route, port, health, updated_at FROM desired_deployments_old;
+         DROP TABLE desired_deployments_old;",
+    )?;
+    tx.commit()
 }
 
 pub fn object_dns(kind: &str, name: &str, root_domain: &str) -> String {
