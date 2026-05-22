@@ -1882,6 +1882,77 @@ mod tests {
     }
 
     #[test]
+    fn deployment_env_keys_do_not_replace_each_other() {
+        let store = temp_store("env-deployments");
+        let preview = DesiredDeploy {
+            worker: "api@preview".to_owned(),
+            image: "registry/api:preview".to_owned(),
+            container: "gumgum-api-preview".to_owned(),
+            route: Some("api-preview.example.test".to_owned()),
+            port: 3000,
+            health: "/healthz".to_owned(),
+        };
+        let release = DesiredDeploy {
+            worker: "api@release".to_owned(),
+            image: "registry/api:release".to_owned(),
+            container: "gumgum-api-release".to_owned(),
+            route: Some("api.example.test".to_owned()),
+            port: 3000,
+            health: "/healthz".to_owned(),
+        };
+
+        store.materialize_deploy(&preview).unwrap();
+        store.materialize_deploy(&release).unwrap();
+
+        assert_eq!(
+            store
+                .desired_deploy("api@preview")
+                .unwrap()
+                .unwrap()
+                .container,
+            "gumgum-api-preview"
+        );
+        assert_eq!(
+            store
+                .desired_deploy("api@release")
+                .unwrap()
+                .unwrap()
+                .container,
+            "gumgum-api-release"
+        );
+        assert!(
+            store
+                .latest_previous_deploy("api@preview")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .latest_previous_deploy("api@release")
+                .unwrap()
+                .is_none()
+        );
+        let desired = store.load_desired_graph().unwrap();
+        assert!(desired.nodes.contains(&DesiredGraphNode::Deployment {
+            worker: WorkerId::new("api-preview").unwrap(),
+            image: ImageName::new("registry/api:preview").unwrap(),
+            container: ContainerName::new("gumgum-api-preview").unwrap(),
+            route: Some(RouteHost::new("api-preview.example.test").unwrap()),
+            port: Port::new(3000).unwrap(),
+            health: HealthPath::new("/healthz").unwrap(),
+        }));
+        assert!(desired.nodes.contains(&DesiredGraphNode::Deployment {
+            worker: WorkerId::new("api-release").unwrap(),
+            image: ImageName::new("registry/api:release").unwrap(),
+            container: ContainerName::new("gumgum-api-release").unwrap(),
+            route: Some(RouteHost::new("api.example.test").unwrap()),
+            port: Port::new(3000).unwrap(),
+            health: HealthPath::new("/healthz").unwrap(),
+        }));
+        let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
     fn deploy_revisions_record_non_image_changes() {
         let store = temp_store("non-image-revision");
         let first = DesiredDeploy {

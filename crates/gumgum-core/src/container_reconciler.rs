@@ -24,7 +24,7 @@ impl ContainerReconciler {
 
     pub async fn reconcile(&self, request: &DeployRequest) -> crate::Result<(bool, Vec<String>)> {
         let mut actions = Vec::new();
-        let binding_env = self.binding_env(&request.worker)?;
+        let binding_env = self.binding_env(logical_worker(&request.worker))?;
         let binding_env_fingerprint = binding_env_fingerprint(&binding_env);
         let inspect = TokioCommand::new("docker")
             .arg("inspect")
@@ -242,6 +242,10 @@ impl ContainerReconciler {
     }
 }
 
+fn logical_worker(worker: &str) -> &str {
+    worker.split_once('@').map_or(worker, |(name, _)| name)
+}
+
 fn binding_env_fingerprint(env: &[(String, String)]) -> String {
     let mut entries = env.to_vec();
     entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
@@ -279,6 +283,13 @@ async fn run_command_streaming(cmd: &mut TokioCommand, quiet: bool) -> crate::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logical_worker_strips_deployment_env_suffix() {
+        assert_eq!(logical_worker("api@preview"), "api");
+        assert_eq!(logical_worker("api@release"), "api");
+        assert_eq!(logical_worker("worker"), "worker");
+    }
 
     #[test]
     fn binding_env_fingerprint_is_stable_and_order_insensitive() {

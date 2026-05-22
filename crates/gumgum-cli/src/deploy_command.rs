@@ -72,7 +72,7 @@ pub(crate) async fn deploy(
                 };
                 let report = ServerClient::new(server.host)
                     .delete_deploy(&DeploymentDeleteRequest {
-                        worker: manifest.worker.name,
+                        worker: deployment_key(&manifest.worker.name, args.env),
                         preview: dry_run,
                     })
                     .await?;
@@ -198,7 +198,7 @@ async fn deploy_one(
     DeployExecutor::new(&server, quiet)
         .ensure_manifest_bindings(manifest, project.name, env)
         .await?;
-    run_remote_deploy(&server, manifest, &report, quiet).await?;
+    run_remote_deploy(&server, manifest, &report, env, quiet).await?;
     report.ok = true;
     report.dry_run = false;
     report.message = match &report.health_url {
@@ -220,7 +220,7 @@ fn deploy_report(
     dry_run: bool,
     env: crate::DeployEnv,
 ) -> DeployReport {
-    let descriptor = DeploymentDescriptor::from_manifest_in_project(
+    let mut descriptor = DeploymentDescriptor::from_manifest_in_project(
         &path,
         manifest,
         project_name,
@@ -228,6 +228,7 @@ fn deploy_report(
         server,
         env.is_release(),
     );
+    descriptor.container = format!("{}-{}", descriptor.container, env.label());
     DeployReport {
         ok: true,
         dry_run,
@@ -257,6 +258,7 @@ async fn run_remote_deploy(
     server: &ServerRecord,
     manifest: &WorkerManifest,
     report: &DeployReport,
+    env: crate::DeployEnv,
     quiet: bool,
 ) -> gumgum_core::Result<()> {
     let context = report
@@ -327,7 +329,7 @@ async fn run_remote_deploy(
         format!("asking gumgumd on {host} to reconcile {}", report.worker),
     );
     let request = DeployRequest {
-        worker: report.worker.clone(),
+        worker: deployment_key(&report.worker, env),
         image: report.image.clone(),
         container: report.container.clone(),
         route: route.clone(),
@@ -388,6 +390,10 @@ fn local_push_image(image: &str, tunnel_port: u16) -> String {
     image.replacen("127.0.0.1:55000", &format!("localhost:{tunnel_port}"), 1)
 }
 
+fn deployment_key(worker: &str, env: crate::DeployEnv) -> String {
+    format!("{worker}@{}", env.label())
+}
+
 fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> Option<String> {
     report.routes.first().cloned()
 }
@@ -442,6 +448,18 @@ mod deploy_hardening_tests {
         assert_eq!(
             local_push_image("127.0.0.1:55000/dev.leostera/root/api:gg1", 55001),
             "localhost:55001/dev.leostera/root/api:gg1"
+        );
+    }
+
+    #[test]
+    fn deployment_key_includes_env_without_changing_display_worker() {
+        assert_eq!(
+            deployment_key("api", crate::DeployEnv::Preview),
+            "api@preview"
+        );
+        assert_eq!(
+            deployment_key("api", crate::DeployEnv::Release),
+            "api@release"
         );
     }
 
