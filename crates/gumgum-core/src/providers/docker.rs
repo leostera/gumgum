@@ -1,40 +1,36 @@
-use crate::{ErrorCode, GumgumError, Subsystem};
+use std::collections::HashMap;
+
+use crate::{ContainerRunSpec, DockerEngine, ErrorCode, GumgumError, Subsystem};
 use tokio::process::Command as TokioCommand;
 
 use super::types::ProviderSpec;
 
+const GUMGUM_NETWORK: &str = "gumgum-network";
+
 pub(crate) async fn ensure_network() -> crate::Result<()> {
-    run_provider_command(
-        TokioCommand::new("sh").arg("-c").arg(
-            "docker network inspect gumgum-network >/dev/null 2>&1 || docker network create gumgum-network >/dev/null",
-        ),
-        "could not ensure GumGum provider network",
-    )
-    .await
+    DockerEngine::local()?
+        .ensure_network(GUMGUM_NETWORK)
+        .await?;
+    Ok(())
 }
 
 pub(crate) async fn inspect(container: &str) -> bool {
-    TokioCommand::new("docker")
-        .arg("inspect")
-        .arg(container)
-        .output()
-        .await
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    match DockerEngine::local() {
+        Ok(docker) => docker
+            .inspect_container(container)
+            .await
+            .ok()
+            .flatten()
+            .is_some(),
+        Err(_) => false,
+    }
 }
 
 pub(crate) async fn running(container: &str) -> bool {
-    TokioCommand::new("docker")
-        .arg("inspect")
-        .arg("-f")
-        .arg("{{.State.Running}}")
-        .arg(container)
-        .output()
-        .await
-        .map(|output| {
-            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
-        })
-        .unwrap_or(false)
+    match DockerEngine::local() {
+        Ok(docker) => docker.container_running(container).await.unwrap_or(false),
+        Err(_) => false,
+    }
 }
 
 pub(crate) async fn run_provider_command(
@@ -66,17 +62,36 @@ pub(crate) fn created_provider_actions(provider: &ProviderSpec) -> Vec<String> {
 
 pub(crate) async fn start_existing(
     provider: &ProviderSpec,
-    message: &str,
+    _message: &str,
 ) -> crate::Result<Vec<String>> {
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("start")
-            .arg(&provider.container),
-        message,
-    )
-    .await?;
+    DockerEngine::local()?
+        .start_container(&provider.container)
+        .await?;
     Ok(vec![format!(
         "started existing {} provider",
         provider.provider
     )])
+}
+
+pub(crate) async fn create_provider_container(
+    provider: &ProviderSpec,
+    env: Vec<(String, String)>,
+    command: Vec<String>,
+) -> crate::Result<Vec<String>> {
+    let docker = DockerEngine::local()?;
+    docker.pull_image(&provider.image).await?;
+    docker
+        .create_and_start_container(ContainerRunSpec {
+            name: provider.container.clone(),
+            image: provider.image.clone(),
+            network: GUMGUM_NETWORK.to_owned(),
+            restart_unless_stopped: true,
+            labels: HashMap::from([("gumgum.managed".to_owned(), "provider".to_owned())]),
+            env,
+            binds: Vec::new(),
+            ports: Vec::new(),
+            command,
+        })
+        .await?;
+    Ok(created_provider_actions(provider))
 }
