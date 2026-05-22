@@ -1426,6 +1426,40 @@ async fn daemon_deploy(
         .and_then(Result::ok)
         .flatten()
     };
+    if request.publish {
+        if let Some(route) = &request.route {
+            match ConfigStore::from_home_env().and_then(|store| store.load_domains()) {
+                Ok(domains) if !managed_domain_matches(&domains, route) => {
+                    return Json(DeployApplyReport {
+                        ok: false,
+                        worker: request.worker,
+                        materialized: false,
+                        changed: false,
+                        actions: vec![format!(
+                            "publish DNS failed: no managed domain matches published route {route} (add the domain to this server before deploying a published route)"
+                        )],
+                        reconciliation_steps: Vec::new(),
+                        message: "deployment blocked before reconciliation; published route domain is not registered on this server".to_owned(),
+                    });
+                }
+                Err(error) => {
+                    return Json(DeployApplyReport {
+                        ok: false,
+                        worker: request.worker,
+                        materialized: false,
+                        changed: false,
+                        actions: vec![format!(
+                            "publish DNS failed: {}",
+                            error.to_report().message
+                        )],
+                        reconciliation_steps: Vec::new(),
+                        message: "deployment blocked before reconciliation; domain configuration could not be loaded".to_owned(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
     let mut reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
     let request_for_db = request.clone().into_desired_deploy();
     if reconciliation_steps.is_empty() {
@@ -1453,6 +1487,7 @@ async fn daemon_deploy(
         None
     };
     let materialized = materialize_changed.is_some();
+    let mut publish_ok = true;
     if materialized && request.publish {
         if let Some(route) = &request.route {
             match ConfigStore::from_home_env()
@@ -1494,6 +1529,7 @@ async fn daemon_deploy(
                             }
                         }
                         Err(error) => {
+                            publish_ok = false;
                             let report = error.to_report();
                             let cause = report
                                 .likely_cause
@@ -1504,13 +1540,16 @@ async fn daemon_deploy(
                         }
                     }
                 }
-                Ok((_domains, None)) => actions.push(format!(
-                    "publish DNS skipped for {route}; no Cloudflare grant saved on server"
-                )),
-                Err(error) => actions.push(format!(
-                    "publish DNS skipped: {}",
-                    error.to_report().message
-                )),
+                Ok((_domains, None)) => {
+                    publish_ok = false;
+                    actions.push(format!(
+                        "publish DNS failed for {route}; no Cloudflare grant saved on server"
+                    ));
+                }
+                Err(error) => {
+                    publish_ok = false;
+                    actions.push(format!("publish DNS failed: {}", error.to_report().message));
+                }
             }
         }
     }
@@ -1522,18 +1561,26 @@ async fn daemon_deploy(
                 || action.starts_with("ensure Cloudflare")
         });
     Json(DeployApplyReport {
-        ok: materialized && reconcile_ok,
+        ok: materialized && reconcile_ok && publish_ok,
         worker: request.worker,
         materialized,
         changed,
         actions,
         reconciliation_steps,
-        message: if reconcile_ok {
-            "desired deployment materialized and reconciled".to_owned()
-        } else {
+        message: if !reconcile_ok {
             "deployment reconcile failed; desired deployment was not changed".to_owned()
+        } else if !publish_ok {
+            "deployment materialized but published route convergence failed".to_owned()
+        } else {
+            "desired deployment materialized and reconciled".to_owned()
         },
     })
+}
+
+fn managed_domain_matches(domains: &[DomainRecord], hostname: &str) -> bool {
+    domains
+        .iter()
+        .any(|domain| hostname == domain.name || hostname.ends_with(&format!(".{}", domain.name)))
 }
 
 trait DeployRequestExt {

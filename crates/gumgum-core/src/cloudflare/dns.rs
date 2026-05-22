@@ -8,9 +8,14 @@ pub async fn ensure_published_route(
     hostname: &str,
 ) -> Result<Vec<String>> {
     let Some(domain) = matching_domain(domains, hostname) else {
-        return Ok(vec![format!(
-            "no managed domain matches {hostname}; DNS was not changed"
-        )]);
+        return Err(crate::GumgumError::structured(
+            crate::Subsystem::Config,
+            crate::ErrorCode::InvalidArgs,
+            format!("no managed domain matches published route {hostname}"),
+        )
+        .likely_cause("add the domain to this server before deploying a published route")
+        .next_command("gumgum domain add <domain> --provider cloudflare --ingress cloudflare")
+        .build());
     };
     match (domain.provider, domain.ingress) {
         (DomainProvider::Cloudflare, IngressMode::Cloudflare) => {
