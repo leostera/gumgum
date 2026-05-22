@@ -85,6 +85,8 @@ impl ContainerReconciler {
                 restart_unless_stopped: true,
                 labels,
                 env: binding_env.clone(),
+                binds: Vec::new(),
+                ports: Vec::new(),
             })
             .await?;
         if network != "gumgum-network"

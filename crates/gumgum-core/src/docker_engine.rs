@@ -26,6 +26,40 @@ pub struct ContainerRunSpec {
     pub restart_unless_stopped: bool,
     pub labels: HashMap<String, String>,
     pub env: Vec<(String, String)>,
+    pub binds: Vec<String>,
+    pub ports: Vec<PortBindingSpec>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PortBindingSpec {
+    pub host_ip: Option<String>,
+    pub host_port: u16,
+    pub container_port: u16,
+    pub protocol: String,
+}
+
+impl PortBindingSpec {
+    pub fn tcp(host_ip: Option<String>, host_port: u16, container_port: u16) -> Self {
+        Self {
+            host_ip,
+            host_port,
+            container_port,
+            protocol: "tcp".to_owned(),
+        }
+    }
+
+    pub fn udp(host_ip: Option<String>, host_port: u16, container_port: u16) -> Self {
+        Self {
+            host_ip,
+            host_port,
+            container_port,
+            protocol: "udp".to_owned(),
+        }
+    }
+
+    fn key(&self) -> String {
+        format!("{}/{}", self.container_port, self.protocol)
+    }
 }
 
 impl DockerEngine {
@@ -91,6 +125,21 @@ impl DockerEngine {
             .unwrap_or(false))
     }
 
+    pub async fn ensure_network(&self, name: &str) -> Result<bool> {
+        use bollard::models::NetworkCreateRequest;
+        if self.network_exists(name).await? {
+            return Ok(false);
+        }
+        self.client
+            .create_network(NetworkCreateRequest {
+                name: name.to_owned(),
+                ..Default::default()
+            })
+            .await
+            .map_err(docker_error)?;
+        Ok(true)
+    }
+
     pub async fn network_exists(&self, name: &str) -> Result<bool> {
         match self.client.inspect_network(name, None).await {
             Ok(_) => Ok(true),
@@ -113,10 +162,27 @@ impl DockerEngine {
 
     pub async fn create_and_start_container(&self, spec: ContainerRunSpec) -> Result<()> {
         use bollard::models::{
-            ContainerCreateBody, HostConfig, RestartPolicy, RestartPolicyNameEnum,
+            ContainerCreateBody, HostConfig, PortBinding, PortMap, RestartPolicy,
+            RestartPolicyNameEnum,
         };
         use bollard::query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions};
 
+        let exposed_ports = if spec.ports.is_empty() {
+            None
+        } else {
+            Some(spec.ports.iter().map(PortBindingSpec::key).collect())
+        };
+        let mut port_bindings: PortMap = HashMap::new();
+        for port in &spec.ports {
+            port_bindings
+                .entry(port.key())
+                .or_default()
+                .get_or_insert_with(Vec::new)
+                .push(PortBinding {
+                    host_ip: port.host_ip.clone(),
+                    host_port: Some(port.host_port.to_string()),
+                });
+        }
         let body = ContainerCreateBody {
             image: Some(spec.image),
             env: Some(
@@ -126,8 +192,11 @@ impl DockerEngine {
                     .collect(),
             ),
             labels: Some(spec.labels),
+            exposed_ports,
             host_config: Some(HostConfig {
                 network_mode: Some(spec.network),
+                binds: Some(spec.binds),
+                port_bindings: (!port_bindings.is_empty()).then_some(port_bindings),
                 restart_policy: spec.restart_unless_stopped.then_some(RestartPolicy {
                     name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
                     maximum_retry_count: None,
@@ -171,6 +240,30 @@ impl DockerEngine {
             }
             Err(error) => Err(docker_error(error)),
         }
+    }
+
+    pub async fn start_container(&self, name: &str) -> Result<()> {
+        use bollard::query_parameters::StartContainerOptions;
+        match self
+            .client
+            .start_container(name, None::<StartContainerOptions>)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(DockerError::DockerResponseServerError {
+                status_code: 304, ..
+            }) => Ok(()),
+            Err(error) => Err(docker_error(error)),
+        }
+    }
+
+    pub async fn restart_container(&self, name: &str) -> Result<()> {
+        use bollard::query_parameters::RestartContainerOptionsBuilder;
+        let options = RestartContainerOptionsBuilder::new().build();
+        self.client
+            .restart_container(name, Some(options))
+            .await
+            .map_err(docker_error)
     }
 
     pub async fn remove_container_force(&self, name: &str) -> Result<()> {

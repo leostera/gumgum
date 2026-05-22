@@ -1,4 +1,5 @@
-use crate::{ErrorCode, GumgumError, Subsystem};
+use crate::{ContainerRunSpec, DockerEngine, ErrorCode, GumgumError, PortBindingSpec, Subsystem};
+use std::collections::HashMap;
 use std::{
     future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
@@ -35,27 +36,35 @@ impl LocalPlatform {
     }
 
     async fn ensure_registry(quiet: bool) -> crate::Result<()> {
-        if container_exists(REGISTRY_CONTAINER).await? {
-            docker(["start", REGISTRY_CONTAINER], quiet).await?;
+        let docker = DockerEngine::local()?;
+        if docker
+            .inspect_container(REGISTRY_CONTAINER)
+            .await?
+            .is_some()
+        {
+            docker.start_container(REGISTRY_CONTAINER).await?;
             return Ok(());
         }
-        docker(
-            [
-                "run",
-                "-d",
-                "--name",
-                REGISTRY_CONTAINER,
-                "--restart",
-                "unless-stopped",
-                "--network",
-                GUMGUM_NETWORK,
-                "-p",
-                "127.0.0.1:55000:5000",
-                "registry:2",
-            ],
-            quiet,
-        )
-        .await
+        if !quiet {
+            eprintln!("  create container {REGISTRY_CONTAINER}");
+        }
+        docker.pull_image("registry:2").await?;
+        docker
+            .create_and_start_container(ContainerRunSpec {
+                name: REGISTRY_CONTAINER.to_owned(),
+                image: "registry:2".to_owned(),
+                network: GUMGUM_NETWORK.to_owned(),
+                restart_unless_stopped: true,
+                labels: HashMap::new(),
+                env: Vec::new(),
+                binds: Vec::new(),
+                ports: vec![PortBindingSpec::tcp(
+                    Some("127.0.0.1".to_owned()),
+                    55000,
+                    5000,
+                )],
+            })
+            .await
     }
 
     async fn ensure_dnsmasq(quiet: bool) -> crate::Result<()> {
@@ -68,9 +77,10 @@ impl LocalPlatform {
         }
         write_dnsmasq_config(upstream)?;
 
-        if container_exists(DNSMASQ_CONTAINER).await? {
-            docker(["start", DNSMASQ_CONTAINER], quiet).await?;
-            docker(["restart", DNSMASQ_CONTAINER], quiet).await?;
+        let docker = DockerEngine::local()?;
+        if docker.inspect_container(DNSMASQ_CONTAINER).await?.is_some() {
+            docker.start_container(DNSMASQ_CONTAINER).await?;
+            docker.restart_container(DNSMASQ_CONTAINER).await?;
             return Ok(());
         }
 
@@ -84,34 +94,31 @@ impl LocalPlatform {
         }
 
         let config_mount = format!("{}:/etc/dnsmasq.conf:ro", dnsmasq_config_path()?.display());
-        let tcp_port = format!("{host_ip}:53:53/tcp");
-        let udp_port = format!("{host_ip}:53:53/udp");
-        docker(
-            [
-                "run",
-                "-d",
-                "--name",
-                DNSMASQ_CONTAINER,
-                "--restart",
-                "unless-stopped",
-                "--network",
-                GUMGUM_NETWORK,
-                "-p",
-                tcp_port.as_str(),
-                "-p",
-                udp_port.as_str(),
-                "-v",
-                config_mount.as_str(),
-                "jpillora/dnsmasq:latest",
-            ],
-            quiet,
-        )
-        .await
+        if !quiet {
+            eprintln!("  create container {DNSMASQ_CONTAINER}");
+        }
+        docker.pull_image("jpillora/dnsmasq:latest").await?;
+        docker
+            .create_and_start_container(ContainerRunSpec {
+                name: DNSMASQ_CONTAINER.to_owned(),
+                image: "jpillora/dnsmasq:latest".to_owned(),
+                network: GUMGUM_NETWORK.to_owned(),
+                restart_unless_stopped: true,
+                labels: HashMap::new(),
+                env: Vec::new(),
+                binds: vec![config_mount],
+                ports: vec![
+                    PortBindingSpec::tcp(Some(host_ip.to_string()), 53, 53),
+                    PortBindingSpec::udp(Some(host_ip.to_string()), 53, 53),
+                ],
+            })
+            .await
     }
 
     async fn ensure_caddy(quiet: bool) -> crate::Result<()> {
-        if container_exists(CADDY_CONTAINER).await? {
-            docker(["start", CADDY_CONTAINER], quiet).await?;
+        let docker = DockerEngine::local()?;
+        if docker.inspect_container(CADDY_CONTAINER).await?.is_some() {
+            docker.start_container(CADDY_CONTAINER).await?;
             return Ok(());
         }
 
@@ -124,47 +131,32 @@ impl LocalPlatform {
         }
 
         let socket_mount = "/var/run/docker.sock:/var/run/docker.sock:ro";
-        if expose_host_ports {
-            docker(
-                [
-                    "run",
-                    "-d",
-                    "--name",
-                    CADDY_CONTAINER,
-                    "--restart",
-                    "unless-stopped",
-                    "--network",
-                    GUMGUM_NETWORK,
-                    "-p",
-                    "80:80",
-                    "-p",
-                    "443:443",
-                    "-v",
-                    socket_mount,
-                    "lucaslorentz/caddy-docker-proxy:2.9-alpine",
-                ],
-                quiet,
-            )
-            .await
+        let ports = if expose_host_ports {
+            vec![
+                PortBindingSpec::tcp(None, 80, 80),
+                PortBindingSpec::tcp(None, 443, 443),
+            ]
         } else {
-            docker(
-                [
-                    "run",
-                    "-d",
-                    "--name",
-                    CADDY_CONTAINER,
-                    "--restart",
-                    "unless-stopped",
-                    "--network",
-                    GUMGUM_NETWORK,
-                    "-v",
-                    socket_mount,
-                    "lucaslorentz/caddy-docker-proxy:2.9-alpine",
-                ],
-                quiet,
-            )
-            .await
+            Vec::new()
+        };
+        if !quiet {
+            eprintln!("  create container {CADDY_CONTAINER}");
         }
+        docker
+            .pull_image("lucaslorentz/caddy-docker-proxy:2.9-alpine")
+            .await?;
+        docker
+            .create_and_start_container(ContainerRunSpec {
+                name: CADDY_CONTAINER.to_owned(),
+                image: "lucaslorentz/caddy-docker-proxy:2.9-alpine".to_owned(),
+                network: GUMGUM_NETWORK.to_owned(),
+                restart_unless_stopped: true,
+                labels: HashMap::new(),
+                env: Vec::new(),
+                binds: vec![socket_mount.to_owned()],
+                ports,
+            })
+            .await
     }
 }
 
@@ -189,21 +181,12 @@ async fn platform_step<T>(
 }
 
 async fn ensure_network(name: &str, quiet: bool) -> crate::Result<()> {
-    if command_success(
-        TokioCommand::new("docker")
-            .arg("network")
-            .arg("inspect")
-            .arg(name),
-    )
-    .await?
-    {
-        return Ok(());
+    let docker = DockerEngine::local()?;
+    let created = docker.ensure_network(name).await?;
+    if created && !quiet {
+        eprintln!("  created Docker network {name}");
     }
-    docker(["network", "create", name], quiet).await
-}
-
-async fn container_exists(name: &str) -> crate::Result<bool> {
-    command_success(TokioCommand::new("docker").arg("inspect").arg(name)).await
+    Ok(())
 }
 
 async fn host_lan_ip() -> Option<Ipv4Addr> {
@@ -288,55 +271,4 @@ fn dnsmasq_config_path() -> crate::Result<PathBuf> {
 fn port_available(host: Ipv4Addr, port: u16) -> bool {
     let addr = SocketAddr::new(IpAddr::V4(host), port);
     TcpListener::bind(addr).is_ok() && UdpSocket::bind(addr).is_ok()
-}
-
-async fn docker<'a, I>(args: I, quiet: bool) -> crate::Result<()>
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let args: Vec<&str> = args.into_iter().collect();
-    if !quiet {
-        eprintln!("  docker {}", args.join(" "));
-    }
-    let mut command = TokioCommand::new("docker");
-    command.args(args);
-    run_command(&mut command, quiet).await
-}
-
-async fn command_success(command: &mut TokioCommand) -> crate::Result<bool> {
-    let output = command.output().await.map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "failed to run platform command",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    Ok(output.status.success())
-}
-
-async fn run_command(cmd: &mut TokioCommand, quiet: bool) -> crate::Result<()> {
-    let output = cmd.output().await.map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Setup,
-            ErrorCode::Io,
-            "failed to run platform command",
-        )
-        .likely_cause(source.to_string())
-        .build()
-    })?;
-    if !quiet {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
-        eprint!("{}", String::from_utf8_lossy(&output.stderr));
-    }
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(
-            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "platform command failed")
-                .likely_cause(format!("process exited with {}", output.status))
-                .build(),
-        )
-    }
 }
