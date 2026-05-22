@@ -8,8 +8,13 @@ const REQUIRED_PERMISSIONS: &[(&str, &str, &str)] = &[
     ("Zone", "Zone: Read", "Every domain GumGum should manage"),
     (
         "Account",
-        "Cloudflare Tunnel: Edit",
+        "Account Settings: Read",
         "Account used for Cloudflare ingress",
+    ),
+    (
+        "Account",
+        "Cloudflare Tunnel: Edit",
+        "Account used for Cloudflare ingress; may appear under Zero Trust/Tunnels",
     ),
 ];
 
@@ -42,7 +47,9 @@ pub async fn authorize_zone(zone_name: &str) -> Result<CloudflareGrant> {
     eprintln!("Cloudflare API token required for {zone_name}.");
     eprintln!("Create a Cloudflare API token with these permissions:");
     eprintln!("  Scope    Permission                 Applies to");
-    eprintln!("  -------  -------------------------  ------------------------------------");
+    eprintln!(
+        "  -------  -------------------------  ---------------------------------------------------------------"
+    );
     for (scope, permission, applies_to) in REQUIRED_PERMISSIONS {
         eprintln!("  {scope:<7}  {permission:<25}  {applies_to}");
     }

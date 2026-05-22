@@ -230,7 +230,8 @@ Required Cloudflare token permissions:
 | --- | --- | --- |
 | Zone | DNS: Edit | Every domain GumGum should manage |
 | Zone | Zone: Read | Every domain GumGum should manage |
-| Account | Cloudflare Tunnel: Edit | Account used for Cloudflare ingress |
+| Account | Account Settings: Read | Account used for Cloudflare ingress |
+| Account | Cloudflare Tunnel: Edit | Account used for Cloudflare ingress; may appear under Zero Trust/Tunnels |
 
 When adding another Cloudflare-managed domain, update or recreate the token to include the new domain. As setup sugar, `gumgum server add ... --domain leostera.dev --ingress cloudflare` installs the server and then adds that domain with Cloudflare ingress.
 
