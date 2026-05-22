@@ -782,7 +782,6 @@ dependencies = [
  "hmac 0.13.0",
  "percent-encoding",
  "proptest",
- "rand 0.8.6",
  "reqwest",
  "rusqlite",
  "serde",

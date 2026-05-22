@@ -222,7 +222,17 @@ Servers run the GumGum control plane; domains describe DNS zones that a server c
 gumgum domain add leostera.dev --server starbase2 --provider cloudflare --ingress cloudflare
 ```
 
-`--provider manual` records the domain and prints the desired intent without changing DNS. `--provider cloudflare` starts a browser OAuth flow, then saves the Cloudflare grant on the GumGum server so future route convergence can manage DNS/tunnel state there. As setup sugar, `gumgum server add ... --domain leostera.dev --ingress cloudflare` installs the server and then adds that domain with Cloudflare ingress.
+`--provider manual` records the domain and prints the desired intent without changing DNS. `--provider cloudflare` prompts for a Cloudflare API token and saves it on the GumGum server so future route convergence can manage DNS/tunnel state there.
+
+Required Cloudflare token permissions:
+
+| Scope | Permission | Applies to |
+| --- | --- | --- |
+| Zone | DNS: Edit | Every domain GumGum should manage |
+| Zone | Zone: Read | Every domain GumGum should manage |
+| Account | Cloudflare Tunnel: Edit | Account used for Cloudflare ingress |
+
+When adding another Cloudflare-managed domain, update or recreate the token to include the new domain. As setup sugar, `gumgum server add ... --domain leostera.dev --ingress cloudflare` installs the server and then adds that domain with Cloudflare ingress.
 
 ## Manage resources
 

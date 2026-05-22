@@ -22,7 +22,6 @@ hex = "0"
 hmac = "0"
 percent-encoding = "2"
 proptest = "1"
-rand = "0.8"
 reqwest = { version = "0", features = ["json", "rustls"], default-features = false }
 sha2 = "0"
 rusqlite = { version = "0.32", features = ["bundled"] }
