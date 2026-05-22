@@ -1398,6 +1398,20 @@ pub fn provider_for_object(kind: &str) -> &'static str {
         .provider()
 }
 
+pub fn projected_binding_env(
+    capability: Capability,
+    binding: &str,
+    object_name: &str,
+) -> Vec<(String, String)> {
+    binding_values(
+        capability.as_str(),
+        binding,
+        object_name,
+        &object_dns(capability.as_str(), object_name, "local"),
+        None,
+    )
+}
+
 fn binding_values(
     kind: &str,
     binding: &str,

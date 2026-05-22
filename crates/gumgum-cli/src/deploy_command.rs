@@ -56,13 +56,10 @@ pub(crate) async fn deploy(
     quiet: bool,
 ) -> gumgum_core::Result<DeployOutput> {
     let kind = validate_path(&args.path)?.manifest_kind;
-    let server = match args.host.clone() {
-        Some(host) => Some(resolve_server(Some(host))?),
-        None => ConfigStore::from_home_env()?.load_default_server()?,
-    };
     match kind {
         ManifestKind::Worker => {
             let manifest = load_worker_path(&args.path)?;
+            let server = resolve_deploy_server(args.host.clone())?;
             if args.delete {
                 let Some(server) = server else {
                     return Err(GumgumError::structured(
@@ -99,6 +96,11 @@ pub(crate) async fn deploy(
         }
         ManifestKind::Workspace => {
             let workspace = load_workspace_path(&args.path)?;
+            let server = resolve_deploy_server(
+                args.host
+                    .clone()
+                    .or_else(|| workspace.server().map(ToOwned::to_owned)),
+            )?;
             let root = args
                 .path
                 .parent()
@@ -144,6 +146,13 @@ pub(crate) async fn deploy(
     }
 }
 
+fn resolve_deploy_server(host: Option<String>) -> gumgum_core::Result<Option<ServerRecord>> {
+    match host {
+        Some(host) => Ok(Some(resolve_server(Some(host))?)),
+        None => ConfigStore::from_home_env().and_then(|store| store.load_default_server()),
+    }
+}
+
 async fn deploy_one(
     path: PathBuf,
     manifest: &WorkerManifest,
@@ -153,7 +162,7 @@ async fn deploy_one(
     prod: bool,
     quiet: bool,
 ) -> gumgum_core::Result<DeployReport> {
-    let mut report = deploy_report(path, manifest, server.as_ref(), dry_run, prod);
+    let mut report = deploy_report(path, manifest, namespace, server.as_ref(), dry_run, prod);
     if dry_run {
         return Ok(report);
     }
@@ -185,11 +194,13 @@ async fn deploy_one(
 fn deploy_report(
     path: PathBuf,
     manifest: &WorkerManifest,
+    namespace: Option<&str>,
     server: Option<&ServerRecord>,
     dry_run: bool,
     prod: bool,
 ) -> DeployReport {
-    let descriptor = DeploymentDescriptor::from_manifest(&path, manifest, server, prod);
+    let descriptor =
+        DeploymentDescriptor::from_manifest_in_namespace(&path, manifest, namespace, server, prod);
     DeployReport {
         ok: true,
         dry_run,
@@ -293,11 +304,7 @@ async fn run_remote_deploy(
         container: report.container.clone(),
         route: route.clone(),
         port: report.port,
-        health: manifest
-            .worker
-            .health
-            .clone()
-            .unwrap_or_else(|| "/healthz".to_owned()),
+        health: manifest.worker.ready_check_path().to_owned(),
     };
     apply_deploy_via_daemon(host, &request).await?;
     if manifest.ingress.is_empty() {
@@ -313,7 +320,7 @@ async fn run_remote_deploy(
         verify_route(
             server,
             route.as_ref().expect("ingress deploy has a route"),
-            manifest.worker.health.as_deref().unwrap_or("/healthz"),
+            manifest.worker.ready_check_path(),
             quiet,
         )
         .await

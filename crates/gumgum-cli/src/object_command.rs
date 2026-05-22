@@ -69,7 +69,7 @@ fn graph_object_kind(capability: Capability) -> &'static str {
     match capability {
         Capability::Db => "db",
         Capability::Kv => "kv",
-        Capability::Blob => "blob",
+        Capability::Blob => "bucket",
         Capability::Queue => "queue",
         Capability::Secret => "secret",
         _ => "manual",

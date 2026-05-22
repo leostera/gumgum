@@ -150,7 +150,7 @@ mod tests {
             username: "gumgum".to_owned(),
             password: "secret".to_owned(),
         };
-        let plan = object_provider_plan(Capability::Blob, "uploads", "uploads.blob.example.test");
+        let plan = object_provider_plan(Capability::Blob, "uploads", "uploads.bucket.example.test");
 
         assert_eq!(credentials.username, "gumgum");
         assert_eq!(plan.provider.provider, "minio.main");
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn blob_provider_reconciler_is_scoped_to_minio_container() {
-        let plan = object_provider_plan(Capability::Blob, "uploads", "uploads.blob.example.test");
+        let plan = object_provider_plan(Capability::Blob, "uploads", "uploads.bucket.example.test");
 
         assert_eq!(plan.provider.container, "gumgum-provider-minio-main");
         assert_eq!(plan.provider.image, "minio/minio:latest");
@@ -206,7 +206,7 @@ mod tests {
         let plan = object_provider_plan(
             Capability::Blob,
             "visit-requests",
-            "visit-requests.blob.example.test",
+            "visit-requests.bucket.example.test",
         );
 
         assert_eq!(plan.provider.provider, "minio.main");
@@ -264,7 +264,7 @@ mod tests {
         let plan = object_provider_plan(
             Capability::Blob,
             "User Uploads",
-            "uploads.blob.example.test",
+            "uploads.bucket.example.test",
         );
         assert_eq!(plan.provider.provider, "minio.main");
         assert!(

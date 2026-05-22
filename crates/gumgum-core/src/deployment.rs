@@ -1,4 +1,4 @@
-use crate::{PlanGraph, ServerRecord, WorkerManifest, default_project_name, sanitize_name};
+use crate::{PlanGraph, ServerRecord, WorkerManifest, sanitize_name};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -22,11 +22,24 @@ impl DeploymentDescriptor {
         server: Option<&ServerRecord>,
         prod: bool,
     ) -> Self {
+        Self::from_manifest_in_namespace(path, manifest, None, server, prod)
+    }
+
+    pub fn from_manifest_in_namespace(
+        path: &Path,
+        manifest: &WorkerManifest,
+        namespace: Option<&str>,
+        server: Option<&ServerRecord>,
+        prod: bool,
+    ) -> Self {
         let worker = manifest.worker.name.clone();
-        let namespace = manifest
-            .project
-            .as_ref()
-            .map(|project| project.namespace.as_str())
+        let namespace = namespace
+            .or_else(|| {
+                manifest
+                    .project
+                    .as_ref()
+                    .map(|project| project.namespace.as_str())
+            })
             .unwrap_or("root");
         let domain_scope = server
             .map(|server| dns_scope(&server.root_domain))
@@ -40,8 +53,8 @@ impl DeploymentDescriptor {
             "gumgum-{}",
             sanitize_name(&format!("{domain_scope}-{namespace}-{worker_slug}"))
         );
-        let routes = derived_routes(manifest, server, prod);
-        let health_url = derived_routes(manifest, server, false)
+        let routes = derived_routes(manifest, namespace, server, prod);
+        let health_url = derived_routes(manifest, namespace, server, false)
             .first()
             .map(|route| {
                 let display_route = server
@@ -60,28 +73,17 @@ impl DeploymentDescriptor {
                     .unwrap_or_else(|| route.clone());
                 format!(
                     "http://{display_route}{}",
-                    manifest.worker.health.as_deref().unwrap_or("/healthz")
+                    manifest.worker.ready_check_path()
                 )
             });
-        let build_context = manifest.worker.build_context.as_ref().map(|context| {
-            let context_path = PathBuf::from(context);
-            if context_path.is_absolute() {
-                context_path.display().to_string()
-            } else {
-                path.parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .join(context_path)
-                    .display()
-                    .to_string()
-            }
-        });
+        let build_context = Some(resolve_build_context(path, manifest));
         let planner = crate::DeployPlanner::from_manifest(manifest);
         Self {
             worker,
             build_context,
             image,
             container,
-            port: manifest.worker.port.unwrap_or(3000),
+            port: deploy_port(manifest),
             routes,
             health_url,
             plan: planner.plan_lines(),
@@ -90,8 +92,32 @@ impl DeploymentDescriptor {
     }
 }
 
+fn deploy_port(manifest: &WorkerManifest) -> u16 {
+    manifest
+        .ingress
+        .iter()
+        .find_map(|ingress| ingress.port)
+        .or(manifest.worker.port)
+        .unwrap_or(3000)
+}
+
+fn resolve_build_context(path: &Path, manifest: &WorkerManifest) -> String {
+    let context = manifest.worker.build_context.as_deref().unwrap_or(".");
+    let context_path = PathBuf::from(context);
+    if context_path.is_absolute() {
+        context_path.display().to_string()
+    } else {
+        path.parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(context_path)
+            .display()
+            .to_string()
+    }
+}
+
 fn derived_routes(
     manifest: &WorkerManifest,
+    namespace: &str,
     server: Option<&ServerRecord>,
     prod: bool,
 ) -> Vec<String> {
@@ -99,29 +125,24 @@ fn derived_routes(
         return Vec::new();
     }
     let worker = sanitize_name(&manifest.worker.name);
-    let project = manifest
-        .project
-        .as_ref()
-        .map(|project| sanitize_name(&project.namespace))
-        .unwrap_or_else(default_project_name);
+    let project = sanitize_name(namespace);
     let Some(server) = server else {
         return manifest
             .ingress
             .iter()
-            .map(|ingress| ingress.local_domain.clone())
+            .filter_map(|ingress| ingress.local_domain.clone())
             .collect();
     };
 
     if prod {
-        let mut routes: Vec<String> = manifest
-            .ingress
-            .iter()
-            .filter_map(|ingress| ingress.public_domain.clone())
-            .filter(|route| route.ends_with(&server.root_domain))
-            .collect();
-        if routes.is_empty() {
-            routes.push(format!("{worker}.{project}.{}", server.root_domain));
-        }
+        let mut routes = vec![format!("{worker}.{project}.{}", server.root_domain)];
+        routes.extend(
+            manifest
+                .ingress
+                .iter()
+                .filter_map(|ingress| ingress.public_domain.clone())
+                .filter(|route| route.ends_with(&server.root_domain)),
+        );
         routes.extend(
             manifest
                 .zone
@@ -130,17 +151,15 @@ fn derived_routes(
         );
         routes
     } else {
-        let routes: Vec<String> = manifest
-            .ingress
-            .iter()
-            .map(|ingress| ingress.local_domain.clone())
-            .filter(|route| route.ends_with(&server.test_domain))
-            .collect();
-        if routes.is_empty() {
-            vec![format!("{worker}.{project}.{}", server.test_domain)]
-        } else {
-            routes
-        }
+        let mut routes = vec![format!("{worker}.{project}.{}", server.test_domain)];
+        routes.extend(
+            manifest
+                .ingress
+                .iter()
+                .filter_map(|ingress| ingress.local_domain.clone())
+                .filter(|route| route.ends_with(&server.test_domain)),
+        );
+        routes
     }
 }
 
@@ -182,7 +201,14 @@ fn stable_deploy_revision(path: &Path, manifest: &WorkerManifest) -> String {
             .as_bytes(),
     );
     for ingress in &manifest.ingress {
-        hash.write(ingress.local_domain.as_bytes());
+        hash.write(&ingress.port.unwrap_or_default().to_be_bytes());
+        hash.write(
+            ingress
+                .local_domain
+                .as_deref()
+                .unwrap_or_default()
+                .as_bytes(),
+        );
         hash.write(
             ingress
                 .public_domain
@@ -190,7 +216,7 @@ fn stable_deploy_revision(path: &Path, manifest: &WorkerManifest) -> String {
                 .unwrap_or_default()
                 .as_bytes(),
         );
-        hash.write(&[ingress.publish as u8]);
+        hash.write(&[ingress.public as u8]);
     }
     format!("gg{:016x}", hash.finish())
 }
@@ -249,6 +275,7 @@ mod tests {
                 build_context: Some("api".to_owned()),
                 command: None,
                 port: Some(8080),
+                checks: Default::default(),
                 health: Some("/ready".to_owned()),
             },
             zone: vec![Zone {
@@ -257,14 +284,15 @@ mod tests {
             ingress: vec![Ingress {
                 name: "local".to_owned(),
                 protocol: "http".to_owned(),
-                local_domain: "hello.local".to_owned(),
+                port: Some(8080),
+                local_domain: Some("hello.local".to_owned()),
                 public_domain: None,
-                publish: false,
+                public: false,
             }],
             database: Vec::new(),
             kv: Vec::new(),
             bucket: Vec::new(),
-            queue: Vec::new(),
+            queue: Default::default(),
             observability: None,
             limits: None,
         }

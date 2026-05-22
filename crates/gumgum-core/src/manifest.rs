@@ -134,7 +134,7 @@ pub struct WorkerManifest {
     #[serde(default)]
     pub bucket: Vec<ObjectBinding>,
     #[serde(default)]
-    pub queue: Vec<ObjectBinding>,
+    pub queue: QueueBindings,
     #[serde(default)]
     pub observability: Option<Observability>,
     #[serde(default)]
@@ -157,26 +157,119 @@ pub struct Worker {
     pub image: Option<String>,
     pub build_context: Option<String>,
     pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(default)]
+    pub checks: WorkerChecks,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WorkerChecks {
+    #[serde(default = "default_live_check")]
+    pub live: String,
+    #[serde(default = "default_ready_check")]
+    pub ready: String,
+}
+
+impl Default for WorkerChecks {
+    fn default() -> Self {
+        Self {
+            live: default_live_check(),
+            ready: default_ready_check(),
+        }
+    }
+}
+
+fn default_live_check() -> String {
+    "/_/live".to_owned()
+}
+
+fn default_ready_check() -> String {
+    "/_/ready".to_owned()
+}
+
+impl Worker {
+    pub fn live_check_path(&self) -> &str {
+        &self.checks.live
+    }
+
+    pub fn ready_check_path(&self) -> &str {
+        if let Some(legacy_health) = self.health.as_deref() {
+            legacy_health
+        } else {
+            &self.checks.ready
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Ingress {
     pub name: String,
     pub protocol: String,
-    pub local_domain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_domain: Option<String>,
     #[serde(default)]
-    pub publish: bool,
+    pub public: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct QueueBindings {
+    #[serde(default)]
+    pub producer: Vec<QueueBinding>,
+    #[serde(default)]
+    pub consumer: Vec<QueueBinding>,
+}
+
+impl QueueBindings {
+    pub fn iter_with_access(&self) -> impl Iterator<Item = (&QueueBinding, &'static str)> {
+        self.producer
+            .iter()
+            .map(|binding| (binding, "write"))
+            .chain(self.consumer.iter().map(|binding| (binding, "read")))
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueueBinding {
+    pub queue_id: String,
+    pub binding: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ObjectBinding {
-    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bucket_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_id: Option<String>,
     pub binding: Option<String>,
     pub access: Option<String>,
-    pub dns: Option<String>,
+}
+
+impl ObjectBinding {
+    pub fn object_id(&self, capability: crate::Capability) -> Option<&str> {
+        match capability {
+            crate::Capability::Db => self.db_id.as_deref(),
+            crate::Capability::Kv => self.kv_id.as_deref(),
+            crate::Capability::Blob => self.bucket_id.as_deref(),
+            crate::Capability::Queue => self.queue_id.as_deref(),
+            crate::Capability::Secret => self.secret_id.as_deref(),
+            crate::Capability::Observability | crate::Capability::Manual => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -345,7 +438,7 @@ pub fn worker_manifest_template(
     zones: &[String],
 ) -> String {
     let mut raw = format!(
-        "[project]\nnamespace = \"{namespace}\"\n\n[worker]\nname = \"{name}\"\nbuild_context = \".\"\nport = {port}\nhealth = \"/healthz\"\n"
+        "[project]\nnamespace = \"{namespace}\"\n\n[worker]\nname = \"{name}\"\n\n[worker.checks]\nlive = \"/_/live\"\nready = \"/_/ready\"\n\n[[ingress]]\nname = \"http\"\nprotocol = \"http\"\nport = {port}\n"
     );
     for zone in zones {
         raw.push_str(&format!("\n[[zone]]\nname = \"{zone}\"\n"));
@@ -423,10 +516,53 @@ fn validate_worker(manifest: &WorkerManifest) -> std::result::Result<(), Manifes
             ));
         }
     }
-    if manifest.worker.image.is_none() && manifest.worker.build_context.is_none() {
-        return Err(ManifestError::Validation(
-            "worker.image or worker.build_context is required".to_owned(),
-        ));
+    validate_object_bindings(crate::Capability::Db, &manifest.database, "database")?;
+    validate_object_bindings(crate::Capability::Kv, &manifest.kv, "kv")?;
+    validate_object_bindings(crate::Capability::Blob, &manifest.bucket, "bucket")?;
+    validate_queue_bindings(&manifest.queue)?;
+    Ok(())
+}
+
+fn validate_queue_bindings(bindings: &QueueBindings) -> std::result::Result<(), ManifestError> {
+    for (binding, role) in bindings.iter_with_access() {
+        if binding.queue_id.trim().is_empty() {
+            return Err(ManifestError::Validation(format!(
+                "queue.{role} binding must declare queue_id"
+            )));
+        }
+        if binding.binding.trim().is_empty() {
+            return Err(ManifestError::Validation(format!(
+                "queue.{role} binding must declare binding"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_object_bindings(
+    capability: crate::Capability,
+    bindings: &[ObjectBinding],
+    table: &str,
+) -> std::result::Result<(), ManifestError> {
+    for binding in bindings {
+        if binding
+            .object_id(capability)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .is_none()
+        {
+            return Err(ManifestError::Validation(format!(
+                "{table} binding must declare {}_id",
+                match capability {
+                    crate::Capability::Db => "db",
+                    crate::Capability::Kv => "kv",
+                    crate::Capability::Blob => "bucket",
+                    crate::Capability::Queue => "queue",
+                    crate::Capability::Secret => "secret",
+                    crate::Capability::Observability | crate::Capability::Manual => "object",
+                }
+            )));
+        }
     }
     Ok(())
 }
@@ -444,7 +580,8 @@ mod tests {
         let parsed: WorkerManifest = toml::from_str(&raw).expect("worker template parses");
         assert_eq!(parsed.project.unwrap().namespace, "experiments");
         assert_eq!(parsed.worker.name, "api");
-        assert_eq!(parsed.worker.port, Some(8080));
+        assert_eq!(parsed.worker.port, None);
+        assert_eq!(parsed.ingress[0].port, Some(8080));
         assert_eq!(parsed.zone[0].name, "example.com");
     }
 
@@ -458,6 +595,99 @@ mod tests {
         assert_eq!(parsed.namespace_name(), "peekaboo");
         assert_eq!(parsed.root_domain(), Some("leostera.dev"));
         assert!(parsed.workspace.members.is_empty());
+    }
+
+    #[test]
+    fn workspace_manifest_supports_namespace_metadata_and_legacy_shape() {
+        let modern = r#"[namespace]
+name = "visit-counter"
+root_domain = "example.dev"
+test_domain = "example.test"
+server = "isolated"
+
+[workspace]
+members = ["api", "worker"]
+"#;
+        let parsed: WorkspaceManifest = toml::from_str(modern).unwrap();
+        assert_eq!(parsed.namespace_name(), "visit-counter");
+        assert_eq!(parsed.root_domain(), Some("example.dev"));
+        assert_eq!(parsed.test_domain(), Some("example.test"));
+        assert_eq!(parsed.server(), Some("isolated"));
+        assert_eq!(parsed.members(), &["api".to_owned(), "worker".to_owned()]);
+
+        let legacy = r#"[workspace]
+name = "visit-counter"
+root_domain = "example.dev"
+members = ["api"]
+"#;
+        let parsed: WorkspaceManifest = toml::from_str(legacy).unwrap();
+        assert_eq!(parsed.namespace_name(), "visit-counter");
+        assert_eq!(parsed.root_domain(), Some("example.dev"));
+        assert_eq!(parsed.members(), &["api".to_owned()]);
+    }
+
+    #[test]
+    fn object_bindings_reject_user_supplied_dns() {
+        let raw = r#"[worker]
+name = "api"
+build_context = "."
+
+[[kv]]
+name = "user-counters"
+binding = "USER_COUNTERS"
+dns = "user-counters.kv.example.dev"
+"#;
+        let error = validate_str(raw, "gumgum.toml").unwrap_err().to_string();
+        assert!(error.contains("unknown field `dns`"));
+    }
+
+    #[test]
+    fn queue_bindings_use_producer_consumer_roles() {
+        let raw = r#"[worker]
+name = "api"
+build_context = "."
+
+[[queue.producer]]
+queue_id = "visit-events"
+binding = "VISIT_EVENTS_QUEUE"
+
+[[queue.consumer]]
+queue_id = "visit-events"
+binding = "VISIT_EVENTS_QUEUE"
+"#;
+        let report = validate_str(raw, "gumgum.toml").expect("queue roles validate");
+        assert!(report.ok);
+        let parsed: WorkerManifest = toml::from_str(raw).expect("queue roles parse");
+        assert_eq!(parsed.queue.producer[0].queue_id, "visit-events");
+        assert_eq!(parsed.queue.consumer[0].binding, "VISIT_EVENTS_QUEUE");
+    }
+
+    #[test]
+    fn queue_bindings_require_binding_name() {
+        let raw = r#"[worker]
+name = "api"
+build_context = "."
+
+[[queue.consumer]]
+queue_id = "visit-events"
+"#;
+        let error = validate_str(raw, "gumgum.toml").unwrap_err().to_string();
+        assert!(error.contains("missing field `binding`"));
+    }
+
+    #[test]
+    fn queue_bindings_reject_access_field() {
+        let raw = r#"[worker]
+name = "api"
+build_context = "."
+
+[[queue.producer]]
+queue_id = "visit-events"
+binding = "VISIT_EVENTS_QUEUE"
+access = "write"
+"#;
+        let error = validate_str(raw, "gumgum.toml").unwrap_err().to_string();
+        assert!(error.contains("unknown field `access`"));
     }
 
     #[test]

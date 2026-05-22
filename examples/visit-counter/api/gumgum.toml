@@ -1,41 +1,24 @@
 [worker]
-name = "visit-counter-api"
-image = "./Dockerfile"
-build_context = "."
-command = "uv run visit-counter-api"
-port = 3000
-health = "/healthz"
+name = "api"
 
 [[ingress]]
 name = "api-http"
 protocol = "http"
-local_domain = "api.visit-counter.leostera.test"
-public_domain = "api.visit-counter.leostera.dev"
-publish = false
+port = 3000
 
 [[kv]]
-name = "user-counters"
-dns = "user-counters.kv.leostera.dev"
+kv_id = "user-counters"
 binding = "USER_COUNTERS"
 access = "read-write"
 
 [[bucket]]
-name = "visit-requests"
-dns = "visit-requests.blob.leostera.dev"
+bucket_id = "visit-requests"
 binding = "VISIT_REQUESTS_BUCKET"
 access = "read-write"
 
-[[queue]]
-name = "visit-events"
-dns = "visit-events.queue.leostera.dev"
+[[queue.producer]]
+queue_id = "visit-events"
 binding = "VISIT_EVENTS_QUEUE"
-access = "write"
 
 [observability]
 enabled = true
-
-[limits]
-cpus = 0.5
-memory_mb = 256
-pids = 128
-restart = "unless-stopped"

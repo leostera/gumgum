@@ -122,7 +122,7 @@ fn publish_report(
     let manifest_local_routes = manifest
         .ingress
         .iter()
-        .map(|ingress| ingress.local_domain.clone())
+        .filter_map(|ingress| ingress.local_domain.clone())
         .filter(|route| !route.is_empty())
         .collect::<Vec<_>>();
     let manifest_public_routes = manifest

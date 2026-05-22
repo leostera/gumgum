@@ -1766,7 +1766,7 @@ mod tests {
         let report = missing_provider_credentials_report(
             "blob".to_owned(),
             "uploads".to_owned(),
-            "uploads.blob.example.test".to_owned(),
+            "uploads.bucket.example.test".to_owned(),
             "minio.main".to_owned(),
             Vec::new(),
         );

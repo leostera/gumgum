@@ -1,8 +1,8 @@
 use crate::{EnvArgs, print_value, resolve_server};
-use gumgum_api::EnvReport;
+use gumgum_api::{EnvReport, EnvVar};
 use gumgum_core::{
-    ErrorCode, GumgumError, ManifestKind, Subsystem, load_worker_path, load_workspace_path,
-    sanitize_name, validate_path,
+    Capability, ErrorCode, GumgumError, ManifestKind, ObjectBinding, Subsystem, load_worker_path,
+    load_workspace_path, projected_binding_env, sanitize_name, validate_path,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -25,7 +25,15 @@ pub(crate) async fn env(args: EnvArgs, json: bool) -> gumgum_core::Result<()> {
     let server = resolve_server(args.host)?;
     let mut reports = Vec::new();
     for target in targets {
-        reports.push(ServerClient::new(&server.host).env(&target.worker).await?);
+        let mut report = ServerClient::new(&server.host).env(&target.worker).await?;
+        if report.vars.is_empty() && !target.local_vars.is_empty() {
+            report.vars = target.local_vars;
+            report.message = format!(
+                "{} environment variable(s) from gumgum.toml",
+                report.vars.len()
+            );
+        }
+        reports.push(report);
     }
     if json {
         if reports.len() == 1 {
@@ -50,10 +58,11 @@ pub(crate) async fn env(args: EnvArgs, json: bool) -> gumgum_core::Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 struct EnvTarget {
     project: String,
     worker: String,
+    local_vars: Vec<EnvVar>,
 }
 
 fn env_targets(
@@ -70,12 +79,15 @@ fn env_targets(
     let mut targets = match kind {
         ManifestKind::Worker => {
             let manifest = load_worker_path(&manifest_path)?;
+            let project = manifest
+                .project
+                .as_ref()
+                .map(|project| project.namespace.clone())
+                .unwrap_or_else(|| "root".to_owned());
             vec![EnvTarget {
-                project: manifest
-                    .project
-                    .map(|project| project.namespace)
-                    .unwrap_or_else(|| "root".to_owned()),
-                worker: manifest.worker.name,
+                worker: manifest.worker.name.clone(),
+                local_vars: manifest_env_vars(&manifest),
+                project,
             }]
         }
         ManifestKind::Workspace => {
@@ -90,9 +102,11 @@ fn env_targets(
                 targets.push(EnvTarget {
                     project: manifest
                         .project
-                        .map(|project| project.namespace)
+                        .as_ref()
+                        .map(|project| project.namespace.clone())
                         .unwrap_or_else(|| workspace.namespace_name().to_owned()),
-                    worker: manifest.worker.name,
+                    worker: manifest.worker.name.clone(),
+                    local_vars: manifest_env_vars(&manifest),
                 });
             }
             targets
@@ -119,6 +133,40 @@ fn env_targets(
         .build());
     }
     Ok(targets)
+}
+
+fn manifest_env_vars(manifest: &gumgum_core::WorkerManifest) -> Vec<EnvVar> {
+    let mut vars = Vec::new();
+    extend_manifest_binding_env(&mut vars, Capability::Db, &manifest.database);
+    extend_manifest_binding_env(&mut vars, Capability::Kv, &manifest.kv);
+    extend_manifest_binding_env(&mut vars, Capability::Blob, &manifest.bucket);
+    for (binding, _access) in manifest.queue.iter_with_access() {
+        for (name, value) in
+            projected_binding_env(Capability::Queue, &binding.binding, &binding.queue_id)
+        {
+            vars.push(EnvVar { name, value });
+        }
+    }
+    vars.sort_by(|left, right| left.name.cmp(&right.name));
+    vars
+}
+
+fn extend_manifest_binding_env(
+    vars: &mut Vec<EnvVar>,
+    capability: Capability,
+    bindings: &[ObjectBinding],
+) {
+    for binding in bindings {
+        let Some(env_name) = binding.binding.as_deref() else {
+            continue;
+        };
+        let Some(object_id) = binding.object_id(capability) else {
+            continue;
+        };
+        for (name, value) in projected_binding_env(capability, env_name, object_id) {
+            vars.push(EnvVar { name, value });
+        }
+    }
 }
 
 fn dotenv_lines(project: &str, worker: &str, report: &EnvReport, qualified: bool) -> Vec<String> {
@@ -199,6 +247,34 @@ mod tests {
     }
 
     #[test]
+    fn manifest_env_vars_project_worker_bindings_before_deploy() {
+        let raw = r#"[worker]
+name = "api"
+
+[[kv]]
+kv_id = "user-counters"
+binding = "USER_COUNTERS"
+access = "read-write"
+
+[[bucket]]
+bucket_id = "visit-requests"
+binding = "VISIT_REQUESTS_BUCKET"
+access = "read-write"
+
+[[queue.producer]]
+queue_id = "visit-events"
+binding = "VISIT_EVENTS_QUEUE"
+"#;
+        let manifest: gumgum_core::WorkerManifest = toml::from_str(raw).unwrap();
+        let vars = manifest_env_vars(&manifest);
+        let names = vars.iter().map(|var| var.name.as_str()).collect::<Vec<_>>();
+        assert!(names.contains(&"USER_COUNTERS"));
+        assert!(names.contains(&"VISIT_REQUESTS_BUCKET"));
+        assert!(names.contains(&"VISIT_EVENTS_QUEUE"));
+        assert!(names.contains(&"VISIT_EVENTS_QUEUE_TOPIC"));
+    }
+
+    #[test]
     fn env_targets_expand_workspace_and_filter_worker() {
         let dir = temp_dir("workspace");
         fs::create_dir_all(dir.join("api")).unwrap();
@@ -218,13 +294,10 @@ mod tests {
             .unwrap();
         }
 
-        assert_eq!(
-            env_targets(&dir.join("gumgum.toml"), None, Some("api")).unwrap(),
-            vec![EnvTarget {
-                project: "visit-counter".to_owned(),
-                worker: "api".to_owned(),
-            }]
-        );
+        let targets = env_targets(&dir.join("gumgum.toml"), None, Some("api")).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].project, "visit-counter");
+        assert_eq!(targets[0].worker, "api");
         let _ = fs::remove_dir_all(dir);
     }
 

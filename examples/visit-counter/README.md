@@ -133,13 +133,13 @@ sqlite3 /tmp/visit-counter-example/visits.sqlite 'select visitor_id, path, bucke
 ```text
 provider/postgres.main backs object/db/visits
 provider/redis.main backs object/kv/user-counters
-provider/minio.main backs object/blob/visit-requests
+provider/minio.main backs object/bucket/visit-requests
 provider/redpanda.main backs object/queue/visit-events
 worker/visit-counter-api binds kv/user-counters as USER_COUNTERS
-worker/visit-counter-api binds blob/visit-requests as VISIT_REQUESTS_BUCKET
+worker/visit-counter-api binds bucket/visit-requests as VISIT_REQUESTS_BUCKET
 worker/visit-counter-api binds queue/visit-events as VISIT_EVENTS_QUEUE
 worker/visit-counter-worker binds db/visits as DATABASE_URL
-worker/visit-counter-worker binds blob/visit-requests as VISIT_REQUESTS_BUCKET
+worker/visit-counter-worker binds bucket/visit-requests as VISIT_REQUESTS_BUCKET
 worker/visit-counter-worker binds queue/visit-events as VISIT_EVENTS_QUEUE
 route/api.visit-counter.leostera.test routes_to worker/visit-counter-api
 ```

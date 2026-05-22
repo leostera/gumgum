@@ -303,13 +303,13 @@ fn write_scaffold_files(worker_dir: &Path, files: &[ScaffoldFile]) -> gumgum_cor
     Ok(())
 }
 
-fn print_worker_report(report: &WorkerCommandReport) {
-    println!("{}", report.message);
+fn worker_report_lines(report: &WorkerCommandReport) -> Vec<String> {
+    let mut lines = vec![report.message.clone()];
     if !report.workers.is_empty() {
-        println!("{:<24} {:<8} PATH", "WORKER", "PORT");
+        lines.push(format!("{:<24} {:<8} PATH", "WORKER", "PORT"));
     }
-    for worker in &report.workers {
-        println!(
+    lines.extend(report.workers.iter().map(|worker| {
+        format!(
             "{:<24} {:<8} {}",
             worker.name,
             worker
@@ -317,10 +317,15 @@ fn print_worker_report(report: &WorkerCommandReport) {
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_owned()),
             worker.path
-        );
-    }
-    for file in &report.files {
-        println!("  - {file}");
+        )
+    }));
+    lines.extend(report.files.iter().map(|file| format!("  - {file}")));
+    lines
+}
+
+fn print_worker_report(report: &WorkerCommandReport) {
+    for line in worker_report_lines(report) {
+        println!("{line}");
     }
 }
 
@@ -337,6 +342,26 @@ mod tests {
         let path = std::env::temp_dir().join(format!("gumgum-worker-{name}-{nonce}"));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn worker_report_lines_include_table_header() {
+        let report = WorkerCommandReport {
+            ok: true,
+            action: "list".to_owned(),
+            workers: vec![WorkerEntry {
+                name: "api".to_owned(),
+                path: "api/gumgum.toml".to_owned(),
+                port: Some(3000),
+            }],
+            files: Vec::new(),
+            message: "1 worker(s)".to_owned(),
+        };
+
+        let lines = worker_report_lines(&report);
+        assert_eq!(lines[0], "1 worker(s)");
+        assert_eq!(lines[1], format!("{:<24} {:<8} PATH", "WORKER", "PORT"));
+        assert!(lines[2].contains("api/gumgum.toml"));
     }
 
     #[test]

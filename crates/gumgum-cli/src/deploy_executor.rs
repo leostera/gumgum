@@ -1,6 +1,6 @@
 use crate::{progress, server_client::ServerClient};
 use gumgum_api::{BindingRequest, ObjectRequest, ServerRecord};
-use gumgum_core::{Capability, ObjectBinding, WorkerManifest};
+use gumgum_core::{Capability, ObjectBinding, QueueBinding, WorkerManifest};
 
 pub(crate) struct DeployExecutor<'a> {
     server: &'a ServerRecord,
@@ -114,15 +114,39 @@ fn manifest_binding_intents(
         &namespace,
         server,
     );
-    extend_binding_intents(
-        &mut intents,
-        Capability::Queue,
-        &manifest.queue,
-        manifest,
-        &namespace,
-        server,
-    );
+    extend_queue_binding_intents(&mut intents, manifest, &namespace, server);
     intents
+}
+
+fn extend_queue_binding_intents(
+    intents: &mut Vec<ManifestBindingIntent>,
+    manifest: &WorkerManifest,
+    namespace: &str,
+    server: &ServerRecord,
+) {
+    for (binding, access) in manifest.queue.iter_with_access() {
+        intents.push(queue_binding_intent(
+            binding, access, manifest, namespace, server,
+        ));
+    }
+}
+
+fn queue_binding_intent(
+    binding: &QueueBinding,
+    access: &str,
+    manifest: &WorkerManifest,
+    namespace: &str,
+    server: &ServerRecord,
+) -> ManifestBindingIntent {
+    ManifestBindingIntent {
+        capability: Capability::Queue,
+        object_name: binding.queue_id.clone(),
+        namespace: namespace.to_owned(),
+        root_domain: server.root_domain.clone(),
+        worker: manifest.worker.name.clone(),
+        env: Some(binding.binding.clone()),
+        access: access.to_owned(),
+    }
 }
 
 fn extend_binding_intents(
@@ -136,7 +160,7 @@ fn extend_binding_intents(
     for binding in bindings {
         intents.push(ManifestBindingIntent {
             capability,
-            object_name: binding.name.clone(),
+            object_name: binding.object_id(capability).unwrap_or_default().to_owned(),
             namespace: namespace.to_owned(),
             root_domain: server.root_domain.clone(),
             worker: manifest.worker.name.clone(),
@@ -164,13 +188,21 @@ mod tests {
         }
     }
 
-    fn binding(name: &str, env: &str, access: &str) -> ObjectBinding {
-        ObjectBinding {
-            name: name.to_owned(),
+    fn binding(capability: Capability, id: &str, env: &str, access: &str) -> ObjectBinding {
+        let mut binding = ObjectBinding {
             binding: Some(env.to_owned()),
             access: Some(access.to_owned()),
-            dns: Some(format!("stale-{name}.leostera.dev")),
+            ..Default::default()
+        };
+        match capability {
+            Capability::Db => binding.db_id = Some(id.to_owned()),
+            Capability::Kv => binding.kv_id = Some(id.to_owned()),
+            Capability::Blob => binding.bucket_id = Some(id.to_owned()),
+            Capability::Queue => binding.queue_id = Some(id.to_owned()),
+            Capability::Secret => binding.secret_id = Some(id.to_owned()),
+            Capability::Observability | Capability::Manual => {}
         }
+        binding
     }
 
     #[test]
@@ -185,18 +217,36 @@ mod tests {
                 build_context: Some(".".to_owned()),
                 command: None,
                 port: Some(3000),
+                checks: Default::default(),
                 health: Some("/healthz".to_owned()),
             },
             zone: Vec::new(),
             ingress: Vec::new(),
-            database: vec![binding("visits", "DATABASE_URL", "read-write")],
-            kv: vec![binding("user-counters", "USER_COUNTERS", "read-write")],
+            database: vec![binding(
+                Capability::Db,
+                "visits",
+                "DATABASE_URL",
+                "read-write",
+            )],
+            kv: vec![binding(
+                Capability::Kv,
+                "user-counters",
+                "USER_COUNTERS",
+                "read-write",
+            )],
             bucket: vec![binding(
+                Capability::Blob,
                 "visit-requests",
                 "VISIT_REQUESTS_BUCKET",
                 "read-write",
             )],
-            queue: vec![binding("visit-events", "VISIT_EVENTS_QUEUE", "write")],
+            queue: gumgum_core::QueueBindings {
+                producer: vec![QueueBinding {
+                    queue_id: "visit-events".to_owned(),
+                    binding: "VISIT_EVENTS_QUEUE".to_owned(),
+                }],
+                consumer: Vec::new(),
+            },
             observability: None,
             limits: None,
         };
@@ -230,6 +280,13 @@ mod tests {
                 .iter()
                 .all(|intent| !intent.object_name.contains("leostera"))
         );
+        assert_eq!(
+            intents
+                .iter()
+                .find(|intent| intent.capability == Capability::Queue)
+                .map(|intent| intent.access.as_str()),
+            Some("write")
+        );
     }
 
     #[test]
@@ -242,19 +299,20 @@ mod tests {
                 build_context: None,
                 command: None,
                 port: None,
+                checks: Default::default(),
                 health: None,
             },
             zone: Vec::new(),
             ingress: Vec::new(),
             database: Vec::new(),
             kv: vec![ObjectBinding {
-                name: "cache".to_owned(),
+                kv_id: Some("cache".to_owned()),
                 binding: None,
                 access: None,
-                dns: None,
+                ..Default::default()
             }],
             bucket: Vec::new(),
-            queue: Vec::new(),
+            queue: Default::default(),
             observability: None,
             limits: None,
         };

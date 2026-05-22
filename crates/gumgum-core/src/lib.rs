@@ -24,13 +24,14 @@ pub use graph::{
 pub use graph_store::{
     ControlPlaneEventKind, DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject,
     GraphStore, NewReconcileEvent, ReconcileEvent, ReconcileEventId, ReconcileEventStatus,
-    WorkerBinding, new_operation_id, object_dns,
+    WorkerBinding, new_operation_id, object_dns, projected_binding_env,
 };
 pub use manifest::{
     Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,
-    Project, ScaffoldFile, ValidationReport, Worker, WorkerManifest, Workspace, WorkspaceManifest,
-    Zone, init_plan, load_worker_path, load_workspace_path, validate_path, validate_str,
-    worker_manifest_template, worker_scaffold_files, workspace_manifest_template,
+    Project, QueueBinding, QueueBindings, ScaffoldFile, ValidationReport, Worker, WorkerManifest,
+    Workspace, WorkspaceManifest, Zone, init_plan, load_worker_path, load_workspace_path,
+    validate_path, validate_str, worker_manifest_template, worker_scaffold_files,
+    workspace_manifest_template,
 };
 pub use platform::LocalPlatform;
 pub use process::{run_setup_command, run_setup_command_streaming};
@@ -267,7 +268,7 @@ impl Capability {
         match self {
             Self::Db => "db",
             Self::Kv => "kv",
-            Self::Blob => "blob",
+            Self::Blob => "bucket",
             Self::Queue => "queue",
             Self::Secret => "secret",
             Self::Observability => "observability",
@@ -343,7 +344,10 @@ impl DeployPlanner {
                 .iter()
                 .map(|binding| BindingPlanInput {
                     capability: Capability::Db,
-                    name: binding.name.clone(),
+                    name: binding
+                        .object_id(Capability::Db)
+                        .unwrap_or_default()
+                        .to_owned(),
                     binding: binding.binding.clone(),
                 })
                 .collect(),
@@ -352,7 +356,10 @@ impl DeployPlanner {
                 .iter()
                 .map(|binding| BindingPlanInput {
                     capability: Capability::Kv,
-                    name: binding.name.clone(),
+                    name: binding
+                        .object_id(Capability::Kv)
+                        .unwrap_or_default()
+                        .to_owned(),
                     binding: binding.binding.clone(),
                 })
                 .collect(),
@@ -361,17 +368,20 @@ impl DeployPlanner {
                 .iter()
                 .map(|binding| BindingPlanInput {
                     capability: Capability::Blob,
-                    name: binding.name.clone(),
+                    name: binding
+                        .object_id(Capability::Blob)
+                        .unwrap_or_default()
+                        .to_owned(),
                     binding: binding.binding.clone(),
                 })
                 .collect(),
             queues: manifest
                 .queue
-                .iter()
-                .map(|binding| BindingPlanInput {
+                .iter_with_access()
+                .map(|(binding, _access)| BindingPlanInput {
                     capability: Capability::Queue,
-                    name: binding.name.clone(),
-                    binding: binding.binding.clone(),
+                    name: binding.queue_id.clone(),
+                    binding: Some(binding.binding.clone()),
                 })
                 .collect(),
         })
@@ -568,6 +578,7 @@ mod deploy_planner_tests {
                 build_context: Some(".".to_owned()),
                 command: None,
                 port: Some(3000),
+                checks: Default::default(),
                 health: Some("/healthz".to_owned()),
             },
             zone: Vec::new(),
@@ -575,17 +586,18 @@ mod deploy_planner_tests {
             database: Vec::new(),
             kv: Vec::new(),
             bucket: vec![ObjectBinding {
-                name: "visit-requests".to_owned(),
+                bucket_id: Some("visit-requests".to_owned()),
                 binding: Some("VISIT_REQUESTS_BUCKET".to_owned()),
                 access: Some("read-write".to_owned()),
-                dns: None,
+                ..Default::default()
             }],
-            queue: vec![ObjectBinding {
-                name: "visit-events".to_owned(),
-                binding: Some("VISIT_EVENTS_QUEUE".to_owned()),
-                access: Some("write".to_owned()),
-                dns: None,
-            }],
+            queue: QueueBindings {
+                producer: vec![QueueBinding {
+                    queue_id: "visit-events".to_owned(),
+                    binding: "VISIT_EVENTS_QUEUE".to_owned(),
+                }],
+                consumer: Vec::new(),
+            },
             observability: None,
             limits: None,
         };
@@ -595,7 +607,7 @@ mod deploy_planner_tests {
             graph
                 .nodes
                 .iter()
-                .any(|node| node.id == "blob/visit-requests")
+                .any(|node| node.id == "bucket/visit-requests")
         );
         assert!(
             graph

@@ -538,11 +538,15 @@ fn fixture_domain_patching_replaces_shared_domains() {
     let dir = env::temp_dir().join(format!("gumgum-e2e-patch-{}", unique_suffix()));
     fs::create_dir_all(&dir).unwrap();
     let fixture = copy_fixture_with_domains("example.invalid", "test.example.invalid", &dir);
-    for manifest in ["gumgum.toml", "api/gumgum.toml", "worker/gumgum.toml"] {
+    let workspace = fs::read_to_string(fixture.join("gumgum.toml")).unwrap();
+    assert!(!workspace.contains("leostera.dev"));
+    assert!(!workspace.contains("leostera.test"));
+    assert!(workspace.contains("example.invalid"));
+    assert!(workspace.contains("test.example.invalid"));
+    for manifest in ["api/gumgum.toml", "worker/gumgum.toml"] {
         let raw = fs::read_to_string(fixture.join(manifest)).unwrap();
         assert!(!raw.contains("leostera.dev"));
         assert!(!raw.contains("leostera.test"));
-        assert!(raw.contains("example.invalid") || raw.contains("test.example.invalid"));
     }
     let _ = fs::remove_dir_all(dir);
 }
