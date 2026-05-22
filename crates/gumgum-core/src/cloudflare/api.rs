@@ -106,23 +106,15 @@ impl CloudflareClient {
         tunnel_id: &str,
         hostname: &str,
     ) -> Result<()> {
+        let path = format!("/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations");
+        let current = self
+            .get_json(&path)
+            .await
+            .unwrap_or_else(|_| serde_json::json!({ "result": { "config": {} } }));
+        let ingress = merged_tunnel_ingress(&current, hostname);
         self.put_json(
-            &format!("/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations"),
-            &serde_json::json!({
-                "config": {
-                    "ingress": [
-                        {
-                            "hostname": hostname,
-                            "service": CADDY_SERVICE,
-                            "originRequest": {
-                                "noTLSVerify": true,
-                                "originServerName": hostname
-                            }
-                        },
-                        { "service": "http_status:404" }
-                    ]
-                }
-            }),
+            &path,
+            &serde_json::json!({ "config": { "ingress": ingress } }),
         )
         .await?;
         Ok(())
@@ -295,6 +287,39 @@ enum DeleteCnameResult {
     Unmanaged,
 }
 
+fn merged_tunnel_ingress(current: &serde_json::Value, hostname: &str) -> Vec<serde_json::Value> {
+    let mut routes = current
+        .pointer("/result/config/ingress")
+        .and_then(|ingress| ingress.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|route| {
+            route
+                .get("hostname")
+                .and_then(|value| value.as_str())
+                .is_some_and(|existing| existing != hostname)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    routes.retain(|route| {
+        route.get("service").and_then(|value| value.as_str()) != Some("http_status:404")
+    });
+    routes.push(tunnel_ingress_route(hostname));
+    routes.push(serde_json::json!({ "service": "http_status:404" }));
+    routes
+}
+
+fn tunnel_ingress_route(hostname: &str) -> serde_json::Value {
+    serde_json::json!({
+        "hostname": hostname,
+        "service": CADDY_SERVICE,
+        "originRequest": {
+            "noTLSVerify": true,
+            "originServerName": hostname
+        }
+    })
+}
+
 fn result_value(response: &serde_json::Value) -> Result<&serde_json::Value> {
     response.get("result").ok_or_else(|| {
         cf_message_error(
@@ -322,4 +347,76 @@ fn cf_message_error(message: &str, cause: String) -> GumgumError {
 
 fn url_encode(value: &str) -> String {
     value.replace('.', "%2E")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tunnel_ingress_merge_preserves_existing_hosts() {
+        let current = serde_json::json!({
+            "result": {
+                "config": {
+                    "ingress": [
+                        {
+                            "hostname": "visit-counter.leostera.dev",
+                            "service": CADDY_SERVICE,
+                            "originRequest": {
+                                "noTLSVerify": true,
+                                "originServerName": "visit-counter.leostera.dev"
+                            }
+                        },
+                        { "service": "http_status:404" }
+                    ]
+                }
+            }
+        });
+
+        let ingress = merged_tunnel_ingress(&current, "kava.fund");
+
+        let hosts = ingress
+            .iter()
+            .filter_map(|route| route.get("hostname").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(hosts, vec!["visit-counter.leostera.dev", "kava.fund"]);
+        assert_eq!(
+            ingress
+                .last()
+                .and_then(|route| route.get("service"))
+                .and_then(|value| value.as_str()),
+            Some("http_status:404")
+        );
+    }
+
+    #[test]
+    fn tunnel_ingress_merge_replaces_existing_host_route() {
+        let current = serde_json::json!({
+            "result": {
+                "config": {
+                    "ingress": [
+                        { "hostname": "kava.fund", "service": "http://old-origin" },
+                        { "hostname": "visit-counter.leostera.dev", "service": CADDY_SERVICE },
+                        { "service": "http_status:404" }
+                    ]
+                }
+            }
+        });
+
+        let ingress = merged_tunnel_ingress(&current, "kava.fund");
+
+        let kava_routes = ingress
+            .iter()
+            .filter(|route| {
+                route.get("hostname").and_then(|value| value.as_str()) == Some("kava.fund")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(kava_routes.len(), 1);
+        assert_eq!(
+            kava_routes[0]
+                .get("service")
+                .and_then(|value| value.as_str()),
+            Some(CADDY_SERVICE)
+        );
+    }
 }
