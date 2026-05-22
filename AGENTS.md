@@ -96,8 +96,8 @@ gumgum logs worker --host starbase2 --tail 60
 gumgum rollback api/gumgum.toml --host starbase2 --worker visit-counter-api --preview
 gumgum rollback worker/gumgum.toml --host starbase2 --worker visit-counter-worker --preview
 gumgum --dry-run publish api/gumgum.toml --host starbase2
-curl -k --resolve api.visit-counter.leostera.test:443:192.168.0.3 \
-  https://api.visit-counter.leostera.test/
+curl -k --resolve api.visit-counter.leostera.dev:443:192.168.0.3 \
+  https://api.visit-counter.leostera.dev/
 ```
 
 The `curl` mutates only app data by creating a visit; it does not mutate gumgum desired/control-plane state.

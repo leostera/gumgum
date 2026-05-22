@@ -68,18 +68,19 @@ impl WorkspaceManifest {
             .unwrap_or("root")
     }
 
-    pub fn root_domain(&self) -> Option<&str> {
+    pub fn domain(&self) -> Option<&str> {
         self.namespace
             .as_ref()
-            .and_then(|namespace| namespace.root_domain.as_deref())
-            .or(self.workspace.root_domain.as_deref())
+            .and_then(|namespace| namespace.domain.as_deref())
+            .or(self.workspace.domain.as_deref())
+    }
+
+    pub fn root_domain(&self) -> Option<&str> {
+        self.domain()
     }
 
     pub fn test_domain(&self) -> Option<&str> {
-        self.namespace
-            .as_ref()
-            .and_then(|namespace| namespace.test_domain.as_deref())
-            .or(self.workspace.test_domain.as_deref())
+        self.domain()
     }
 
     pub fn server(&self) -> Option<&str> {
@@ -96,8 +97,12 @@ impl WorkspaceManifest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Namespace {
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_domain: Option<String>,
+    #[serde(
+        default,
+        alias = "root_domain",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,8 +115,12 @@ pub struct Workspace {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_domain: Option<String>,
+    #[serde(
+        default,
+        alias = "root_domain",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_domain: Option<String>,
     #[serde(default)]
@@ -422,10 +431,10 @@ pub fn init_plan(
     }
 }
 
-pub fn workspace_manifest_template(name: &str, root_domain: Option<&str>) -> String {
+pub fn workspace_manifest_template(name: &str, domain: Option<&str>) -> String {
     let mut raw = format!("[namespace]\nname = \"{name}\"\n");
-    if let Some(root_domain) = root_domain {
-        raw.push_str(&format!("root_domain = \"{root_domain}\"\n"));
+    if let Some(domain) = domain {
+        raw.push_str(&format!("domain = \"{domain}\"\n"));
     }
     raw.push_str("\n[workspace]\nmembers = []\n");
     raw
@@ -593,25 +602,24 @@ mod tests {
         assert_eq!(report.manifest_kind, ManifestKind::Workspace);
         let parsed: WorkspaceManifest = toml::from_str(&raw).expect("workspace template parses");
         assert_eq!(parsed.namespace_name(), "peekaboo");
-        assert_eq!(parsed.root_domain(), Some("leostera.dev"));
+        assert_eq!(parsed.domain(), Some("leostera.dev"));
         assert!(parsed.workspace.members.is_empty());
     }
 
     #[test]
     fn workspace_manifest_supports_namespace_metadata_and_legacy_shape() {
         let modern = r#"[namespace]
-name = "visit-counter"
-root_domain = "example.dev"
-test_domain = "example.test"
+name = "dev.example.visit-counter"
+domain = "example.dev"
 server = "isolated"
 
 [workspace]
 members = ["api", "worker"]
 "#;
         let parsed: WorkspaceManifest = toml::from_str(modern).unwrap();
-        assert_eq!(parsed.namespace_name(), "visit-counter");
-        assert_eq!(parsed.root_domain(), Some("example.dev"));
-        assert_eq!(parsed.test_domain(), Some("example.test"));
+        assert_eq!(parsed.namespace_name(), "dev.example.visit-counter");
+        assert_eq!(parsed.domain(), Some("example.dev"));
+        assert_eq!(parsed.test_domain(), Some("example.dev"));
         assert_eq!(parsed.server(), Some("isolated"));
         assert_eq!(parsed.members(), &["api".to_owned(), "worker".to_owned()]);
 

@@ -1,6 +1,5 @@
 [workspace]
 name = "peekaboo"
 namespace = "root"
-root_domain = "leostera.dev"
-test_domain = "leostera.test"
+domain = "leostera.dev"
 members = ["api", "jobs/daily"]

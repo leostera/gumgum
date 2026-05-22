@@ -56,26 +56,7 @@ impl DeploymentDescriptor {
         let routes = derived_routes(manifest, namespace, server, prod);
         let health_url = derived_routes(manifest, namespace, server, false)
             .first()
-            .map(|route| {
-                let display_route = server
-                    .map(|server| {
-                        let root_suffix = format!(".{}", server.root_domain);
-                        if route.ends_with(&root_suffix) {
-                            format!(
-                                "{}.{test_domain}",
-                                route.trim_end_matches(&root_suffix),
-                                test_domain = server.test_domain
-                            )
-                        } else {
-                            route.clone()
-                        }
-                    })
-                    .unwrap_or_else(|| route.clone());
-                format!(
-                    "http://{display_route}{}",
-                    manifest.worker.ready_check_path()
-                )
-            });
+            .map(|route| format!("http://{route}{}", manifest.worker.ready_check_path()));
         let build_context = Some(resolve_build_context(path, manifest));
         let planner = crate::DeployPlanner::from_manifest(manifest);
         Self {
@@ -125,7 +106,7 @@ fn derived_routes(
         return Vec::new();
     }
     let worker = sanitize_name(&manifest.worker.name);
-    let project = sanitize_name(namespace);
+    let project = namespace_route_label(namespace);
     let Some(server) = server else {
         return manifest
             .ingress
@@ -134,8 +115,15 @@ fn derived_routes(
             .collect();
     };
 
+    let mut routes = vec![format!("{worker}.{project}.{}", server.root_domain)];
+    routes.extend(
+        manifest
+            .ingress
+            .iter()
+            .filter_map(|ingress| ingress.local_domain.clone())
+            .filter(|route| route.ends_with(&server.root_domain)),
+    );
     if prod {
-        let mut routes = vec![format!("{worker}.{project}.{}", server.root_domain)];
         routes.extend(
             manifest
                 .ingress
@@ -149,18 +137,8 @@ fn derived_routes(
                 .iter()
                 .map(|zone| format!("{worker}.{}", zone.name.trim_start_matches("*."))),
         );
-        routes
-    } else {
-        let mut routes = vec![format!("{worker}.{project}.{}", server.test_domain)];
-        routes.extend(
-            manifest
-                .ingress
-                .iter()
-                .filter_map(|ingress| ingress.local_domain.clone())
-                .filter(|route| route.ends_with(&server.test_domain)),
-        );
-        routes
     }
+    routes
 }
 
 fn stable_deploy_revision(path: &Path, manifest: &WorkerManifest) -> String {
@@ -240,6 +218,14 @@ impl Fnv64 {
     }
 }
 
+fn namespace_route_label(namespace: &str) -> String {
+    namespace
+        .rsplit('.')
+        .find(|label| !label.trim().is_empty())
+        .map(sanitize_name)
+        .unwrap_or_else(|| "root".to_owned())
+}
+
 fn dns_scope(root_domain: &str) -> String {
     root_domain
         .trim_end_matches('.')
@@ -315,11 +301,11 @@ mod tests {
         assert_eq!(descriptor.port, 8080);
         assert_eq!(
             descriptor.routes,
-            vec!["hello-world.experiments.leostera.test"]
+            vec!["hello-world.experiments.leostera.dev"]
         );
         assert_eq!(
             descriptor.health_url.as_deref(),
-            Some("http://hello-world.experiments.leostera.test/ready")
+            Some("http://hello-world.experiments.leostera.dev/ready")
         );
         assert_eq!(descriptor.build_context.as_deref(), Some("apps/api/api"));
         assert!(
@@ -347,7 +333,7 @@ mod tests {
         );
         assert_eq!(
             descriptor.health_url.as_deref(),
-            Some("http://hello-world.experiments.leostera.test/ready")
+            Some("http://hello-world.experiments.leostera.dev/ready")
         );
     }
 

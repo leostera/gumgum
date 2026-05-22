@@ -542,7 +542,6 @@ fn fixture_domain_patching_replaces_shared_domains() {
     assert!(!workspace.contains("leostera.dev"));
     assert!(!workspace.contains("leostera.test"));
     assert!(workspace.contains("example.invalid"));
-    assert!(workspace.contains("test.example.invalid"));
     for manifest in ["api/gumgum.toml", "worker/gumgum.toml"] {
         let raw = fs::read_to_string(fixture.join(manifest)).unwrap();
         assert!(!raw.contains("leostera.dev"));
