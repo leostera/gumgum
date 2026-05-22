@@ -19,7 +19,7 @@ impl CloudflareClient {
         }
     }
 
-    pub async fn ensure_route(&self, zone_name: &str, hostname: &str) -> Result<Vec<String>> {
+    pub async fn ensure_route(&self, zone_name: &str, hostname: &str) -> Result<CloudflareRoute> {
         let zone = self.zone(zone_name).await?;
         let account_id = zone.account.id.clone();
         let tunnel = self.ensure_tunnel(&account_id, "gumgum").await?;
@@ -31,14 +31,18 @@ impl CloudflareClient {
             &format!("{}.cfargotunnel.com", tunnel.id),
         )
         .await?;
-        Ok(vec![
-            format!("ensure Cloudflare tunnel {}", tunnel.name),
-            format!("ensure Cloudflare tunnel route {hostname} -> {CADDY_SERVICE}"),
-            format!(
-                "ensure Cloudflare DNS CNAME {hostname} -> {}.cfargotunnel.com",
-                tunnel.id
-            ),
-        ])
+        let tunnel_token = self.tunnel_token(&account_id, &tunnel.id).await?;
+        Ok(CloudflareRoute {
+            tunnel_token,
+            actions: vec![
+                format!("ensure Cloudflare tunnel {}", tunnel.name),
+                format!("ensure Cloudflare tunnel route {hostname} -> {CADDY_SERVICE}"),
+                format!(
+                    "ensure Cloudflare DNS CNAME {hostname} -> {}.cfargotunnel.com",
+                    tunnel.id
+                ),
+            ],
+        })
     }
 
     async fn zone(&self, name: &str) -> Result<Zone> {
@@ -93,6 +97,13 @@ impl CloudflareClient {
             )
             .await?;
         Ok(())
+    }
+
+    async fn tunnel_token(&self, account_id: &str, tunnel_id: &str) -> Result<String> {
+        self.get(&format!(
+            "/accounts/{account_id}/cfd_tunnel/{tunnel_id}/token"
+        ))
+        .await
     }
 
     async fn upsert_cname(&self, zone_id: &str, hostname: &str, target: &str) -> Result<()> {
@@ -167,6 +178,11 @@ impl CloudflareClient {
             .await
             .map_err(|source| cf_error("could not decode Cloudflare API response", source))
     }
+}
+
+pub struct CloudflareRoute {
+    pub actions: Vec<String>,
+    pub tunnel_token: String,
 }
 
 #[derive(Debug, Deserialize)]

@@ -20,9 +20,12 @@ pub async fn ensure_published_route(
     };
     match (domain.provider, domain.ingress) {
         (DomainProvider::Cloudflare, IngressMode::Cloudflare) => {
-            CloudflareClient::new(grant)
+            let route = CloudflareClient::new(grant)
                 .ensure_route(&domain.name, hostname)
-                .await
+                .await?;
+            let mut actions = route.actions;
+            actions.append(&mut super::tunnel::ensure_cloudflared(&route.tunnel_token).await?);
+            Ok(actions)
         }
         (DomainProvider::Manual, _) => Ok(vec![format!(
             "manual DNS required for {hostname} under {}",
