@@ -8,15 +8,11 @@ const REQUIRED_PERMISSIONS: &[(&str, &str, &str)] = &[
     ("Zone", "Zone: Read", "Every domain GumGum should manage"),
     (
         "Account",
-        "Account Settings: Read",
-        "Account used for Cloudflare ingress",
-    ),
-    (
-        "Account",
         "Cloudflare Tunnel: Edit",
-        "Account used for Cloudflare ingress; may appear under Zero Trust/Tunnels",
+        "Account used for Cloudflare Tunnel ingress",
     ),
 ];
+const CLOUDFLARE_TUNNEL_FALLBACK_PERMISSION: &str = "If Cloudflare Tunnel: Edit is not available in your dashboard, use Account / Zero Trust: Edit as the broader fallback.";
 
 pub async fn ensure_authorized_for_zone(
     store: &ConfigStore,
@@ -57,6 +53,7 @@ pub async fn authorize_zone(zone_name: &str) -> Result<CloudflareGrant> {
     eprintln!(
         "When adding more Cloudflare-managed domains later, update/recreate the token to include those domains too."
     );
+    eprintln!("{CLOUDFLARE_TUNNEL_FALLBACK_PERMISSION}");
     eprintln!("Cloudflare token page: https://dash.cloudflare.com/profile/api-tokens");
     eprint!("Paste Cloudflare API token: ");
     io::stderr().flush().map_err(|source| {
