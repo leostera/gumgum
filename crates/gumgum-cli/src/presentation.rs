@@ -109,6 +109,7 @@ mod tests {
             health_url: Some("http://api.visit-counter.leostera.test/healthz".to_owned()),
             plan: Vec::new(),
             plan_graph: PlanGraph::default(),
+            events: Vec::new(),
             message: "deployed api; health verified".to_owned(),
         };
 
@@ -143,6 +144,7 @@ mod tests {
             health_url: Some("http://api.visit-counter.leostera.test/healthz".to_owned()),
             plan: Vec::new(),
             plan_graph,
+            events: Vec::new(),
             message: String::new(),
         };
 

@@ -3,8 +3,8 @@
 use crate::{DeployArgs, progress, resolve_server};
 use gumgum_api::{DeployApplyReport, DeployRequest, DeploymentDeleteRequest, ServerRecord};
 use gumgum_core::{
-    ConfigStore, DeploymentDescriptor, ErrorCode, GumgumError, ManifestKind, PlanGraph, Subsystem,
-    WorkerManifest, load_worker_path, load_workspace_path,
+    ConfigStore, DeploymentDescriptor, ErrorCode, GumgumError, GumgumEvent, ManifestKind,
+    PlanGraph, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
     run_setup_command_streaming as run_command_streaming, validate_path,
 };
 use serde::Serialize;
@@ -28,6 +28,8 @@ pub(crate) struct DeployReport {
     pub(crate) health_url: Option<String>,
     pub(crate) plan: Vec<String>,
     pub(crate) plan_graph: PlanGraph,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) events: Vec<GumgumEvent>,
     pub(crate) message: String,
 }
 
@@ -42,6 +44,7 @@ pub(crate) struct WorkspaceDeployReport {
     pub(crate) message: String,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub(crate) enum DeployOutput {
@@ -198,6 +201,11 @@ async fn deploy_one(
     DeployExecutor::new(&server, quiet)
         .ensure_manifest_bindings(manifest, project.name, env)
         .await?;
+    report.events.push(GumgumEvent::DeploymentStarted {
+        worker: report.worker.clone(),
+        environment: Some(env.label().to_owned()),
+        image: report.image.clone(),
+    });
     run_remote_deploy(&server, manifest, &report, env, quiet).await?;
     report.ok = true;
     report.dry_run = false;
@@ -208,6 +216,19 @@ async fn deploy_one(
         ),
         None => format!("deployed {} to {}", report.worker, server.host),
     };
+    report.events.push(GumgumEvent::DeploymentSucceeded {
+        worker: report.worker.clone(),
+        environment: Some(env.label().to_owned()),
+        revision: Some(
+            report
+                .image
+                .rsplit(':')
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+        route: report.routes.first().cloned(),
+    });
     Ok(report)
 }
 
@@ -229,6 +250,12 @@ fn deploy_report(
         env.is_release(),
     );
     descriptor.container = format!("{}-{}", descriptor.container, env.label());
+    let events = vec![GumgumEvent::DeploymentPlanned {
+        worker: descriptor.worker.clone(),
+        environment: Some(env.label().to_owned()),
+        image: descriptor.image.clone(),
+        route: descriptor.routes.first().cloned(),
+    }];
     DeployReport {
         ok: true,
         dry_run,
@@ -243,6 +270,7 @@ fn deploy_report(
         health_url: descriptor.health_url,
         plan: descriptor.plan,
         plan_graph: descriptor.plan_graph,
+        events,
         message: if dry_run {
             format!(
                 "validated worker manifest for {} deploy; no containers changed",
@@ -479,6 +507,7 @@ mod deploy_hardening_tests {
             health_url: None,
             plan: Vec::new(),
             plan_graph: PlanGraph::default(),
+            events: Vec::new(),
             message: String::new(),
         };
         let server = ServerRecord {
@@ -498,8 +527,30 @@ mod deploy_hardening_tests {
 
 pub(crate) fn print_deploy_output(json: bool, output: &DeployOutput) {
     if json {
-        crate::print_value(true, output);
+        let events = deploy_output_events(output);
+        if events.is_empty() {
+            crate::print_value(true, output);
+        } else {
+            for event in events {
+                println!(
+                    "{}",
+                    serde_json::to_string(&event).expect("serialize deploy event")
+                );
+            }
+        }
     } else {
         crate::presentation::Presenter::new().deploy_output(output);
+    }
+}
+
+fn deploy_output_events(output: &DeployOutput) -> Vec<GumgumEvent> {
+    match output {
+        DeployOutput::Worker(report) => report.events.clone(),
+        DeployOutput::Workspace(report) => report
+            .workers
+            .iter()
+            .flat_map(|worker| worker.events.clone())
+            .collect(),
+        DeployOutput::Delete(_) => Vec::new(),
     }
 }
