@@ -13,8 +13,8 @@ gumgum is a self-hosted app platform for your VPS or local machine. It gives sma
   - [Remote server](#remote-server)
   - [Inspect and remove servers](#inspect-and-remove-servers)
 - [Create a project or workspace](#create-a-project-or-workspace)
-  - [Create a worker](#create-a-worker)
   - [Create a workspace](#create-a-workspace)
+  - [Create workers](#create-workers)
 - [Manage resources](#manage-resources)
   - [Databases](#databases)
   - [KV namespaces](#kv-namespaces)
@@ -170,37 +170,55 @@ Removing a server record does not delete remote containers or resources.
 
 ## Create a project or workspace
 
-### Create a worker
+### Create a workspace
 
-Initialize a single worker project:
+`gumgum init` creates a workspace manifest in the current directory:
 
 ```bash
-gumgum init --name api --kind worker
+gumgum init --name my-app
 ```
 
 Useful options:
 
 ```bash
-gumgum init --name api --kind worker --port 3000
-gumgum init --name api --kind worker --root-domain example.com
-gumgum init --name api --kind worker --zone example.com --zone example.net
+gumgum init --name my-app --root-domain example.com
+gumgum init --name my-app --namespace production
+gumgum init --name my-app --force
 ```
 
-### Create a workspace
+### Create workers
 
-Initialize a workspace when a directory should contain multiple workers:
+Workers are managed with `gumgum worker`, separate from workspace initialization.
+
+Create workers inside the current workspace:
 
 ```bash
-gumgum init --name my-app --kind workspace
+gumgum worker create api --port 3000
+gumgum worker create jobs --port 3001
 ```
 
-Then create worker projects inside it:
+This creates worker folders with their own `gumgum.toml` files and adds them to the workspace members list.
+
+Choose an explicit directory or zones:
 
 ```bash
-mkdir api worker
-gumgum init --name api --kind worker --port 3000
-gumgum init --name worker --kind worker --port 3001
+gumgum worker create api --dir apps/api --port 3000
+gumgum worker create api --zone example.com --zone example.net
 ```
+
+List workers:
+
+```bash
+gumgum worker list
+```
+
+Remove a worker from the workspace:
+
+```bash
+gumgum worker delete api
+```
+
+`worker delete` only removes the worker from the workspace manifest. It never deletes source files.
 
 Workspace-aware commands such as `logs`, `env`, and `publish --dry-run` can operate across all workers from the workspace root.
 
@@ -669,7 +687,10 @@ gumgum server upgrade --host <host-or-name>
 Project/runtime commands:
 
 ```bash
-gumgum init [--name <name>] [--kind worker|workspace] [--port <port>]
+gumgum init [--name <name>] [--root-domain <domain>] [--namespace <namespace>] [--force]
+gumgum worker create <name> [--port <port>] [--namespace <namespace>] [--dir <path>] [--zone <domain>] [--force]
+gumgum worker list [workspace]
+gumgum worker delete <name> [workspace]
 gumgum deploy [path] [--host <server>] [--prod] [--delete]
 gumgum publish [target] [--host <server>] [--public-domain <domain>] [--tunnel <kind>]
 gumgum logs [path-or-worker] [--host <server>] [--tail <n>] [--follow]

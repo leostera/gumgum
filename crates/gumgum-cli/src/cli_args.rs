@@ -20,6 +20,7 @@ pub(crate) enum Command {
     Version,
     Config(ConfigArgs),
     Init(InitArgs),
+    Worker(WorkerArgs),
     Deploy(DeployArgs),
     Publish(PublishArgs),
     Env(EnvArgs),
@@ -310,24 +311,56 @@ pub(crate) struct EventsArgs {
 pub(crate) struct InitArgs {
     #[arg(long)]
     pub(crate) name: Option<String>,
-    #[arg(long, default_value = "worker")]
-    pub(crate) kind: InitKind,
-    #[arg(long, default_value_t = 3000)]
-    pub(crate) port: u16,
     #[arg(long)]
     pub(crate) root_domain: Option<String>,
     #[arg(long)]
     pub(crate) namespace: Option<String>,
-    #[arg(long = "zone")]
-    pub(crate) zones: Vec<String>,
     #[arg(long)]
     pub(crate) force: bool,
 }
 
-#[derive(Clone, Debug, clap::ValueEnum)]
-pub(crate) enum InitKind {
-    Workspace,
-    Worker,
+#[derive(Debug, Args)]
+pub(crate) struct WorkerArgs {
+    #[command(subcommand)]
+    pub(crate) command: WorkerCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum WorkerCommand {
+    Create(WorkerCreateArgs),
+    List(WorkerListArgs),
+    Delete(WorkerDeleteArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct WorkerCreateArgs {
+    pub(crate) name: String,
+    #[arg(long, default_value_t = 3000)]
+    pub(crate) port: u16,
+    #[arg(long)]
+    pub(crate) namespace: Option<String>,
+    #[arg(long = "zone")]
+    pub(crate) zones: Vec<String>,
+    #[arg(
+        long,
+        help = "Create under this directory instead of the workspace root"
+    )]
+    pub(crate) dir: Option<PathBuf>,
+    #[arg(long)]
+    pub(crate) force: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct WorkerListArgs {
+    #[arg(default_value = "gumgum.toml")]
+    pub(crate) workspace: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct WorkerDeleteArgs {
+    pub(crate) name: String,
+    #[arg(default_value = "gumgum.toml")]
+    pub(crate) workspace: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -508,6 +541,34 @@ mod tests {
                     ref require,
                 }))
             }) if action == "list" && host == "starbase2" && require == &vec!["gumgum:events".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn worker_command_grammar_covers_create_list_delete() {
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "worker", "create", "api", "--port", "8080"])
+                .unwrap()
+                .command,
+            Command::Worker(WorkerArgs {
+                command: WorkerCommand::Create(WorkerCreateArgs { ref name, port: 8080, .. })
+            }) if name == "api"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "worker", "list"])
+                .unwrap()
+                .command,
+            Command::Worker(WorkerArgs {
+                command: WorkerCommand::List(WorkerListArgs { .. })
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "worker", "delete", "api"])
+                .unwrap()
+                .command,
+            Command::Worker(WorkerArgs {
+                command: WorkerCommand::Delete(WorkerDeleteArgs { ref name, .. })
+            }) if name == "api"
         ));
     }
 

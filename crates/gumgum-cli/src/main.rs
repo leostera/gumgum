@@ -18,6 +18,7 @@ mod publish_command;
 mod server_client;
 mod setup_command;
 mod system_command;
+mod worker_command;
 
 use anyhow::Result;
 use clap::Parser;
@@ -33,13 +34,14 @@ use gumgum_api::SetupPlan;
 use gumgum_core::{
     ConfigStore, ErrorCode, GumgumError, ServerRecord, Subsystem, sanitize_name, setup_actions,
 };
-use init_command::init_manifest;
+use init_command::{init_manifest, print_init_report};
 use logs_command::logs;
 use object_command::object_command;
 use project_command::{info, rollback};
 use publish_command::publish;
 use setup_command::{install_gumgumd, resolve_setup};
 use system_command::{server, status, version};
+use worker_command::worker_command;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -72,7 +74,14 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         }
         Command::Init(args) => {
             let report = init_manifest(args, cli.dry_run)?;
-            print_value(cli.json, &report);
+            if cli.json {
+                print_value(true, &report);
+            } else {
+                print_init_report(&report);
+            }
+        }
+        Command::Worker(args) => {
+            worker_command(args, cli.json, cli.dry_run)?;
         }
         Command::Deploy(args) => {
             let report = deploy(args, cli.dry_run, cli.json).await?;

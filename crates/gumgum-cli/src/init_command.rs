@@ -1,6 +1,6 @@
-use crate::{InitArgs, InitKind};
+use crate::InitArgs;
 use gumgum_core::{
-    ConfigStore, ErrorCode, GumgumError, InitManifestKind as CoreInitKind, ScaffoldFile, Subsystem,
+    ConfigStore, ErrorCode, GumgumError, InitManifestKind as CoreInitKind, Subsystem,
     default_project_name, init_plan, validate_path,
 };
 use serde::Serialize;
@@ -16,49 +16,66 @@ pub(crate) struct InitReport {
     message: String,
 }
 
+pub(crate) fn print_init_report(report: &InitReport) {
+    println!("{}", report.message);
+    println!("kind: {}", report.manifest_kind);
+    println!("path: {}", report.path);
+    if !report.files.is_empty() {
+        println!("Files:");
+        for file in &report.files {
+            println!("  - {file}");
+        }
+    }
+}
+
 pub(crate) fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Result<InitReport> {
-    let path = PathBuf::from("gumgum.toml");
     let name = args.name.unwrap_or_else(default_project_name);
-    let root_domain = args.root_domain.or_else(|| {
+    init_workspace_manifest(name, args.namespace, args.root_domain, args.force, dry_run)
+}
+
+pub(crate) fn init_workspace_manifest(
+    name: String,
+    namespace: Option<String>,
+    root_domain: Option<String>,
+    force: bool,
+    dry_run: bool,
+) -> gumgum_core::Result<InitReport> {
+    let path = PathBuf::from("gumgum.toml");
+    let root_domain = root_domain.or_else(|| {
         ConfigStore::from_home_env()
             .and_then(|store| store.load_default_server())
             .ok()
             .flatten()
             .map(|server| server.root_domain)
     });
-    let namespace = args.namespace.unwrap_or_else(|| name.clone());
-    let plan = init_plan(
-        match args.kind {
-            InitKind::Workspace => CoreInitKind::Workspace,
-            InitKind::Worker => CoreInitKind::Worker,
-        },
+    let namespace = namespace.unwrap_or_else(|| name.clone());
+    let mut plan = init_plan(
+        CoreInitKind::Workspace,
         &name,
         &namespace,
-        args.port,
-        &args.zones,
+        3000,
+        &[],
         root_domain.as_deref(),
     );
 
-    if path.exists() && !args.force {
+    if path.exists() && !force {
         validate_path(&path)?;
         return Ok(InitReport {
             ok: true,
             path: path.display().to_string(),
-            manifest_kind: match args.kind {
-                InitKind::Workspace => "workspace",
-                InitKind::Worker => "worker",
-            },
+            manifest_kind: "workspace",
             created: false,
             files: vec![path.display().to_string()],
             message: "gumgum.toml already exists; use --force to overwrite".to_owned(),
         });
     }
 
-    let mut files = vec![path.display().to_string()];
-    if matches!(args.kind, InitKind::Worker) {
-        files.extend(scaffold_example_files(&plan.scaffold_files, dry_run)?);
+    if !namespace.is_empty() {
+        plan.manifest
+            .push_str(&format!("namespace = \"{namespace}\"\n"));
     }
 
+    let files = vec![path.display().to_string()];
     if !dry_run {
         fs::write(&path, plan.manifest).map_err(|source| {
             GumgumError::structured(
@@ -75,46 +92,13 @@ pub(crate) fn init_manifest(args: InitArgs, dry_run: bool) -> gumgum_core::Resul
     Ok(InitReport {
         ok: true,
         path: path.display().to_string(),
-        manifest_kind: match args.kind {
-            InitKind::Workspace => "workspace",
-            InitKind::Worker => "worker",
-        },
+        manifest_kind: "workspace",
         created: !dry_run,
         files,
         message: if dry_run {
-            "would create gumgum.toml".to_owned()
+            "would create workspace gumgum.toml".to_owned()
         } else {
-            "created gumgum.toml".to_owned()
+            "created workspace gumgum.toml".to_owned()
         },
-    })
-}
-
-fn scaffold_example_files(
-    files: &[ScaffoldFile],
-    dry_run: bool,
-) -> gumgum_core::Result<Vec<String>> {
-    let paths = files.iter().map(|file| file.path.to_owned()).collect();
-    if dry_run {
-        return Ok(paths);
-    }
-
-    for file in files {
-        write_if_missing(file.path, file.contents)?;
-    }
-    Ok(paths)
-}
-
-fn write_if_missing(path: &str, contents: &str) -> gumgum_core::Result<()> {
-    if PathBuf::from(path).exists() {
-        return Ok(());
-    }
-    fs::write(path, contents).map_err(|source| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::Io,
-            format!("could not write {path}"),
-        )
-        .likely_cause(source.to_string())
-        .build()
     })
 }

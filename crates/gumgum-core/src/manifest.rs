@@ -278,7 +278,7 @@ pub fn init_plan(
 }
 
 pub fn workspace_manifest_template(name: &str, root_domain: Option<&str>) -> String {
-    let mut raw = format!("[workspace]\nname = \"{name}\"\nmembers = [\"apps/*\"]\n");
+    let mut raw = format!("[workspace]\nname = \"{name}\"\nmembers = []\n");
     if let Some(root_domain) = root_domain {
         raw.push_str(&format!("root_domain = \"{root_domain}\"\n"));
     }
@@ -407,7 +407,7 @@ mod tests {
             parsed.workspace.root_domain.as_deref(),
             Some("leostera.dev")
         );
-        assert_eq!(parsed.workspace.members, vec!["apps/*"]);
+        assert!(parsed.workspace.members.is_empty());
     }
 
     #[test]
