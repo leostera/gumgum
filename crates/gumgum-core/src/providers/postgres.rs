@@ -1,7 +1,7 @@
 use tokio::process::Command as TokioCommand;
 
 use super::docker::{
-    created_provider_actions, ensure_network, inspect, run_provider_command, start_existing,
+    create_provider_container, ensure_network, inspect, run_provider_command, start_existing,
 };
 use crate::{Capability, sanitize_name};
 
@@ -88,31 +88,15 @@ pub(crate) async fn ensure(
     if inspect(&provider.container).await {
         return start_existing(provider, "could not start postgres provider").await;
     }
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("run")
-            .arg("-d")
-            .arg("--name")
-            .arg(&provider.container)
-            .arg("--restart")
-            .arg("unless-stopped")
-            .arg("--network")
-            .arg("gumgum-network")
-            .arg("-e")
-            .arg(format!(
-                "{}={}",
-                credentials.username_env, credentials.username
-            ))
-            .arg("-e")
-            .arg(format!(
-                "{}={}",
-                credentials.password_env, credentials.password
-            ))
-            .arg(&provider.image),
-        "could not create postgres provider",
+    create_provider_container(
+        provider,
+        vec![
+            (credentials.username_env, credentials.username),
+            (credentials.password_env, credentials.password),
+        ],
+        Vec::new(),
     )
-    .await?;
-    Ok(created_provider_actions(provider))
+    .await
 }
 
 async fn database_exists(

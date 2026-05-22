@@ -2,7 +2,7 @@ use crate::{Capability, sanitize_name};
 use tokio::process::Command as TokioCommand;
 
 use super::docker::{
-    created_provider_actions, ensure_network, inspect, run_provider_command, start_existing,
+    create_provider_container, ensure_network, inspect, run_provider_command, start_existing,
 };
 use super::types::{ObjectProviderPlan, ProviderSpec};
 
@@ -57,37 +57,29 @@ pub(crate) async fn ensure_provider(provider: &ProviderSpec) -> crate::Result<Ve
     if inspect(&provider.container).await {
         return start_existing(provider, "could not start redpanda provider").await;
     }
-    run_provider_command(
-        TokioCommand::new("docker")
-            .arg("run")
-            .arg("-d")
-            .arg("--name")
-            .arg(&provider.container)
-            .arg("--restart")
-            .arg("unless-stopped")
-            .arg("--network")
-            .arg("gumgum-network")
-            .arg(&provider.image)
-            .arg("redpanda")
-            .arg("start")
-            .arg("--overprovisioned")
-            .arg("--smp")
-            .arg("1")
-            .arg("--memory")
-            .arg("512M")
-            .arg("--reserve-memory")
-            .arg("0M")
-            .arg("--node-id")
-            .arg("0")
-            .arg("--check=false")
-            .arg("--kafka-addr")
-            .arg("0.0.0.0:9092")
-            .arg("--advertise-kafka-addr")
-            .arg("gumgum-provider-redpanda-main:9092"),
-        "could not create redpanda provider",
+    create_provider_container(
+        provider,
+        Vec::new(),
+        vec![
+            "redpanda".to_owned(),
+            "start".to_owned(),
+            "--overprovisioned".to_owned(),
+            "--smp".to_owned(),
+            "1".to_owned(),
+            "--memory".to_owned(),
+            "512M".to_owned(),
+            "--reserve-memory".to_owned(),
+            "0M".to_owned(),
+            "--node-id".to_owned(),
+            "0".to_owned(),
+            "--check=false".to_owned(),
+            "--kafka-addr".to_owned(),
+            "0.0.0.0:9092".to_owned(),
+            "--advertise-kafka-addr".to_owned(),
+            "gumgum-provider-redpanda-main:9092".to_owned(),
+        ],
     )
-    .await?;
-    Ok(created_provider_actions(provider))
+    .await
 }
 
 async fn ensure_topic(topic: &str) -> crate::Result<()> {
