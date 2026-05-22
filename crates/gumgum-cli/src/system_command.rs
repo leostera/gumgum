@@ -1,18 +1,17 @@
 use crate::server_client::ServerClient;
 use crate::{
-    ServerCommand, ServerCredentialsSubcommand, ServerProvidersSubcommand, ServerSubcommand,
-    ServerUpgradeArgs, StatusArgs, config_command, print_value, progress,
+    ServerCommand, ServerSubcommand, ServerUpgradeArgs, StatusArgs, config_command,
+    print_config_report, print_value, progress,
 };
 use gumgum_api::{
-    DaemonVersionReport, GraphReport, PingReport, ProviderConfigureRequest, ProviderStatusReport,
-    ServerListReport,
+    DaemonVersionReport, GraphReport, PingReport, ProviderStatusReport, ServerListReport,
 };
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DaemonPingReport, ErrorCode, GumgumError, GumgumInstaller,
-    ServerRecord, SetupTarget, Subsystem, not_configured_status,
+    ServerRecord, SetupOptions, SetupTarget, Subsystem, not_configured_status, setup_actions,
 };
 use serde::Serialize;
-use std::str::FromStr;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) async fn status(args: StatusArgs, json: bool) -> gumgum_core::Result<()> {
     if let Some(host) = args.host {
@@ -56,85 +55,58 @@ pub(crate) async fn server(
                 print_server_list(&report.servers);
             }
         }
+        Some(ServerSubcommand::Add(args)) => {
+            let report = add_server(args, dry_run, json).await?;
+            if json {
+                print_value(true, &report);
+            } else {
+                print_server_mutation_report(&report);
+            }
+        }
+        Some(ServerSubcommand::Rm(args)) => {
+            let report = remove_server(&args.host_or_name)?;
+            if json {
+                print_value(true, &report);
+            } else {
+                print_server_mutation_report(&report);
+            }
+        }
         Some(ServerSubcommand::Ping(args)) => {
-            let report = ping_host(&args.host).await?;
-            print_value(json, &report)
+            let host = ping_target(&args)?;
+            let report = ping_host(&host).await?;
+            if json {
+                print_value(true, &report)
+            } else {
+                print_ping_report(&report);
+            }
         }
         Some(ServerSubcommand::Capabilities(args)) => {
-            let name = required_server_name(server.name, "capabilities")?;
+            let name = server_capabilities_target(server.name, &args)?;
             let server = find_server(&name)?;
             let report = ServerClient::new(server.host).version().await?;
-            if args.require_visit_counter {
-                require_visit_counter_readiness(&name, &report)?;
+            let required = required_capabilities_from_args(&args.require);
+            if !required.is_empty() {
+                require_capabilities(&name, &report, &required)?;
             }
             if json {
                 print_value(true, &report);
             } else {
-                for line in capability_lines(&report) {
+                for line in capability_lines(&report, &required) {
                     println!("{line}");
                 }
             }
         }
-        Some(ServerSubcommand::BootProviders) => {
-            let name = required_server_name(server.name, "boot-providers")?;
-            let server = find_server(&name)?;
-            let report = ServerClient::new(server.host)
-                .boot_default_providers()
-                .await?;
-            print_value(json, &report);
-        }
         Some(ServerSubcommand::Config(args)) => {
-            let name = required_server_name(server.name, "config")?;
+            let name = server_command_target(server.name, args.host, "config")?;
             let report = config_command(Some(name), args.command)?;
-            print_value(json, &report)
-        }
-        Some(ServerSubcommand::Credentials(args)) => {
-            let name = required_server_name(server.name, "credentials")?;
-            let server = find_server(&name)?;
-            match args.command {
-                ServerCredentialsSubcommand::Init => {
-                    let report = ServerClient::new(server.host)
-                        .init_minio_credentials()
-                        .await?;
-                    print_value(json, &report);
-                }
-            }
-        }
-        Some(ServerSubcommand::Providers(args)) => {
-            let name = required_server_name(server.name, "providers")?;
-            let server = find_server(&name)?;
-            match args.command.unwrap_or(ServerProvidersSubcommand::Status) {
-                ServerProvidersSubcommand::Status => {
-                    let report = ServerClient::new(server.host).providers().await?;
-                    if json {
-                        print_value(true, &report);
-                    } else {
-                        print_provider_status_report(&report);
-                    }
-                }
-                ServerProvidersSubcommand::Boot => {
-                    let report = ServerClient::new(server.host)
-                        .boot_default_providers()
-                        .await?;
-                    print_value(json, &report);
-                }
-                ServerProvidersSubcommand::Configure(args) => {
-                    let capability = gumgum_core::Capability::from_str(&args.capability)
-                        .unwrap_or(gumgum_core::Capability::Manual);
-                    let report = ServerClient::new(server.host)
-                        .configure_provider(&ProviderConfigureRequest {
-                            capability,
-                            kind: args.kind,
-                            endpoint: args.endpoint,
-                            vault: args.vault,
-                        })
-                        .await?;
-                    print_value(json, &report);
-                }
+            if json {
+                print_value(true, &report);
+            } else {
+                print_config_report(&report);
             }
         }
         Some(ServerSubcommand::Upgrade(args)) => {
-            let name = required_server_name(server.name, "upgrade")?;
+            let name = server_command_target(server.name, args.host.clone(), "upgrade")?;
             let report = upgrade_server(&name, args, json, dry_run).await?;
             print_value(json, &report)
         }
@@ -175,14 +147,219 @@ struct ServerUpgradeReport {
     message: String,
 }
 
-fn required_server_name(name: Option<String>, command: &str) -> gumgum_core::Result<String> {
-    name.ok_or_else(|| {
+#[derive(Debug, Serialize)]
+struct ServerMutationReport {
+    ok: bool,
+    dry_run: bool,
+    action: String,
+    server: Option<ServerRecord>,
+    actions: Vec<String>,
+    message: String,
+}
+
+async fn add_server(
+    args: crate::ServerAddArgs,
+    dry_run: bool,
+    quiet: bool,
+) -> gumgum_core::Result<ServerMutationReport> {
+    let setup = GumgumInstaller::resolve_target(SetupOptions {
+        host: Some(args.host),
+        name: args.name,
+        user: args.user,
+        root_domain: args.root_domain,
+        test_domain: args.test_domain,
+    })
+    .await?;
+    reject_accidental_domain_replacement(&setup)?;
+    let server = ServerRecord {
+        name: setup.name.clone(),
+        host: setup.host.clone(),
+        root_domain: setup.root_domain.clone(),
+        test_domain: setup.test_domain.clone(),
+        health_url: format!("http://{}:7777/healthz", setup.host),
+    };
+    let actions = server_add_actions(&setup, dry_run);
+    if dry_run {
+        return Ok(ServerMutationReport {
+            ok: true,
+            dry_run: true,
+            action: "add".to_owned(),
+            message: "server add setup preview; no install, config, providers, or resolver changed"
+                .to_owned(),
+            server: Some(server),
+            actions,
+        });
+    }
+
+    if setup.local {
+        progress(
+            quiet,
+            "installing local binary into ~/.gumgum/bin and daemon service into ~/.gumgum/daemon",
+        );
+        GumgumInstaller::install_local_user_service(quiet).await?;
+        progress(
+            quiet,
+            format!("configuring host DNS for *.{}", setup.test_domain),
+        );
+        GumgumInstaller::configure_host_dns(&setup.test_domain, quiet).await?;
+    } else {
+        let target = setup.ssh_target();
+        progress(quiet, format!("running remote bootstrap on {target}"));
+        GumgumInstaller::run_remote_setup(&target, &setup, quiet).await?;
+    }
+    progress(quiet, "checking gumgumd health");
+    DaemonHealthClient::wait_for_ping(&setup.host).await?;
+    ConfigStore::from_home_env()?.save_server(server.clone())?;
+    if !setup.local {
+        progress(
+            quiet,
+            format!(
+                "configuring local resolver for {} -> {}",
+                setup.test_domain, setup.host
+            ),
+        );
+        GumgumInstaller::configure_client_resolver(&setup.test_domain, &setup.host, quiet).await?;
+    }
+    progress(quiet, "initializing built-in providers");
+    let provider_report = ServerClient::new(setup.host.clone())
+        .boot_default_providers()
+        .await?;
+    let mut actions = server_add_actions(&setup, false);
+    actions.extend(provider_report.actions);
+    Ok(ServerMutationReport {
+        ok: true,
+        dry_run: false,
+        action: "add".to_owned(),
+        message: format!("server {} setup complete", server.name),
+        server: Some(server),
+        actions,
+    })
+}
+
+fn reject_accidental_domain_replacement(setup: &SetupTarget) -> gumgum_core::Result<()> {
+    let existing = ConfigStore::from_home_env()?
+        .load_servers()?
+        .into_iter()
+        .find(|server| server.name == setup.name || server.host == setup.host);
+    if let Some(existing) = existing {
+        if !existing.root_domain.is_empty()
+            && !setup.root_domain.is_empty()
+            && existing.root_domain != setup.root_domain
+        {
+            return Err(GumgumError::structured(
+                Subsystem::Config,
+                ErrorCode::InvalidArgs,
+                format!(
+                    "server {} already owns root domain {}",
+                    existing.name, existing.root_domain
+                ),
+            )
+            .likely_cause(format!(
+                "refusing to replace it with {} during server add",
+                setup.root_domain
+            ))
+            .next_command("gumgum server list")
+            .build());
+        }
+    }
+    Ok(())
+}
+
+fn server_add_actions(setup: &SetupTarget, dry_run: bool) -> Vec<String> {
+    let mut actions = Vec::new();
+    if dry_run {
+        actions.push("preview only; no install, config, providers, or resolver changes".to_owned());
+    }
+    actions.extend(setup_actions(setup.local));
+    actions.push(format!("save server {} ({})", setup.name, setup.host));
+    actions.push("initialize built-in db/kv/queue/bucket/secret providers".to_owned());
+    if !setup.test_domain.is_empty() {
+        actions.push(format!(
+            "configure local resolver for *.{} -> {}",
+            setup.test_domain, setup.host
+        ));
+    }
+    actions
+}
+
+fn remove_server(host_or_name: &str) -> gumgum_core::Result<ServerMutationReport> {
+    let removed = ConfigStore::from_home_env()?.remove_server(host_or_name)?;
+    match removed {
+        Some(server) => {
+            let action = format!("removed server {} ({})", host_or_name, server.host);
+            Ok(ServerMutationReport {
+                ok: true,
+                dry_run: false,
+                action: "rm".to_owned(),
+                message: format!("server {} removed", server.name),
+                server: Some(server),
+                actions: vec![action],
+            })
+        }
+        None => Err(GumgumError::structured(
+            Subsystem::Config,
+            ErrorCode::InvalidArgs,
+            format!("unknown GumGum.dev server {host_or_name}"),
+        )
+        .next_command("gumgum server list")
+        .build()),
+    }
+}
+
+fn ping_target(args: &crate::PingArgs) -> gumgum_core::Result<String> {
+    args.host
+        .clone()
+        .or_else(|| args.target.clone())
+        .ok_or_else(|| {
+            GumgumError::structured(
+                Subsystem::Cli,
+                ErrorCode::InvalidArgs,
+                "server host/name is required for ping",
+            )
+            .next_command("gumgum server ping --host <host-or-name>")
+            .build()
+        })
+}
+
+fn server_command_target(
+    legacy_name: Option<String>,
+    host: Option<String>,
+    command: &str,
+) -> gumgum_core::Result<String> {
+    host.or(legacy_name).ok_or_else(|| {
         GumgumError::structured(
             Subsystem::Cli,
             ErrorCode::InvalidArgs,
-            format!("server name is required for {command}"),
+            format!("server host/name is required for {command}"),
         )
-        .next_command(format!("gumgum server <name> {command}"))
+        .next_command(format!("gumgum server {command} --host <host-or-name>"))
+        .build()
+    })
+}
+
+fn server_capabilities_target(
+    legacy_name: Option<String>,
+    args: &crate::ServerCapabilitiesArgs,
+) -> gumgum_core::Result<String> {
+    if let Some(action) = &args.action {
+        if action != "list" {
+            return Err(GumgumError::structured(
+                Subsystem::Cli,
+                ErrorCode::InvalidArgs,
+                format!("unknown server capabilities action {action}"),
+            )
+            .next_command("gumgum server capabilities list --host <host-or-name>")
+            .build());
+        }
+    }
+    args.host.clone().or(legacy_name).ok_or_else(|| {
+        GumgumError::structured(
+            Subsystem::Cli,
+            ErrorCode::InvalidArgs,
+            "server host/name is required for capabilities",
+        )
+        .next_command("gumgum server capabilities list --host <host-or-name>")
+        .next_command("gumgum server <name> capabilities")
         .build()
     })
 }
@@ -239,9 +416,9 @@ async fn upgrade_server(
     GumgumInstaller::run_remote_setup(&target, &setup, quiet).await?;
     progress(quiet, "checking upgraded gumgumd health");
     DaemonHealthClient::wait_for_ping(&setup.host).await?;
-    progress(quiet, "checking visit-counter smoke capabilities");
+    progress(quiet, "checking required smoke capabilities");
     let version = ServerClient::new(setup.host.clone()).version().await?;
-    require_visit_counter_readiness(&server.name, &version)?;
+    require_smoke_readiness(&server.name, &version)?;
     Ok(ServerUpgradeReport {
         ok: true,
         name: server.name,
@@ -254,11 +431,9 @@ async fn upgrade_server(
     })
 }
 
-fn require_visit_counter_readiness(
-    name: &str,
-    report: &DaemonVersionReport,
-) -> gumgum_core::Result<()> {
-    let missing = missing_visit_counter_capabilities(&report.capabilities);
+fn require_smoke_readiness(name: &str, report: &DaemonVersionReport) -> gumgum_core::Result<()> {
+    let required = smoke_required_capabilities();
+    let missing = missing_capabilities(&report.capabilities, &required);
     if missing.is_empty() {
         return Ok(());
     }
@@ -266,58 +441,100 @@ fn require_visit_counter_readiness(
         Subsystem::Cli,
         ErrorCode::NotImplemented,
         format!(
-            "gumgumd on {name} is missing visit-counter capabilities: {}",
+            "gumgumd on {name} is missing required capabilities: {}",
             missing.join(", ")
         ),
     )
-    .next_command(format!("gumgum server {name} capabilities"))
+    .next_command(format!("gumgum server capabilities list --host {name}"))
     .next_command(format!("gumgum --dry-run server {name} upgrade"))
     .next_command(format!(
-        "HOST={name} APPLY_UPGRADE=1 VERIFY_UPGRADE_IDEMPOTENCY=1 scripts/smoke-visit-counter-starbase2.sh"
+        "gumgum server capabilities list --host {name} --require {}",
+        required.join(",")
     ))
     .build())
 }
 
-fn capability_lines(report: &DaemonVersionReport) -> Vec<String> {
+fn require_capabilities(
+    name: &str,
+    report: &DaemonVersionReport,
+    required: &[String],
+) -> gumgum_core::Result<()> {
+    let missing = missing_capabilities(&report.capabilities, required);
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(GumgumError::structured(
+        Subsystem::Cli,
+        ErrorCode::NotImplemented,
+        format!(
+            "gumgumd on {name} is missing required capabilities: {}",
+            missing.join(", ")
+        ),
+    )
+    .next_command(format!("gumgum server capabilities list --host {name}"))
+    .next_command(format!("gumgum --dry-run server {name} upgrade"))
+    .build())
+}
+
+fn capability_lines(report: &DaemonVersionReport, required: &[String]) -> Vec<String> {
     let mut lines = vec![format!("gumgumd {} ({})", report.version, report.git_sha)];
     lines.push(format!("target: {}", report.target));
     lines.push("capabilities:".to_owned());
     lines.extend(report.capabilities.iter().map(|capability| {
-        let marker = if required_visit_counter_capabilities().contains(&capability.as_str()) {
+        let marker = if required.iter().any(|required| required == capability) {
             "*"
         } else {
             "-"
         };
         format!("  {marker} {capability}")
     }));
-    let missing = missing_visit_counter_capabilities(&report.capabilities);
-    if missing.is_empty() {
-        lines.push("visit-counter readiness: ok".to_owned());
-    } else {
-        lines.push(format!(
-            "visit-counter readiness: missing {}",
-            missing.join(", ")
-        ));
-        lines.push("next: gumgum --dry-run server <name> upgrade".to_owned());
+    if !required.is_empty() {
+        let missing = missing_capabilities(&report.capabilities, required);
+        if missing.is_empty() {
+            lines.push("required capabilities: ok".to_owned());
+        } else {
+            lines.push(format!(
+                "required capabilities: missing {}",
+                missing.join(", ")
+            ));
+            lines.push("next: gumgum server capabilities list --host <name>".to_owned());
+            lines.push("next: gumgum --dry-run server <name> upgrade".to_owned());
+        }
     }
     lines
 }
 
-fn missing_visit_counter_capabilities(capabilities: &[String]) -> Vec<&'static str> {
-    required_visit_counter_capabilities()
-        .into_iter()
-        .filter(|required| !capabilities.iter().any(|capability| capability == required))
+fn missing_capabilities(capabilities: &[String], required: &[String]) -> Vec<String> {
+    required
+        .iter()
+        .filter(|required| {
+            !capabilities
+                .iter()
+                .any(|capability| capability == *required)
+        })
+        .cloned()
         .collect()
 }
 
-fn required_visit_counter_capabilities() -> Vec<&'static str> {
+fn smoke_required_capabilities() -> Vec<String> {
     vec![
-        "events",
-        "rollback_revision_id",
-        "binding_delete",
-        "object_delete",
-        "deployment_delete",
+        "gumgum:events".to_owned(),
+        "gumgum:rollback:revision_id".to_owned(),
+        "gumgum:objects:create_preview".to_owned(),
+        "gumgum:bindings:create_preview".to_owned(),
+        "gumgum:bindings:delete".to_owned(),
+        "gumgum:objects:delete".to_owned(),
+        "gumgum:deployments:delete".to_owned(),
     ]
+}
+
+fn required_capabilities_from_args(required: &[String]) -> Vec<String> {
+    required
+        .iter()
+        .map(|capability| capability.trim())
+        .filter(|capability| !capability.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn server_upgrade_actions(dry_run: bool) -> Vec<String> {
@@ -326,7 +543,7 @@ fn server_upgrade_actions(dry_run: bool) -> Vec<String> {
         "run published GumGum.dev installer".to_owned(),
         "restart gumgumd via remote setup".to_owned(),
         "check gumgumd health".to_owned(),
-        "verify visit-counter smoke capabilities".to_owned(),
+        "verify required smoke capabilities".to_owned(),
     ];
     if dry_run {
         actions.insert(0, "preview only; no ssh command will run".to_owned());
@@ -337,7 +554,7 @@ fn server_upgrade_actions(dry_run: bool) -> Vec<String> {
 fn print_server_list(servers: &[ServerRecord]) {
     if servers.is_empty() {
         println!("No GumGum.dev servers configured.");
-        println!("Run: gumgum setup <host> --root-domain <domain>");
+        println!("Run: gumgum server add <host> --name <name> --root-domain <domain>");
         return;
     }
     println!("{:<18} {:<16} {:<20} HEALTH", "NAME", "HOST", "ROOT DOMAIN");
@@ -349,9 +566,36 @@ fn print_server_list(servers: &[ServerRecord]) {
     }
 }
 
-fn print_provider_status_report(report: &ProviderStatusReport) {
-    for line in provider_status_lines(report) {
-        println!("{line}");
+fn print_server_mutation_report(report: &ServerMutationReport) {
+    println!("{}", report.message);
+    if let Some(server) = &report.server {
+        println!("name: {}", server.name);
+        println!("host: {}", server.host);
+        if !server.root_domain.is_empty() {
+            println!("root domain: {}", server.root_domain);
+        }
+        if !server.test_domain.is_empty() {
+            println!("test domain: {}", server.test_domain);
+        }
+        println!("health: {}", server.health_url);
+    }
+    if !report.actions.is_empty() {
+        println!("Actions:");
+        for action in &report.actions {
+            println!("  - {action}");
+        }
+    }
+}
+
+fn print_ping_report(report: &PingReport) {
+    println!(
+        "gumgumd: {} ({})",
+        if report.ok { "healthy" } else { "unhealthy" },
+        report.health_url
+    );
+    println!("host: {}", report.host);
+    if let Some(active) = report.service_active {
+        println!("service: active={active}");
     }
 }
 
@@ -423,16 +667,51 @@ fn status_summary_lines(
             .iter()
             .filter(|node| node.kind == "route")
             .count();
-        let objects = graph
+        let object_nodes = graph
             .nodes
             .iter()
-            .filter(|node| node.kind == "object")
+            .filter(|node| node.kind == "object" || node.kind == "global_object")
+            .collect::<Vec<_>>();
+        let binding_workers: BTreeMap<_, _> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == "binds")
+            .map(|edge| (edge.to.as_str(), edge.from.as_str()))
+            .collect();
+        let mut object_bindings: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+        for edge in graph.edges.iter().filter(|edge| edge.kind == "projects_as") {
+            let worker = binding_workers
+                .get(edge.from.as_str())
+                .and_then(|worker_id| worker_id.strip_prefix("worker/"))
+                .unwrap_or("unknown");
+            let binding = edge
+                .from
+                .strip_prefix(&format!("binding/{worker}/"))
+                .unwrap_or(edge.from.as_str());
+            object_bindings
+                .entry(edge.to.as_str())
+                .or_default()
+                .insert(format!("{worker}.{binding}"));
+        }
+        let bound_objects = object_nodes
+            .iter()
+            .filter(|node| object_bindings.contains_key(node.id.as_str()))
             .count();
+        let unbound_objects = object_nodes.len().saturating_sub(bound_objects);
         lines.push(format!(
-            "Desired graph: workers={workers} routes={routes} objects={objects}"
+            "Desired graph: workers={workers} routes={routes} objects={} bound_objects={bound_objects} unbound_objects={unbound_objects}",
+            object_nodes.len()
         ));
         for route in graph.nodes.iter().filter(|node| node.kind == "route") {
             lines.push(format!("  - route {}", route.label));
+        }
+        for object in object_nodes {
+            if let Some(bindings) = object_bindings.get(object.id.as_str()) {
+                let bindings = bindings.iter().cloned().collect::<Vec<_>>().join(", ");
+                lines.push(format!("  - object {} (bound: {bindings})", object.label));
+            } else {
+                lines.push(format!("  - object {} (unbound)", object.label));
+            }
         }
     } else {
         lines.push("Desired graph: unavailable".to_owned());
@@ -477,40 +756,56 @@ mod tests {
     use gumgum_core::{Capability, GraphEdge, GraphNode, ProviderStatus};
 
     #[test]
-    fn capability_lines_explain_visit_counter_readiness() {
+    fn capability_lines_explain_explicit_requirements() {
         let report = DaemonVersionReport {
             ok: true,
             version: "0.1.0".to_owned(),
             git_sha: "abc123".to_owned(),
             target: "x86_64".to_owned(),
-            capabilities: vec!["events".to_owned()],
+            capabilities: vec!["gumgum:events".to_owned()],
         };
 
-        let lines = capability_lines(&report);
+        let lines = capability_lines(
+            &report,
+            &[
+                "gumgum:events".to_owned(),
+                "gumgum:bindings:delete".to_owned(),
+                "gumgum:objects:delete".to_owned(),
+            ],
+        );
 
-        assert!(lines.contains(&"visit-counter readiness: missing rollback_revision_id, binding_delete, object_delete, deployment_delete".to_owned()));
+        assert!(lines.contains(&"  * gumgum:events".to_owned()));
+        assert!(
+            lines.contains(
+                &"required capabilities: missing gumgum:bindings:delete, gumgum:objects:delete"
+                    .to_owned()
+            )
+        );
         assert!(lines.contains(&"next: gumgum --dry-run server <name> upgrade".to_owned()));
     }
 
     #[test]
-    fn require_visit_counter_readiness_errors_with_upgrade_hint() {
+    fn require_capabilities_errors_with_upgrade_hint() {
         let report = DaemonVersionReport {
             ok: true,
             version: "0.1.0".to_owned(),
             git_sha: "abc123".to_owned(),
             target: "x86_64".to_owned(),
-            capabilities: vec!["events".to_owned()],
+            capabilities: vec!["gumgum:events".to_owned()],
         };
 
-        let report = require_visit_counter_readiness("starbase2", &report)
-            .unwrap_err()
-            .to_report();
+        let report = require_capabilities(
+            "starbase2",
+            &report,
+            &[
+                "gumgum:events".to_owned(),
+                "gumgum:bindings:delete".to_owned(),
+            ],
+        )
+        .unwrap_err()
+        .to_report();
 
-        assert!(
-            report
-                .message
-                .contains("missing visit-counter capabilities")
-        );
+        assert!(report.message.contains("missing required capabilities"));
         assert!(
             report
                 .next_commands
@@ -525,8 +820,7 @@ mod tests {
             "preview only; no ssh command will run"
         );
         assert!(
-            server_upgrade_actions(true)
-                .contains(&"verify visit-counter smoke capabilities".to_owned())
+            server_upgrade_actions(true).contains(&"verify required smoke capabilities".to_owned())
         );
         assert!(
             !server_upgrade_actions(false)
@@ -569,7 +863,18 @@ mod tests {
                 ),
                 GraphNode::new("object/db/visits", "object", "visits"),
             ],
-            edges: Vec::<GraphEdge>::new(),
+            edges: vec![
+                GraphEdge {
+                    from: "worker/api".to_owned(),
+                    to: "binding/api/DATABASE_URL".to_owned(),
+                    kind: "binds".to_owned(),
+                },
+                GraphEdge {
+                    from: "binding/api/DATABASE_URL".to_owned(),
+                    to: "object/db/visits".to_owned(),
+                    kind: "projects_as".to_owned(),
+                },
+            ],
         };
 
         let lines = status_summary_lines(&ping, Some(&providers), Some(&graph));
@@ -577,7 +882,13 @@ mod tests {
         assert!(lines.contains(&"gumgumd: healthy (http://starbase2:7777/healthz)".to_owned()));
         assert!(lines.contains(&"Providers: 0/1 running".to_owned()));
         assert!(lines.iter().any(|line| line.contains("provider warning")));
-        assert!(lines.contains(&"Desired graph: workers=1 routes=1 objects=1".to_owned()));
+        assert!(
+            lines.contains(
+                &"Desired graph: workers=1 routes=1 objects=1 bound_objects=1 unbound_objects=0"
+                    .to_owned()
+            )
+        );
         assert!(lines.contains(&"  - route api.visit-counter.leostera.test".to_owned()));
+        assert!(lines.contains(&"  - object visits (bound: api.DATABASE_URL)".to_owned()));
     }
 }

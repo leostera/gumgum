@@ -3,13 +3,15 @@ use axum::{
     extract::{Path as AxumPath, Query, State},
     routing::{get, post},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use gumgum_api::{
-    AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DaemonVersionReport,
-    DeployApplyReport, DeployRequest, DeploymentDeleteRequest, DeploymentRevisionsReport,
-    EnvReport, EnvVar, EventsReport, GraphNode, GraphReport, LogsReport, ObjectDeleteRequest,
-    ObjectReport, ObjectRequest, ProviderBootReport, ProviderConfigureReport,
-    ProviderConfigureRequest, ProviderCredentialsInitReport, ProviderCredentialsReport,
-    ProviderStatusReport, RollbackReport, RollbackRequest,
+    AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, BucketObjectReport,
+    BucketObjectRequest, DaemonVersionReport, DeployApplyReport, DeployRequest,
+    DeploymentDeleteRequest, DeploymentRevisionDeleteReport, DeploymentRevisionsReport, EnvReport,
+    EnvVar, EventsReport, GraphNode, GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport,
+    ObjectRequest, ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
+    ProviderCredentialsInitReport, ProviderCredentialsReport, ProviderStatusReport, RollbackReport,
+    RollbackRequest,
 };
 use gumgum_core::{
     ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, ErrorCode, GlobalObject,
@@ -33,8 +35,14 @@ impl DaemonApp {
     }
 
     pub(crate) async fn run(self) -> gumgum_core::Result<()> {
+        eprintln!("Starting gumgumd, the GumGum control-plane daemon.");
+        eprintln!(
+            "Most users do not need to run this manually; prefer `gumgum setup` or `gumgum server add`."
+        );
+        eprintln!("Preparing local Docker/network prerequisites...");
         LocalPlatform::ensure(false).await?;
         let graph_path = ConfigStore::from_home_env()?.root().join("graph.sqlite");
+        eprintln!("Using graph store: {}", graph_path.display());
         GraphStore::new(graph_path.clone()).init()?;
         let app = self.router(DaemonState {
             graph_path: Arc::new(graph_path),
@@ -51,6 +59,7 @@ impl DaemonApp {
                 .likely_cause(source.to_string())
                 .build()
             })?;
+        eprintln!("gumgumd listening on http://{addr}");
         tracing::info!(%addr, "gumgum daemon listening");
         axum::serve(listener, app).await.map_err(|source| {
             GumgumError::structured(Subsystem::Api, ErrorCode::Io, "gumgum daemon failed")
@@ -70,6 +79,10 @@ impl DaemonApp {
             )
             .route("/v0/rollback", post(daemon_rollback))
             .route("/v0/revisions/{worker}", get(daemon_revisions))
+            .route(
+                "/v0/revisions/{worker}/{revision_id}",
+                axum::routing::delete(daemon_delete_revision),
+            )
             .route("/v0/events", get(daemon_events))
             .route(
                 "/v0/objects",
@@ -92,6 +105,7 @@ impl DaemonApp {
             .route("/v0/env/{worker}", get(daemon_env))
             .route("/v0/graph", get(daemon_graph))
             .route("/v0/graph/affected", get(daemon_graph_affected))
+            .route("/v0/buckets/{action}", post(daemon_bucket_object_action))
             .route("/v0/logs/{container}", get(daemon_logs))
             .with_state(state)
     }
@@ -121,12 +135,16 @@ fn daemon_version_report() -> DaemonVersionReport {
             "graph".to_owned(),
             "logs".to_owned(),
             "rollback".to_owned(),
-            "rollback_revisions".to_owned(),
-            "rollback_revision_id".to_owned(),
-            "events".to_owned(),
-            "binding_delete".to_owned(),
-            "object_delete".to_owned(),
-            "deployment_delete".to_owned(),
+            "gumgum:events".to_owned(),
+            "gumgum:rollback:revisions".to_owned(),
+            "gumgum:rollback:revision_id".to_owned(),
+            "gumgum:rollback:revision_delete".to_owned(),
+            "gumgum:objects:create_preview".to_owned(),
+            "gumgum:bindings:create_preview".to_owned(),
+            "gumgum:bindings:delete".to_owned(),
+            "gumgum:objects:delete".to_owned(),
+            "gumgum:deployments:delete".to_owned(),
+            "gumgum:buckets:objects".to_owned(),
         ],
     }
 }
@@ -307,33 +325,37 @@ async fn daemon_create_object(
     };
     let secret_object_name = format!("{}-password", gumgum_core::sanitize_name(&request.name));
     let object_name_for_secret = request.name.clone();
-    let ok = tokio::task::spawn_blocking(move || {
-        let ok = store.materialize_object(&request_for_db)?;
-        if let Some(password) = db_password {
-            store.materialize_object(&GlobalObject {
-                capability: gumgum_core::Capability::Secret,
-                name: secret_object_name.clone(),
-                namespace: request_for_db.namespace.clone(),
-                root_domain: request_for_db.root_domain.clone(),
-            })?;
-            store.materialize_object_secret(
-                "db",
-                &object_name_for_secret,
-                "password",
-                "PASSWORD",
-                &format!(
-                    "onepassword://gumgum/db/{}/password",
-                    gumgum_core::sanitize_name(&object_name_for_secret)
-                ),
-                &password,
-            )?;
-        }
-        Ok::<bool, gumgum_core::GumgumError>(ok)
-    })
-    .await
-    .ok()
-    .and_then(Result::ok)
-    .unwrap_or(false);
+    let ok = if request.preview {
+        true
+    } else {
+        tokio::task::spawn_blocking(move || {
+            let ok = store.materialize_object(&request_for_db)?;
+            if let Some(password) = db_password {
+                store.materialize_object(&GlobalObject {
+                    capability: gumgum_core::Capability::Secret,
+                    name: secret_object_name.clone(),
+                    namespace: request_for_db.namespace.clone(),
+                    root_domain: request_for_db.root_domain.clone(),
+                })?;
+                store.materialize_object_secret(
+                    "db",
+                    &object_name_for_secret,
+                    "password",
+                    "PASSWORD",
+                    &format!(
+                        "onepassword://gumgum/db/{}/password",
+                        gumgum_core::sanitize_name(&object_name_for_secret)
+                    ),
+                    &password,
+                )?;
+            }
+            Ok::<bool, gumgum_core::GumgumError>(ok)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(false)
+    };
     let mut execution_steps = reconciliation_steps.clone();
     if execution_steps.is_empty() {
         execution_steps.push(GraphActionPlanner::ensure_object_step(
@@ -344,23 +366,30 @@ async fn daemon_create_object(
                 .unwrap_or_else(|_| gumgum_core::ProviderName::new("provider.local").unwrap()),
         ));
     }
-    let provider_actions = GraphActionExecutor::execute_steps(
-        &execution_steps,
-        GraphExecutionContext {
-            object_plan: Some(provider_plan.clone()),
-            provider_credentials,
-            graph_path: Some((*state.graph_path).clone()),
-        },
-    )
-    .await
-    .unwrap_or_else(|error| {
-        vec![format!(
-            "provider reconcile failed: {}",
-            error.to_report().message
-        )]
-    });
+    let provider_actions = if request.preview {
+        vec!["preview only; no objects changed".to_owned()]
+    } else {
+        GraphActionExecutor::execute_steps(
+            &execution_steps,
+            GraphExecutionContext {
+                object_plan: Some(provider_plan.clone()),
+                provider_credentials,
+                graph_path: Some((*state.graph_path).clone()),
+            },
+        )
+        .await
+        .unwrap_or_else(|error| {
+            vec![format!(
+                "provider reconcile failed: {}",
+                error.to_report().message
+            )]
+        })
+    };
+    let reconcile_ok = !provider_actions
+        .iter()
+        .any(|action| action.starts_with("provider reconcile failed:"));
     Json(ObjectReport {
-        ok,
+        ok: ok && reconcile_ok,
         kind: capability_name,
         name: request.name,
         dns,
@@ -368,12 +397,14 @@ async fn daemon_create_object(
         connection_examples: provider_plan.connection_examples,
         provider_actions,
         reconciliation_steps: execution_steps,
-        message: if capability == gumgum_core::Capability::Db {
+        message: if request.preview {
+            "object create preview".to_owned()
+        } else if capability == gumgum_core::Capability::Db {
             "global object materialized with managed password secret and provider reconciled"
+                .to_owned()
         } else {
-            "global object materialized and provider reconciled"
-        }
-        .to_owned(),
+            "global object materialized and provider reconciled".to_owned()
+        },
     })
 }
 
@@ -699,25 +730,33 @@ async fn daemon_create_binding(
     let reconciliation_steps = request_for_db
         .reconciliation_steps(graph_path.clone())
         .await;
-    let ok = tokio::task::spawn_blocking(move || store.materialize_binding(&request_for_db))
+    let ok = if request.preview {
+        true
+    } else {
+        tokio::task::spawn_blocking(move || store.materialize_binding(&request_for_db))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false)
+    };
+    let binding_actions = if request.preview {
+        vec!["preview only; no bindings changed".to_owned()]
+    } else {
+        GraphActionExecutor::execute_steps(
+            &reconciliation_steps,
+            GraphExecutionContext {
+                graph_path: Some(graph_path),
+                ..GraphExecutionContext::default()
+            },
+        )
         .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or(false);
-    let binding_actions = GraphActionExecutor::execute_steps(
-        &reconciliation_steps,
-        GraphExecutionContext {
-            graph_path: Some(graph_path),
-            ..GraphExecutionContext::default()
-        },
-    )
-    .await
-    .unwrap_or_else(|error| {
-        vec![format!(
-            "binding reconcile failed: {}",
-            error.to_report().message
-        )]
-    });
+        .unwrap_or_else(|error| {
+            vec![format!(
+                "binding reconcile failed: {}",
+                error.to_report().message
+            )]
+        })
+    };
     Json(BindingReport {
         ok,
         object: format!("{}/{}", request.capability, request.object_name),
@@ -725,7 +764,11 @@ async fn daemon_create_binding(
         binding: request.binding,
         binding_actions,
         reconciliation_steps,
-        message: "binding materialized in graph".to_owned(),
+        message: if request.preview {
+            "binding create preview".to_owned()
+        } else {
+            "binding materialized in graph".to_owned()
+        },
     })
 }
 
@@ -767,8 +810,11 @@ async fn daemon_revisions(
     let path = (*state.graph_path).clone();
     let worker_for_task = worker.clone();
     let limit = query.limit.or(query.tail).unwrap_or(10);
-    let revisions = tokio::task::spawn_blocking(move || {
-        GraphStore::new(path).deployment_revisions(&worker_for_task, limit)
+    let (current, revisions) = tokio::task::spawn_blocking(move || {
+        let store = GraphStore::new(path);
+        let current = store.desired_deploy(&worker_for_task)?;
+        let revisions = store.deployment_revisions(&worker_for_task, limit)?;
+        Ok::<_, gumgum_core::GumgumError>((current, revisions))
     })
     .await
     .ok()
@@ -777,14 +823,242 @@ async fn daemon_revisions(
     Json(DeploymentRevisionsReport {
         ok: true,
         worker,
+        current,
         message: format!("{} deployment revision(s)", revisions.len()),
         revisions,
+    })
+}
+
+async fn daemon_delete_revision(
+    State(state): State<DaemonState>,
+    AxumPath((worker, revision_id)): AxumPath<(String, i64)>,
+) -> Json<DeploymentRevisionDeleteReport> {
+    let path = (*state.graph_path).clone();
+    let worker_for_task = worker.clone();
+    let deleted = tokio::task::spawn_blocking(move || {
+        GraphStore::new(path).delete_deployment_revision(&worker_for_task, revision_id)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false);
+    Json(DeploymentRevisionDeleteReport {
+        ok: deleted,
+        worker,
+        revision_id,
+        deleted,
+        actions: if deleted {
+            vec![
+                format!("deleted deployment revision {revision_id}"),
+                "no containers or desired deployments changed".to_owned(),
+            ]
+        } else {
+            vec![format!("deployment revision {revision_id} not found")]
+        },
+        message: if deleted {
+            format!("deleted deployment revision {revision_id}")
+        } else {
+            format!("deployment revision {revision_id} not found")
+        },
     })
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct LogsQuery {
     tail: Option<u32>,
+}
+
+async fn daemon_bucket_object_action(
+    AxumPath(action): AxumPath<String>,
+    Json(request): Json<BucketObjectRequest>,
+) -> Json<BucketObjectReport> {
+    if !matches!(action.as_str(), "ls" | "get" | "rm" | "cp" | "sync") {
+        return Json(BucketObjectReport {
+            ok: false,
+            action: action.clone(),
+            bucket: request.bucket,
+            path: request.path,
+            objects: Vec::new(),
+            content: None,
+            content_base64: None,
+            actions: Vec::new(),
+            message: format!("unknown bucket object action {action}"),
+        });
+    }
+    let credentials = match ConfigStore::from_home_env()
+        .and_then(|store| store.load_provider_credentials("minio.main"))
+    {
+        Ok(Some(credentials)) => credentials,
+        Ok(None) => {
+            return Json(BucketObjectReport {
+                ok: false,
+                action,
+                bucket: request.bucket,
+                path: request.path,
+                objects: Vec::new(),
+                content: None,
+                content_base64: None,
+                actions: vec!["configure minio.main provider credentials".to_owned()],
+                message: "minio provider credentials are not configured".to_owned(),
+            });
+        }
+        Err(error) => {
+            return Json(BucketObjectReport {
+                ok: false,
+                action,
+                bucket: request.bucket,
+                path: request.path,
+                objects: Vec::new(),
+                content: None,
+                content_base64: None,
+                actions: vec![error.to_string()],
+                message: "could not load minio provider credentials".to_owned(),
+            });
+        }
+    };
+    let bucket = request.bucket.clone().unwrap_or_default();
+    let path = request.path.clone().unwrap_or_default();
+    let result = match action.as_str() {
+        "ls" => gumgum_core::providers::minio::list_objects(
+            &bucket,
+            request.path.as_deref(),
+            &credentials,
+        )
+        .await
+        .map(|objects| BucketObjectReport {
+            ok: true,
+            action: action.clone(),
+            bucket: request.bucket.clone(),
+            path: request.path.clone(),
+            objects,
+            content: None,
+            content_base64: None,
+            actions: Vec::new(),
+            message: "bucket objects listed".to_owned(),
+        }),
+        "get" => gumgum_core::providers::minio::get_object_bytes(&bucket, &path, &credentials)
+            .await
+            .map(|bytes| BucketObjectReport {
+                ok: true,
+                action: action.clone(),
+                bucket: request.bucket.clone(),
+                path: request.path.clone(),
+                objects: Vec::new(),
+                content: String::from_utf8(bytes.clone()).ok(),
+                content_base64: Some(BASE64.encode(bytes)),
+                actions: Vec::new(),
+                message: "bucket object read".to_owned(),
+            }),
+        "rm" => gumgum_core::providers::minio::remove_object(&bucket, &path, &credentials)
+            .await
+            .map(|actions| BucketObjectReport {
+                ok: true,
+                action: action.clone(),
+                bucket: request.bucket.clone(),
+                path: request.path.clone(),
+                objects: Vec::new(),
+                content: None,
+                content_base64: None,
+                actions,
+                message: "bucket object removed".to_owned(),
+            }),
+        "cp" => match request.content_base64 {
+            Some(content) => match BASE64.decode(content) {
+                Ok(bytes) => match split_bucket_object_path(
+                    request.destination.as_deref().unwrap_or_default(),
+                ) {
+                    Ok((bucket, path)) => {
+                        gumgum_core::providers::minio::put_object(
+                            &bucket,
+                            &path,
+                            bytes,
+                            &credentials,
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error),
+                },
+                Err(source) => Err(GumgumError::structured(
+                    Subsystem::Api,
+                    ErrorCode::InvalidArgs,
+                    "bucket upload content is not valid base64",
+                )
+                .likely_cause(source.to_string())
+                .build()),
+            },
+            None => {
+                gumgum_core::providers::minio::copy_object(
+                    request.source.as_deref().unwrap_or_default(),
+                    request.destination.as_deref().unwrap_or_default(),
+                    &credentials,
+                )
+                .await
+            }
+        }
+        .map(|actions| BucketObjectReport {
+            ok: true,
+            action: action.clone(),
+            bucket: request.bucket.clone(),
+            path: request.path.clone(),
+            objects: Vec::new(),
+            content: None,
+            content_base64: None,
+            actions,
+            message: "bucket object copied".to_owned(),
+        }),
+        "sync" => gumgum_core::providers::minio::sync_objects(
+            request.source.as_deref().unwrap_or_default(),
+            request.destination.as_deref().unwrap_or_default(),
+            &credentials,
+        )
+        .await
+        .map(|actions| BucketObjectReport {
+            ok: true,
+            action: action.clone(),
+            bucket: request.bucket.clone(),
+            path: request.path.clone(),
+            objects: Vec::new(),
+            content: None,
+            content_base64: None,
+            actions,
+            message: "bucket objects synced".to_owned(),
+        }),
+        _ => unreachable!("bucket object action was validated before provider dispatch"),
+    };
+    Json(result.unwrap_or_else(|error| BucketObjectReport {
+        ok: false,
+        action,
+        bucket: request.bucket,
+        path: request.path,
+        objects: Vec::new(),
+        content: None,
+        content_base64: None,
+        actions: vec![error.to_string()],
+        message: "bucket object operation failed".to_owned(),
+    }))
+}
+
+fn split_bucket_object_path(value: &str) -> gumgum_core::Result<(String, String)> {
+    let (bucket, path) = value
+        .trim_start_matches('/')
+        .split_once('/')
+        .ok_or_else(|| {
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::InvalidArgs,
+                format!("bucket object path must be bucket/path: {value}"),
+            )
+            .build()
+        })?;
+    if bucket.is_empty() || path.is_empty() {
+        return Err(GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::InvalidArgs,
+            format!("bucket object path must be bucket/path: {value}"),
+        )
+        .build());
+    }
+    Ok((bucket.to_owned(), path.to_owned()))
 }
 
 async fn daemon_logs(
@@ -823,17 +1097,20 @@ async fn daemon_rollback(
     let store = GraphStore::new((*state.graph_path).clone());
     let worker = request.worker.clone();
     let revision_id = request.revision_id;
-    let rollback_revision =
-        tokio::task::spawn_blocking(move || store.rollback_revision(&worker, revision_id))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .flatten();
-    if let Some(revision) = rollback_revision {
+    let rollback_target = tokio::task::spawn_blocking(move || {
+        let revision = store.rollback_revision(&worker, revision_id)?;
+        let current = store.desired_deploy(&worker)?;
+        Ok::<_, gumgum_core::GumgumError>((revision, current))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok);
+    if let Some((Some(revision), current)) = rollback_target {
         let deploy = revision.deploy.clone();
         let image = deploy.image.clone();
+        let route_warning = rollback_route_warning(current.as_ref(), &deploy);
         let actions = if request.preview {
-            rollback_preview_actions(&image)
+            rollback_preview_actions(&image, route_warning)
         } else {
             let graph_path = (*state.graph_path).clone();
             let mut steps = deploy.reconciliation_steps(graph_path.clone()).await;
@@ -864,6 +1141,9 @@ async fn daemon_rollback(
                     error.to_report().message
                 )],
             };
+            if let Some(warning) = route_warning {
+                actions.insert(0, warning);
+            }
             actions.insert(0, format!("rollback to {image}"));
             actions
         };
@@ -881,11 +1161,29 @@ async fn daemon_rollback(
     }
 }
 
-fn rollback_preview_actions(image: &str) -> Vec<String> {
-    vec![
-        format!("would rollback to {image}"),
-        "preview only; no containers changed".to_owned(),
-    ]
+fn rollback_preview_actions(image: &str, route_warning: Option<String>) -> Vec<String> {
+    let mut actions = vec![format!("would rollback to {image}")];
+    if let Some(warning) = route_warning {
+        actions.push(warning);
+    }
+    actions.push("preview only; no containers changed".to_owned());
+    actions
+}
+
+fn rollback_route_warning(
+    current: Option<&gumgum_core::DesiredDeploy>,
+    target: &gumgum_core::DesiredDeploy,
+) -> Option<String> {
+    current.and_then(|current| {
+        if current.route == target.route {
+            None
+        } else {
+            Some(format!(
+                "warning: rollback would change route from {} to {}",
+                current.route, target.route
+            ))
+        }
+    })
 }
 
 fn rollback_report_from_revision(
@@ -1016,13 +1314,6 @@ async fn daemon_deploy(
     let store = GraphStore::new(path.clone());
     let mut reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
     let request_for_db = request.clone().into_desired_deploy();
-    let deploy_for_db = request_for_db.clone();
-    let materialized =
-        tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .unwrap_or(false);
     if reconciliation_steps.is_empty() {
         reconciliation_steps.push(request_for_db.execution_step());
     }
@@ -1031,22 +1322,40 @@ async fn daemon_deploy(
         provider_credentials: None,
         graph_path: Some(reconcile_path),
     };
-    let actions = GraphActionExecutor::execute_steps(&reconciliation_steps, deploy_context)
+    let mut actions = GraphActionExecutor::execute_steps(&reconciliation_steps, deploy_context)
         .await
         .unwrap_or_else(|error| vec![format!("reconcile failed: {}", error.to_report().message)]);
+    let reconcile_ok = !actions
+        .iter()
+        .any(|action| action.starts_with("reconcile failed:"));
+    let materialized = if reconcile_ok {
+        let deploy_for_db = request_for_db.clone();
+        tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false)
+    } else {
+        actions.push("desired deployment was not changed".to_owned());
+        false
+    };
     let changed = actions.iter().any(|action| {
         action.starts_with("pull ")
             || action.starts_with("recreate ")
             || action.starts_with("project ")
     });
     Json(DeployApplyReport {
-        ok: materialized,
+        ok: materialized && reconcile_ok,
         worker: request.worker,
         materialized,
         changed,
         actions,
         reconciliation_steps,
-        message: "desired deployment materialized and reconciled".to_owned(),
+        message: if reconcile_ok {
+            "desired deployment materialized and reconciled".to_owned()
+        } else {
+            "deployment reconcile failed; desired deployment was not changed".to_owned()
+        },
     })
 }
 
@@ -1134,6 +1443,7 @@ mod tests {
                 namespace: "root".to_owned(),
                 root_domain: "leostera.dev".to_owned(),
                 password: None,
+                preview: false,
             }),
         )
         .await;
@@ -1147,6 +1457,7 @@ mod tests {
                 worker: "api".to_owned(),
                 binding: "VISIT_EVENTS_QUEUE".to_owned(),
                 access: "read-write".to_owned(),
+                preview: false,
             }),
         )
         .await;
@@ -1181,6 +1492,71 @@ mod tests {
                 && event.action == "ensure_binding"
                 && event.status == gumgum_core::ReconcileEventStatus::Executed
         }));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn create_previews_explain_object_and_binding_plans_without_mutating() {
+        let path = temp_graph_path("create-previews");
+        let state = DaemonState {
+            graph_path: Arc::new(path.clone()),
+        };
+
+        let Json(object_report) = daemon_create_object(
+            State(state.clone()),
+            Json(ObjectRequest {
+                capability: gumgum_core::Capability::Queue,
+                name: "visit-events".to_owned(),
+                namespace: "root".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+                password: None,
+                preview: true,
+            }),
+        )
+        .await;
+        assert!(object_report.ok);
+        assert_eq!(object_report.message, "object create preview");
+        assert!(
+            object_report
+                .provider_actions
+                .iter()
+                .any(|action| action == "preview only; no objects changed")
+        );
+
+        let Json(binding_report) = daemon_create_binding(
+            State(state.clone()),
+            Json(BindingRequest {
+                capability: gumgum_core::Capability::Queue,
+                object_name: "visit-events".to_owned(),
+                worker: "api".to_owned(),
+                binding: "VISIT_EVENTS_QUEUE".to_owned(),
+                access: "read-write".to_owned(),
+                preview: true,
+            }),
+        )
+        .await;
+        assert!(binding_report.ok);
+        assert_eq!(binding_report.message, "binding create preview");
+        assert!(
+            binding_report
+                .binding_actions
+                .iter()
+                .any(|action| action == "preview only; no bindings changed")
+        );
+
+        let store = GraphStore::new(path.clone());
+        let graph = store.load_desired_graph().unwrap();
+        assert!(!graph.nodes.iter().any(|node| matches!(
+            node,
+            DesiredGraphNode::Object { name, .. }
+                if name.as_str() == "visit-events"
+        )));
+        assert!(!graph.nodes.iter().any(|node| matches!(
+            node,
+            DesiredGraphNode::Binding { worker, name, .. }
+                if worker.as_str() == "api" && name.as_str() == "VISIT_EVENTS_QUEUE"
+        )));
+        assert!(store.list_reconcile_events(20).unwrap().is_empty());
         let _ = std::fs::remove_file(path);
     }
 
@@ -1300,26 +1676,54 @@ mod tests {
     }
 
     #[test]
-    fn daemon_version_report_advertises_safe_delete_and_rollback_capabilities() {
+    fn daemon_version_report_advertises_safe_delete_rollback_and_bucket_capabilities() {
         let report = daemon_version_report();
 
         assert!(report.ok);
         assert!(
             report
                 .capabilities
-                .contains(&"rollback_revisions".to_owned())
+                .contains(&"gumgum:rollback:revisions".to_owned())
         );
         assert!(
             report
                 .capabilities
-                .contains(&"rollback_revision_id".to_owned())
+                .contains(&"gumgum:rollback:revision_id".to_owned())
         );
-        assert!(report.capabilities.contains(&"binding_delete".to_owned()));
-        assert!(report.capabilities.contains(&"object_delete".to_owned()));
         assert!(
             report
                 .capabilities
-                .contains(&"deployment_delete".to_owned())
+                .contains(&"gumgum:rollback:revision_delete".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"gumgum:objects:create_preview".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"gumgum:bindings:create_preview".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"gumgum:bindings:delete".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"gumgum:objects:delete".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"gumgum:deployments:delete".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"gumgum:buckets:objects".to_owned())
         );
     }
 
@@ -1448,6 +1852,8 @@ mod tests {
                 .iter()
                 .any(|action| action == "preview only; no containers changed")
         );
+        assert!(report.actions.iter().any(|action| action
+            == "warning: rollback would change route from api-v3.example.test to api.example.test"));
         let _ = std::fs::remove_file(path);
     }
 

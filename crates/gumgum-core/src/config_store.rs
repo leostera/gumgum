@@ -258,10 +258,28 @@ impl ConfigStore {
         let path = self.servers_path();
         self.ensure_parent(&path)?;
         let mut servers = self.load_servers()?;
-        servers.retain(|existing| existing.host != server.host);
+        servers.retain(|existing| existing.host != server.host && existing.name != server.name);
         servers.insert(0, server);
-        let raw = serde_json::to_string_pretty(&servers).expect("serialize servers");
-        fs::write(&path, raw).map_err(|source| {
+        self.save_servers(&path, &servers)
+    }
+
+    pub fn remove_server(&self, host_or_name: &str) -> Result<Option<ServerRecord>> {
+        let path = self.servers_path();
+        let mut servers = self.load_servers()?;
+        let removed = servers
+            .iter()
+            .position(|server| server.name == host_or_name || server.host == host_or_name)
+            .map(|index| servers.remove(index));
+        if removed.is_some() {
+            self.ensure_parent(&path)?;
+            self.save_servers(&path, &servers)?;
+        }
+        Ok(removed)
+    }
+
+    fn save_servers(&self, path: &Path, servers: &[ServerRecord]) -> Result<()> {
+        let raw = serde_json::to_string_pretty(servers).expect("serialize servers");
+        fs::write(path, raw).map_err(|source| {
             GumgumError::structured(
                 Subsystem::Config,
                 ErrorCode::Io,
@@ -359,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn saves_latest_server_first_and_replaces_by_host() {
+    fn saves_latest_server_first_and_replaces_by_host_or_name() {
         let store = temp_store("servers");
         store
             .save_server(ServerRecord {
@@ -379,13 +397,43 @@ mod tests {
                 health_url: "http://192.168.0.3:7777/healthz".to_owned(),
             })
             .unwrap();
+        store
+            .save_server(ServerRecord {
+                name: "renamed".to_owned(),
+                host: "starbase2".to_owned(),
+                root_domain: "example.net".to_owned(),
+                test_domain: "example.test".to_owned(),
+                health_url: "http://starbase2:7777/healthz".to_owned(),
+            })
+            .unwrap();
         let servers = store.load_servers().unwrap();
         assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].name, "renamed");
+        assert_eq!(servers[0].host, "starbase2");
         assert_eq!(
             store.load_default_server().unwrap().unwrap().root_domain,
-            "example.com"
+            "example.net"
         );
+        let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn removes_server_by_name_or_host() {
+        let store = temp_store("server-remove");
+        store
+            .save_server(ServerRecord {
+                name: "starbase2".to_owned(),
+                host: "192.168.0.3".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+                test_domain: "leostera.test".to_owned(),
+                health_url: "http://192.168.0.3:7777/healthz".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(
+            store.remove_server("starbase2").unwrap().unwrap().host,
+            "192.168.0.3"
+        );
+        assert!(store.load_servers().unwrap().is_empty());
+        assert!(store.remove_server("missing").unwrap().is_none());
         let _ = fs::remove_dir_all(store.root());
     }
 

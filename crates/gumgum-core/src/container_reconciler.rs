@@ -101,6 +101,18 @@ impl ContainerReconciler {
         }
         run.arg(&request.image);
         run_command_streaming(&mut run, false).await?;
+        if network != "gumgum-network" && Self::docker_network_exists("gumgum-network").await {
+            actions.push(format!("connect {} to gumgum-network", request.container));
+            run_command_streaming(
+                TokioCommand::new("docker")
+                    .arg("network")
+                    .arg("connect")
+                    .arg("gumgum-network")
+                    .arg(&request.container),
+                false,
+            )
+            .await?;
+        }
         Self::wait_for_container_health(&request.container, request.port, &request.health).await?;
         Ok((true, actions))
     }
@@ -123,6 +135,17 @@ impl ContainerReconciler {
             .unwrap_or(false)
     }
 
+    async fn docker_network_exists(name: &str) -> bool {
+        TokioCommand::new("docker")
+            .arg("network")
+            .arg("inspect")
+            .arg(name)
+            .output()
+            .await
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
     async fn wait_for_container_health(
         container: &str,
         port: u16,
@@ -132,7 +155,7 @@ impl ContainerReconciler {
             let output = TokioCommand::new("docker")
                 .arg("inspect")
                 .arg("-f")
-                .arg("{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
+                .arg("{{range.NetworkSettings.Networks}}{{println .IPAddress}}{{end}}")
                 .arg(container)
                 .output()
                 .await
@@ -145,8 +168,8 @@ impl ContainerReconciler {
                     .likely_cause(source.to_string())
                     .build()
                 })?;
-            let ip = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !ip.is_empty() {
+            let ips = String::from_utf8_lossy(&output.stdout);
+            for ip in ips.lines().map(str::trim).filter(|ip| !ip.is_empty()) {
                 let url = format!("http://{ip}:{port}{health}");
                 if reqwest::get(&url)
                     .await

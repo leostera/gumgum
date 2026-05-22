@@ -53,6 +53,7 @@ impl<'a> DeployExecutor<'a> {
                 namespace: "root".to_owned(),
                 root_domain: self.server.root_domain.clone(),
                 password: None,
+                preview: false,
             })
             .await;
         if let Some(env) = &binding.binding {
@@ -68,6 +69,7 @@ impl<'a> DeployExecutor<'a> {
                         .access
                         .clone()
                         .unwrap_or_else(|| "read-write".to_owned()),
+                    preview: false,
                 })
                 .await;
         }

@@ -23,7 +23,7 @@ use anyhow::Result;
 use clap::Parser;
 pub(crate) use cli_args::*;
 pub(crate) use cli_output::{print_error, print_value, progress};
-use config_command::config_command;
+use config_command::{config_command, print_config_report};
 use daemon_app::DaemonApp;
 use deploy_command::{deploy, print_deploy_output};
 use env_command::env;
@@ -36,7 +36,6 @@ use gumgum_core::{
 use init_command::init_manifest;
 use logs_command::logs;
 use object_command::object_command;
-use operations_command::operations;
 use project_command::{info, rollback};
 use publish_command::publish;
 use setup_command::{install_gumgumd, resolve_setup};
@@ -51,8 +50,9 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let json = cli.json;
     if let Err(err) = run(cli).await {
-        print_error(err);
+        print_error(json, err);
         std::process::exit(1);
     }
     Ok(())
@@ -64,7 +64,11 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Version => version(cli.json),
         Command::Config(args) => {
             let report = config_command(None, args.command)?;
-            print_value(cli.json, &report);
+            if cli.json {
+                print_value(true, &report);
+            } else {
+                print_config_report(&report);
+            }
         }
         Command::Init(args) => {
             let report = init_manifest(args, cli.dry_run)?;
@@ -92,26 +96,23 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
         Command::Events(args) => {
             events(args, cli.json).await?;
         }
-        Command::Operations(args) => {
-            operations(args, cli.json).await?;
-        }
         Command::Graph(args) => {
             graph(args, cli.json).await?;
         }
         Command::Db(args) => {
-            object_command("db", args, cli.json).await?;
+            object_command("db", args, cli.json, cli.dry_run).await?;
         }
         Command::Kv(args) => {
-            object_command("kv", args, cli.json).await?;
+            object_command("kv", args, cli.json, cli.dry_run).await?;
         }
         Command::Bucket(args) => {
-            object_command("bucket", args, cli.json).await?;
+            object_command::bucket_command(args, cli.json, cli.dry_run).await?;
         }
         Command::Queue(args) => {
-            object_command("queue", args, cli.json).await?;
+            object_command("queue", args, cli.json, cli.dry_run).await?;
         }
         Command::Secret(args) => {
-            object_command("secret", args, cli.json).await?;
+            object_command("secret", args, cli.json, cli.dry_run).await?;
         }
         Command::Setup(args) => {
             let resolved = resolve_setup(args).await?;
@@ -139,13 +140,22 @@ async fn run(cli: Cli) -> gumgum_core::Result<()> {
 
 fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
     match host {
-        Some(host) => Ok(ServerRecord {
-            name: sanitize_name(&host),
-            host: host.clone(),
-            root_domain: String::new(),
-            test_domain: String::new(),
-            health_url: format!("http://{host}:7777/healthz"),
-        }),
+        Some(host) => {
+            if let Some(server) = ConfigStore::from_home_env()?
+                .load_servers()?
+                .into_iter()
+                .find(|server| server.name == host || server.host == host)
+            {
+                return Ok(server);
+            }
+            Ok(ServerRecord {
+                name: sanitize_name(&host),
+                host: host.clone(),
+                root_domain: String::new(),
+                test_domain: String::new(),
+                health_url: format!("http://{host}:7777/healthz"),
+            })
+        }
         None => ConfigStore::from_home_env()?
             .load_default_server()?
             .ok_or_else(|| {
@@ -154,7 +164,7 @@ fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
                     ErrorCode::InvalidArgs,
                     "no GumGum.dev server configured",
                 )
-                .next_command("gumgum setup <host> --root-domain <domain>")
+                .next_command("gumgum server add <host> --root-domain <domain>")
                 .build()
             }),
     }

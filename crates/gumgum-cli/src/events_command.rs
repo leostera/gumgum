@@ -1,4 +1,9 @@
-use crate::{EventsArgs, print_value, resolve_server, server_client::ServerClient};
+use crate::{
+    EventsArgs,
+    operations_command::{OperationsReport, operation_line, summarize_operations},
+    print_value, resolve_server,
+    server_client::ServerClient,
+};
 use gumgum_core::{ControlPlaneEventKind, ErrorCode, GumgumError, ReconcileEvent, Subsystem};
 use std::str::FromStr;
 
@@ -17,7 +22,24 @@ pub(crate) async fn events(args: EventsArgs, json: bool) -> gumgum_core::Result<
         })?;
         report.events.retain(|event| event.kind == kind);
     }
-    if json {
+    if args.grouped {
+        let report = OperationsReport {
+            ok: true,
+            operations: summarize_operations(&report.events),
+        };
+        if json {
+            print_value(true, &report);
+        } else if report.operations.is_empty() {
+            println!("no operations recorded");
+        } else {
+            for operation in report.operations {
+                println!("{}", operation_line(&operation));
+                for target in operation.targets.iter().take(5) {
+                    println!("  - {target}");
+                }
+            }
+        }
+    } else if json {
         print_value(true, &report);
     } else if report.events.is_empty() {
         println!("no control-plane events recorded");

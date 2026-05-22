@@ -10,10 +10,41 @@ This is the canonical end-to-end GumGum fixture. It is intentionally small, but 
 
 The Python implementation uses `uv` with a small FastAPI API worker and a queue worker. The API worker uses realistic clients when GumGum projects provider env (`redis`, `boto3` for S3/MinIO, and `confluent-kafka` for Redpanda/Kafka) and falls back to local files for tests/dev. The queue worker uses realistic clients for Postgres (`psycopg`), S3/MinIO (`boto3`), and Redpanda/Kafka (`confluent-kafka`) when bindings are present, and falls back to SQLite/filesystem adapters for tests/dev.
 
+## Current starbase2 status
+
+The full product path has been proven against starbase2. The repeat deployment is intentionally left running for sparse observation.
+
+Current important facts:
+
+- starbase2 is configured as `192.168.0.3`
+- direct checks during CLI cleanup showed the remote daemon as older `dc996d4`; intentionally upgrade/install the current local daemon before relying on newer event/bucket/revision-delete APIs
+- the full product path was proven earlier with core providers running: Postgres, Redis, MinIO, Redpanda
+- visit-counter objects were bound to API/worker; older unrelated desired objects/secrets were visible as unbound and should not be pruned without explicit approval
+- stale failed-deploy API rollback revisions were pruned metadata-only; do not apply rollback unless clean historical revisions are intentionally created
+- publish dry-run preserves `api.visit-counter.leostera.test`, plans `api.visit-counter.leostera.dev`, and changes no public route
+
+Safe observation:
+
+```bash
+cd examples/visit-counter
+gumgum status --host starbase2
+gumgum events --host starbase2 --limit 20
+gumgum events --host starbase2 --grouped --limit 10
+gumgum logs api --host starbase2 --tail 60
+gumgum logs worker --host starbase2 --tail 60
+gumgum rollback api/gumgum.toml --host starbase2 --worker visit-counter-api --preview
+gumgum rollback worker/gumgum.toml --host starbase2 --worker visit-counter-worker --preview
+gumgum --dry-run publish api/gumgum.toml --host starbase2
+curl -k --resolve api.visit-counter.leostera.test:443:192.168.0.3 \
+  https://api.visit-counter.leostera.test/
+```
+
+Do not apply rollback, prune objects, clean up, deploy, run server add, or publish publicly unless explicitly intended. The `curl` command only mutates example app data by recording a visit.
+
 ## GumGum path
 
 ```bash
-gumgum setup starbase2 --root-domain leostera.dev
+gumgum server add starbase2 --name starbase2 --root-domain leostera.dev
 cd examples/visit-counter
 
 gumgum db create visits
@@ -52,8 +83,8 @@ scripts/smoke-visit-counter-starbase2.sh --plan
 scripts/smoke-visit-counter-starbase2.sh
 
 # inspect daemon capabilities and verify compatibility before any mutation
-gumgum server starbase2 capabilities
-gumgum server starbase2 capabilities --require-visit-counter
+gumgum server capabilities list --host starbase2
+gumgum server capabilities list --host starbase2 --require gumgum:events,gumgum:rollback:revision_id,gumgum:objects:create_preview,gumgum:bindings:create_preview,gumgum:bindings:delete,gumgum:objects:delete,gumgum:deployments:delete,gumgum:buckets:objects
 REQUIRE_CURRENT_DAEMON=1 scripts/smoke-visit-counter-starbase2.sh
 
 # create/bind objects intentionally, optionally stopping before deploy dry-run
@@ -73,6 +104,10 @@ VERIFY_UPGRADE_IDEMPOTENCY=1 APPLY_UPGRADE=1 UPGRADE_ONLY=1 scripts/smoke-visit-
 VERIFY_UPGRADE_IDEMPOTENCY=1 APPLY_UPGRADE=1 scripts/smoke-visit-counter-starbase2.sh
 
 # cleanup/rollback checks: preview is non-destructive; apply cleanup is explicit
+# stale rollback revision pruning is metadata-only but requires gumgum:rollback:revision_delete
+# gumgum server capabilities list --host starbase2 --require gumgum:rollback:revision_delete
+# gumgum rollback api/gumgum.toml --host starbase2 --worker visit-counter-api --revisions --limit 10
+# gumgum rollback api/gumgum.toml --host starbase2 --worker visit-counter-api --delete-revision-id <stale-id>
 VERIFY_CLEANUP_PREVIEW=1 CLEANUP_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_CLEANUP=1 CLEANUP_ONLY=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_OBJECTS=1 VERIFY_CLEANUP_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
@@ -80,7 +115,7 @@ APPLY_OBJECTS=1 APPLY_CLEANUP=1 scripts/smoke-visit-counter-starbase2.sh
 APPLY_OBJECTS=1 APPLY=1 VERIFY_ROLLBACK_PREVIEW=1 scripts/smoke-visit-counter-starbase2.sh
 ```
 
-The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, verifies DNS/Caddy with a `Host: api.visit-counter.leostera.test` request, and can optionally preview rollback. Mutating modes require a current daemon that advertises safe delete/rollback capabilities, and real upgrade smoke verifies those capabilities after the upgrade completes. `SETUP_ONLY=1` exits after setup/idempotency and the container preservation guard, before object or deploy smoke. `UPGRADE_ONLY=1` exits after the upgrade/idempotency path and container preservation guard, which is the safest way to intentionally upgrade before object/apply smoke. `OBJECTS_ONLY=1` exits after object creation/binding and the container preservation guard, before any deploy planning. `DEPLOY_ONLY=1` skips object creation/binding and deploys or dry-runs from existing desired state, which is useful after object apply. `OBSERVE_ONLY=1` collects status, events, operations, and worker logs from an existing deployment without object/deploy/cleanup mutation. `ARTIFACT_DIR=/path` preserves response, graph/container snapshots, planned/executed GumGum commands, deploy/observe output, failure messages, plus `README.txt`, mode/status/exit-code/timestamp/duration-rich `summary.txt`, `index.txt`, and `checksums.sha256` for review. `ARTIFACT_ROOT=/path` derives a per-mode artifact directory for each staged smoke run (including distinct upgrade dry-run/apply and current-daemon check directories) so a full sequence does not overwrite earlier evidence, and writes root `README.txt`, `summary.tsv`, and `index.txt` across stages. `CLEANUP_ONLY=1` skips object creation/binding and exits after cleanup preview/apply plus the container preservation guard. Cleanup preview mode snapshots the desired graph before/after and fails if a preview mutates state. Explicit cleanup apply mode also snapshots the graph and verifies visit-counter object/binding desired state is gone without removing pre-existing containers. The default mode does not mutate starbase2 objects.
+The deploy path builds locally, opens an SSH tunnel to the GumGum registry on starbase2, pushes the stable revision tag, asks `gumgumd` to reconcile the container, verifies DNS/Caddy with a `Host: api.visit-counter.leostera.test` request, and can optionally preview rollback. Mutating modes require a current daemon that advertises safe delete/rollback capabilities, and real upgrade smoke verifies those capabilities after the upgrade completes. If stale failed-deploy rollback entries are discovered, `--delete-revision-id` prunes only revision metadata; check `--revisions` first and require `gumgum:rollback:revision_delete` before using it. `SETUP_ONLY=1` exits after setup/idempotency and the container preservation guard, before object or deploy smoke. `UPGRADE_ONLY=1` exits after the upgrade/idempotency path and container preservation guard, which is the safest way to intentionally upgrade before object/apply smoke. `OBJECTS_ONLY=1` exits after object creation/binding and the container preservation guard, before any deploy planning. `DEPLOY_ONLY=1` skips object creation/binding and deploys or dry-runs from existing desired state, which is useful after object apply. `OBSERVE_ONLY=1` collects status, events, grouped events, and worker logs from an existing deployment without object/deploy/cleanup mutation. `ARTIFACT_DIR=/path` preserves response, graph/container snapshots, planned/executed GumGum commands, deploy/observe output, failure messages, plus `README.txt`, mode/status/exit-code/timestamp/duration-rich `summary.txt`, `index.txt`, and `checksums.sha256` for review. `ARTIFACT_ROOT=/path` derives a per-mode artifact directory for each staged smoke run (including distinct upgrade dry-run/apply and current-daemon check directories) so a full sequence does not overwrite earlier evidence, and writes root `README.txt`, `summary.tsv`, and `index.txt` across stages. `CLEANUP_ONLY=1` skips object creation/binding and exits after cleanup preview/apply plus the container preservation guard. Cleanup preview mode snapshots the desired graph before/after and fails if a preview mutates state. Explicit cleanup apply mode also snapshots the graph and verifies visit-counter object/binding desired state is gone without removing pre-existing containers. The default mode does not mutate starbase2 objects.
 
 ## Local fallback smoke test
 

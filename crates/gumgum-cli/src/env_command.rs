@@ -1,33 +1,148 @@
 use crate::{EnvArgs, print_value, resolve_server};
 use gumgum_api::EnvReport;
-use gumgum_core::load_worker_path;
+use gumgum_core::{
+    ErrorCode, GumgumError, ManifestKind, Subsystem, load_worker_path, load_workspace_path,
+    sanitize_name, validate_path,
+};
+use serde::Serialize;
+use std::path::Path;
 
 use crate::server_client::ServerClient;
 
+#[derive(Debug, Serialize)]
+struct WorkspaceEnvReport {
+    ok: bool,
+    project: String,
+    workers: Vec<EnvReport>,
+}
+
 pub(crate) async fn env(args: EnvArgs, json: bool) -> gumgum_core::Result<()> {
-    let worker = args.worker.unwrap_or_else(|| {
-        load_worker_path(&args.path)
-            .map(|manifest| manifest.worker.name)
-            .unwrap_or_else(|_| "unknown".to_owned())
-    });
+    let targets = env_targets(&args.path, args.project.as_deref(), args.worker.as_deref())?;
+    let project = targets
+        .first()
+        .map(|target| target.project.clone())
+        .unwrap_or_else(|| "unknown".to_owned());
     let server = resolve_server(args.host)?;
-    let report = ServerClient::new(server.host).env(&worker).await?;
+    let mut reports = Vec::new();
+    for target in targets {
+        reports.push(ServerClient::new(&server.host).env(&target.worker).await?);
+    }
     if json {
-        print_value(true, &report);
+        if reports.len() == 1 {
+            print_value(true, &reports[0]);
+        } else {
+            print_value(
+                true,
+                &WorkspaceEnvReport {
+                    ok: true,
+                    project,
+                    workers: reports,
+                },
+            );
+        }
     } else {
-        for line in dotenv_lines(&report) {
-            println!("{line}");
+        for report in &reports {
+            for line in dotenv_lines(&project, &report.worker, report) {
+                println!("{line}");
+            }
         }
     }
     Ok(())
 }
 
-fn dotenv_lines(report: &EnvReport) -> Vec<String> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EnvTarget {
+    project: String,
+    worker: String,
+}
+
+fn env_targets(
+    path: &Path,
+    project_filter: Option<&str>,
+    worker_filter: Option<&str>,
+) -> gumgum_core::Result<Vec<EnvTarget>> {
+    let manifest_path = if path.is_dir() {
+        path.join("gumgum.toml")
+    } else {
+        path.to_path_buf()
+    };
+    let kind = validate_path(&manifest_path)?.manifest_kind;
+    let mut targets = match kind {
+        ManifestKind::Worker => {
+            let manifest = load_worker_path(&manifest_path)?;
+            vec![EnvTarget {
+                project: manifest
+                    .project
+                    .map(|project| project.namespace)
+                    .unwrap_or_else(|| "root".to_owned()),
+                worker: manifest.worker.name,
+            }]
+        }
+        ManifestKind::Workspace => {
+            let workspace = load_workspace_path(&manifest_path)?;
+            let root = manifest_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let mut targets = Vec::new();
+            for member in &workspace.workspace.members {
+                let member_path = root.join(member).join("gumgum.toml");
+                let manifest = load_worker_path(&member_path)?;
+                targets.push(EnvTarget {
+                    project: manifest
+                        .project
+                        .map(|project| project.namespace)
+                        .unwrap_or_else(|| "root".to_owned()),
+                    worker: manifest.worker.name,
+                });
+            }
+            targets
+        }
+    };
+    if let Some(project) = project_filter {
+        targets.retain(|target| {
+            target.project == project || sanitize_name(&target.project) == sanitize_name(project)
+        });
+    }
+    if let Some(worker) = worker_filter {
+        targets.retain(|target| {
+            target.worker == worker || sanitize_name(&target.worker) == sanitize_name(worker)
+        });
+    }
+    if targets.is_empty() {
+        return Err(GumgumError::structured(
+            Subsystem::Cli,
+            ErrorCode::InvalidArgs,
+            "no environment targets matched this workspace",
+        )
+        .next_command("gumgum env --project <project>")
+        .next_command("gumgum env --worker <worker>")
+        .build());
+    }
+    Ok(targets)
+}
+
+fn dotenv_lines(project: &str, worker: &str, report: &EnvReport) -> Vec<String> {
+    let prefix = env_prefix(project, worker);
     report
         .vars
         .iter()
-        .map(|var| format!("{}={}", var.name, dotenv_quote(&var.value)))
+        .map(|var| {
+            format!(
+                "{}_{}={}",
+                prefix,
+                env_key(&var.name),
+                dotenv_quote(&var.value)
+            )
+        })
         .collect()
+}
+
+fn env_prefix(project: &str, worker: &str) -> String {
+    format!("{}_{}", env_key(project), env_key(worker))
+}
+
+fn env_key(value: &str) -> String {
+    sanitize_name(value).replace('-', "_").to_ascii_uppercase()
 }
 
 fn dotenv_quote(value: &str) -> String {
@@ -45,9 +160,10 @@ fn dotenv_quote(value: &str) -> String {
 mod tests {
     use super::*;
     use gumgum_api::EnvVar;
+    use std::fs;
 
     #[test]
-    fn dotenv_lines_quote_only_when_needed() {
+    fn dotenv_lines_namespace_by_project_and_worker() {
         let report = EnvReport {
             ok: true,
             worker: "api".to_owned(),
@@ -65,11 +181,51 @@ mod tests {
         };
 
         assert_eq!(
-            dotenv_lines(&report),
+            dotenv_lines("visit-counter", "api", &report),
             vec![
-                "DATABASE_URL=postgres://api:g@db.example:5432/api",
-                "GREETING='hello world'",
+                "VISIT_COUNTER_API_DATABASE_URL=postgres://api:g@db.example:5432/api",
+                "VISIT_COUNTER_API_GREETING='hello world'",
             ]
         );
+    }
+
+    #[test]
+    fn env_targets_expand_workspace_and_filter_worker() {
+        let dir = temp_dir("workspace");
+        fs::create_dir_all(dir.join("api")).unwrap();
+        fs::create_dir_all(dir.join("worker")).unwrap();
+        fs::write(
+            dir.join("gumgum.toml"),
+            "[workspace]\nname = \"visit-counter\"\nmembers = [\"api\", \"worker\"]\n",
+        )
+        .unwrap();
+        for worker in ["api", "worker"] {
+            fs::write(
+                dir.join(worker).join("gumgum.toml"),
+                format!(
+                    "[project]\nnamespace = \"visit-counter\"\n\n[worker]\nname = \"{worker}\"\nbuild_context = \".\"\nport = 3000\nhealth = \"/healthz\"\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            env_targets(&dir.join("gumgum.toml"), None, Some("api")).unwrap(),
+            vec![EnvTarget {
+                project: "visit-counter".to_owned(),
+                worker: "api".to_owned(),
+            }]
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "gumgum-env-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
     }
 }

@@ -55,7 +55,7 @@ print_help() {
   cat <<'EOF'
 visit-counter starbase2 smoke modes:
   default: non-mutating object command printout + deploy dry-run
-  REQUIRE_CURRENT_DAEMON=1: fail unless gumgumd advertises visit-counter-safe capabilities
+  REQUIRE_CURRENT_DAEMON=1: fail unless gumgumd advertises required smoke capabilities
   RUN_SETUP=1 VERIFY_SETUP_IDEMPOTENCY=1 SETUP_ONLY=1: run setup twice, then stop
   VERIFY_UPGRADE_IDEMPOTENCY=1 UPGRADE_ONLY=1: dry-run upgrade twice, then stop
   VERIFY_UPGRADE_IDEMPOTENCY=1 APPLY_UPGRADE=1 UPGRADE_ONLY=1: apply upgrade twice, verify capabilities, then stop
@@ -401,9 +401,10 @@ has_daemon_capability() {
 }
 
 require_daemon_capabilities() {
-  echo "+ gumgum server $HOST capabilities --require-visit-counter"
+  local required="gumgum:events,gumgum:rollback:revision_id,gumgum:objects:create_preview,gumgum:bindings:create_preview,gumgum:bindings:delete,gumgum:objects:delete,gumgum:deployments:delete,gumgum:buckets:objects"
+  echo "+ gumgum server $HOST capabilities --require $required"
   # shellcheck disable=SC2086
-  if $GUMGUM server "$HOST" capabilities --require-visit-counter; then
+  if $GUMGUM server "$HOST" capabilities --require "$required"; then
     return
   fi
   fail "gumgumd on $HOST is not ready for mutating visit-counter smoke modes"
@@ -462,7 +463,7 @@ if [ "$UPGRADE_ONLY" = "1" ] && [ "$VERIFY_UPGRADE_IDEMPOTENCY" != "1" ]; then
   fail "UPGRADE_ONLY=1 requires VERIFY_UPGRADE_IDEMPOTENCY=1"
 fi
 if [ "$REQUIRE_CURRENT_DAEMON" = "1" ] || [ "$APPLY_OBJECTS" = "1" ] || [ "$APPLY" = "1" ] || [ "$APPLY_CLEANUP" = "1" ] || [ "$OBSERVE_ONLY" = "1" ]; then
-  require_daemon_capabilities events rollback_revision_id binding_delete object_delete deployment_delete
+  require_daemon_capabilities gumgum:events gumgum:rollback:revision_id gumgum:objects:create_preview gumgum:bindings:create_preview gumgum:bindings:delete gumgum:objects:delete gumgum:deployments:delete
 fi
 
 remote_containers >"$before_file"
@@ -485,7 +486,7 @@ if [ "$VERIFY_UPGRADE_IDEMPOTENCY" = "1" ]; then
   if [ "$APPLY_UPGRADE" = "1" ]; then
     run_gumgum server "$HOST" upgrade
     run_gumgum server "$HOST" upgrade
-    require_daemon_capabilities events rollback_revision_id binding_delete object_delete deployment_delete
+    require_daemon_capabilities gumgum:events gumgum:rollback:revision_id gumgum:objects:create_preview gumgum:bindings:create_preview gumgum:bindings:delete gumgum:objects:delete gumgum:deployments:delete
   else
     run_gumgum --dry-run server "$HOST" upgrade
     run_gumgum --dry-run server "$HOST" upgrade
@@ -536,7 +537,7 @@ if [ "$OBJECTS_ONLY" = "1" ]; then
 fi
 
 if [ "$VERIFY_CLEANUP_PREVIEW" = "1" ] || [ "$APPLY_CLEANUP" = "1" ]; then
-  if ! has_daemon_capability "binding_delete" || ! has_daemon_capability "object_delete"; then
+  if ! has_daemon_capability "gumgum:bindings:delete" || ! has_daemon_capability "gumgum:objects:delete"; then
     echo "warning: gumgumd on $HOST does not advertise safe delete APIs; run gumgum setup/upgrade before cleanup verification" >&2
   else
     capture_graph "$before_graph_file" graph-before

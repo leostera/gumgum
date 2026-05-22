@@ -81,6 +81,33 @@ pub struct LogsReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BucketObjectRequest {
+    pub bucket: Option<String>,
+    pub path: Option<String>,
+    pub source: Option<String>,
+    pub destination: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_base64: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BucketObjectReport {
+    pub ok: bool,
+    pub action: String,
+    pub bucket: Option<String>,
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_base64: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GraphReport {
     pub ok: bool,
     pub format: String,
@@ -99,6 +126,8 @@ pub struct ObjectRequest {
     pub root_domain: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    #[serde(default)]
+    pub preview: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -134,6 +163,8 @@ pub struct BindingRequest {
     pub worker: String,
     pub binding: String,
     pub access: String,
+    #[serde(default)]
+    pub preview: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -284,6 +315,18 @@ pub struct RollbackReport {
 pub struct DeploymentRevisionsReport {
     pub ok: bool,
     pub worker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<gumgum_core::DesiredDeploy>,
     pub revisions: Vec<DeploymentRevision>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeploymentRevisionDeleteReport {
+    pub ok: bool,
+    pub worker: String,
+    pub revision_id: i64,
+    pub deleted: bool,
+    pub actions: Vec<String>,
     pub message: String,
 }

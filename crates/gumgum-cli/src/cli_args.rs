@@ -27,11 +27,10 @@ pub(crate) enum Command {
     Rollback(RollbackArgs),
     Logs(LogsArgs),
     Events(EventsArgs),
-    Operations(OperationsArgs),
     Graph(GraphArgs),
     Db(ObjectArgs),
     Kv(ObjectArgs),
-    Bucket(ObjectArgs),
+    Bucket(BucketArgs),
     Queue(ObjectArgs),
     Secret(ObjectArgs),
     Setup(SetupArgs),
@@ -49,7 +48,13 @@ pub(crate) struct StatusArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct PingArgs {
-    pub(crate) host: String,
+    #[arg(
+        value_name = "HOST",
+        help = "Server host/name (compatibility positional)"
+    )]
+    pub(crate) target: Option<String>,
+    #[arg(long, help = "Server host/name to ping")]
+    pub(crate) host: Option<String>,
     #[arg(long)]
     pub(crate) user: Option<String>,
 }
@@ -101,7 +106,9 @@ pub(crate) struct EnvArgs {
     pub(crate) path: PathBuf,
     #[arg(long)]
     pub(crate) host: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Only print environment for this project/workspace")]
+    pub(crate) project: Option<String>,
+    #[arg(long, help = "Only print environment for this worker")]
     pub(crate) worker: Option<String>,
 }
 
@@ -135,6 +142,11 @@ pub(crate) struct RollbackArgs {
     pub(crate) revisions: bool,
     #[arg(long, help = "Rollback or preview a specific deployment revision id")]
     pub(crate) revision_id: Option<i64>,
+    #[arg(
+        long,
+        help = "Delete a stale deployment revision id without changing containers"
+    )]
+    pub(crate) delete_revision_id: Option<i64>,
     #[arg(long, default_value_t = 10)]
     pub(crate) limit: u32,
 }
@@ -166,10 +178,53 @@ pub(crate) struct ObjectArgs {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum ObjectCommand {
+    List(ListObjectArgs),
     Create(CreateObjectArgs),
     Delete(DeleteObjectArgs),
     Bind(BindObjectArgs),
     Unbind(UnbindObjectArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BucketArgs {
+    #[command(subcommand)]
+    pub(crate) command: BucketCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum BucketCommand {
+    List(ListObjectArgs),
+    Create(CreateObjectArgs),
+    Delete(DeleteObjectArgs),
+    Bind(BindObjectArgs),
+    Unbind(UnbindObjectArgs),
+    Ls(BucketPathArgs),
+    Get(BucketPathArgs),
+    Rm(BucketPathArgs),
+    Cp(BucketCopyArgs),
+    Sync(BucketCopyArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ListObjectArgs {
+    #[arg(long)]
+    pub(crate) host: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BucketPathArgs {
+    pub(crate) bucket: String,
+    pub(crate) path: Option<String>,
+    #[arg(long)]
+    pub(crate) host: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BucketCopyArgs {
+    pub(crate) source: String,
+    pub(crate) destination: String,
+    #[arg(long)]
+    pub(crate) host: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -247,14 +302,8 @@ pub(crate) struct EventsArgs {
     pub(crate) limit: u32,
     #[arg(long, help = "Filter events by kind: mutation or reconciliation")]
     pub(crate) kind: Option<String>,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct OperationsArgs {
-    #[arg(long)]
-    pub(crate) host: Option<String>,
-    #[arg(long, default_value_t = 100)]
-    pub(crate) limit: u32,
+    #[arg(long, help = "Group events by operation id")]
+    pub(crate) grouped: bool,
 }
 
 #[derive(Debug, Args)]
@@ -295,6 +344,7 @@ pub(crate) struct SetupArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
 pub(crate) struct ServerCommand {
     #[arg(value_name = "NAME")]
     pub(crate) name: Option<String>,
@@ -305,66 +355,67 @@ pub(crate) struct ServerCommand {
 #[derive(Debug, Subcommand)]
 pub(crate) enum ServerSubcommand {
     List,
+    Add(ServerAddArgs),
+    Rm(ServerRmArgs),
     Ping(PingArgs),
     Capabilities(ServerCapabilitiesArgs),
-    BootProviders,
     Config(ServerConfigArgs),
-    Credentials(ServerCredentialsArgs),
-    Providers(ServerProvidersArgs),
     Upgrade(ServerUpgradeArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ServerAddArgs {
+    pub(crate) host: String,
+    #[arg(long)]
+    pub(crate) name: Option<String>,
+    #[arg(long)]
+    pub(crate) user: Option<String>,
+    #[arg(long)]
+    pub(crate) root_domain: Option<String>,
+    #[arg(long)]
+    pub(crate) test_domain: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ServerRmArgs {
+    pub(crate) host_or_name: String,
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct ServerCapabilitiesArgs {
     #[arg(
-        long,
-        help = "Fail if capabilities required by the visit-counter smoke are missing"
+        value_name = "ACTION",
+        help = "Capability action; use `list` in the new form"
     )]
-    pub(crate) require_visit_counter: bool,
+    pub(crate) action: Option<String>,
+    #[arg(long, help = "Server host/name to inspect")]
+    pub(crate) host: Option<String>,
+    #[arg(
+        long,
+        value_delimiter = ',',
+        help = "Fail if any comma-separated capabilities are missing"
+    )]
+    pub(crate) require: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ServerHostArgs {
+    #[arg(long, help = "Server host/name")]
+    pub(crate) host: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct ServerConfigArgs {
+    #[arg(long, help = "Server host/name to configure")]
+    pub(crate) host: Option<String>,
     #[command(subcommand)]
     pub(crate) command: ConfigSubcommand,
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ServerCredentialsArgs {
-    #[command(subcommand)]
-    pub(crate) command: ServerCredentialsSubcommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum ServerCredentialsSubcommand {
-    Init,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct ServerProvidersArgs {
-    #[command(subcommand)]
-    pub(crate) command: Option<ServerProvidersSubcommand>,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum ServerProvidersSubcommand {
-    Boot,
-    Configure(ServerProviderConfigureArgs),
-    Status,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct ServerProviderConfigureArgs {
-    pub(crate) capability: String,
-    pub(crate) kind: String,
-    #[arg(long)]
-    pub(crate) endpoint: Option<String>,
-    #[arg(long)]
-    pub(crate) vault: Option<String>,
-}
-
-#[derive(Debug, Args)]
 pub(crate) struct ServerUpgradeArgs {
+    #[arg(long, help = "Server host/name to upgrade")]
+    pub(crate) host: Option<String>,
     #[arg(long)]
     pub(crate) user: Option<String>,
 }
@@ -374,34 +425,152 @@ mod tests {
     use super::*;
 
     #[test]
-    fn server_capabilities_command_supports_visit_counter_requirement() {
+    fn server_capabilities_command_supports_explicit_requirements() {
         assert!(matches!(
             Cli::try_parse_from([
                 "gumgum",
                 "server",
                 "starbase2",
                 "capabilities",
-                "--require-visit-counter",
+                "--require",
+                "gumgum:events,gumgum:bindings:delete,gumgum:objects:delete",
             ])
             .unwrap()
             .command,
             Command::Server(ServerCommand {
                 name: Some(ref name),
-                command: Some(ServerSubcommand::Capabilities(ServerCapabilitiesArgs {
-                    require_visit_counter: true,
-                }))
+                command: Some(ServerSubcommand::Capabilities(ServerCapabilitiesArgs { ref require, .. }))
             }) if name == "starbase2"
+                && require == &vec![
+                    "gumgum:events".to_owned(),
+                    "gumgum:bindings:delete".to_owned(),
+                    "gumgum:objects:delete".to_owned(),
+                ]
+        ));
+    }
+
+    #[test]
+    fn server_add_and_rm_commands_use_uniform_shape() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "server",
+                "add",
+                "starbase2",
+                "--name",
+                "starbase2",
+                "--root-domain",
+                "leostera.dev",
+            ])
+            .unwrap()
+            .command,
+            Command::Server(ServerCommand {
+                name: None,
+                command: Some(ServerSubcommand::Add(ServerAddArgs {
+                    ref host,
+                    name: Some(ref name),
+                    root_domain: Some(ref root_domain),
+                    ..
+                }))
+            }) if host == "starbase2" && name == "starbase2" && root_domain == "leostera.dev"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "server", "rm", "starbase2"])
+                .unwrap()
+                .command,
+            Command::Server(ServerCommand {
+                name: None,
+                command: Some(ServerSubcommand::Rm(ServerRmArgs { ref host_or_name }))
+            }) if host_or_name == "starbase2"
+        ));
+    }
+
+    #[test]
+    fn server_capabilities_supports_new_list_host_form() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "server",
+                "capabilities",
+                "list",
+                "--host",
+                "starbase2",
+                "--require",
+                "gumgum:events",
+            ])
+            .unwrap()
+            .command,
+            Command::Server(ServerCommand {
+                name: None,
+                command: Some(ServerSubcommand::Capabilities(ServerCapabilitiesArgs {
+                    action: Some(ref action),
+                    host: Some(ref host),
+                    ref require,
+                }))
+            }) if action == "list" && host == "starbase2" && require == &vec!["gumgum:events".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn rollback_command_supports_safe_revision_delete() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gumgum",
+                "rollback",
+                "api/gumgum.toml",
+                "--host",
+                "starbase2",
+                "--worker",
+                "visit-counter-api",
+                "--delete-revision-id",
+                "8",
+            ])
+            .unwrap()
+            .command,
+            Command::Rollback(RollbackArgs {
+                ref path,
+                host: Some(ref host),
+                worker: Some(ref worker),
+                delete_revision_id: Some(8),
+                ..
+            }) if path == std::path::Path::new("api/gumgum.toml")
+                && host == "starbase2"
+                && worker == "visit-counter-api"
         ));
     }
 
     #[test]
     fn bucket_command_grammar_covers_create_bind_delete_unbind() {
         assert!(matches!(
+            Cli::try_parse_from(["gumgum", "bucket", "list"])
+                .unwrap()
+                .command,
+            Command::Bucket(BucketArgs {
+                command: BucketCommand::List(ListObjectArgs { .. })
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "bucket", "ls", "visit-requests", "raw/*.json"])
+                .unwrap()
+                .command,
+            Command::Bucket(BucketArgs {
+                command: BucketCommand::Ls(BucketPathArgs { ref bucket, path: Some(ref path), .. })
+            }) if bucket == "visit-requests" && path == "raw/*.json"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gumgum", "bucket", "cp", "local.json", "visit-requests/raw/local.json"])
+                .unwrap()
+                .command,
+            Command::Bucket(BucketArgs {
+                command: BucketCommand::Cp(BucketCopyArgs { ref source, ref destination, .. })
+            }) if source == "local.json" && destination == "visit-requests/raw/local.json"
+        ));
+        assert!(matches!(
             Cli::try_parse_from(["gumgum", "bucket", "create", "visit-requests"])
                 .unwrap()
                 .command,
-            Command::Bucket(ObjectArgs {
-                command: ObjectCommand::Create(CreateObjectArgs { ref name, .. })
+            Command::Bucket(BucketArgs {
+                command: BucketCommand::Create(CreateObjectArgs { ref name, .. })
             }) if name == "visit-requests"
         ));
         assert!(matches!(
@@ -419,8 +588,8 @@ mod tests {
             ])
             .unwrap()
             .command,
-            Command::Bucket(ObjectArgs {
-                command: ObjectCommand::Bind(BindObjectArgs {
+            Command::Bucket(BucketArgs {
+                command: BucketCommand::Bind(BindObjectArgs {
                     ref name,
                     to: Some(ref to),
                     ref binding,
@@ -433,8 +602,8 @@ mod tests {
             Cli::try_parse_from(["gumgum", "bucket", "delete", "visit-requests", "--preview"])
                 .unwrap()
                 .command,
-            Command::Bucket(ObjectArgs {
-                command: ObjectCommand::Delete(DeleteObjectArgs { ref name, preview: true, .. })
+            Command::Bucket(BucketArgs {
+                command: BucketCommand::Delete(DeleteObjectArgs { ref name, preview: true, .. })
             }) if name == "visit-requests"
         ));
         assert!(matches!(
@@ -451,8 +620,8 @@ mod tests {
             ])
             .unwrap()
             .command,
-            Command::Bucket(ObjectArgs {
-                command: ObjectCommand::Unbind(UnbindObjectArgs {
+            Command::Bucket(BucketArgs {
+                command: BucketCommand::Unbind(UnbindObjectArgs {
                     ref name,
                     to: Some(ref to),
                     ref binding,

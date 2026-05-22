@@ -110,7 +110,15 @@ fn derived_routes(
     };
 
     if prod {
-        let mut routes = vec![format!("{worker}.{project}.{}", server.root_domain)];
+        let mut routes: Vec<String> = manifest
+            .ingress
+            .iter()
+            .filter_map(|ingress| ingress.public_domain.clone())
+            .filter(|route| route.ends_with(&server.root_domain))
+            .collect();
+        if routes.is_empty() {
+            routes.push(format!("{worker}.{project}.{}", server.root_domain));
+        }
         routes.extend(
             manifest
                 .zone
@@ -119,7 +127,17 @@ fn derived_routes(
         );
         routes
     } else {
-        vec![format!("{worker}.{project}.{}", server.test_domain)]
+        let routes: Vec<String> = manifest
+            .ingress
+            .iter()
+            .map(|ingress| ingress.local_domain.clone())
+            .filter(|route| route.ends_with(&server.test_domain))
+            .collect();
+        if routes.is_empty() {
+            vec![format!("{worker}.{project}.{}", server.test_domain)]
+        } else {
+            routes
+        }
     }
 }
 

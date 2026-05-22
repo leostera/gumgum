@@ -1,9 +1,9 @@
 use gumgum_api::{
-    AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, DaemonVersionReport,
-    DeployApplyReport, DeployRequest, DeploymentDeleteRequest, DeploymentRevisionsReport,
-    EnvReport, EventsReport, GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport,
-    ObjectRequest, ProviderBootReport, ProviderConfigureReport, ProviderConfigureRequest,
-    ProviderCredentialsInitReport, ProviderStatusReport, RollbackReport, RollbackRequest,
+    AffectedReport, BindingDeleteRequest, BindingReport, BindingRequest, BucketObjectReport,
+    BucketObjectRequest, DaemonVersionReport, DeployApplyReport, DeployRequest,
+    DeploymentDeleteRequest, DeploymentRevisionsReport, EnvReport, EventsReport, GraphReport,
+    LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest, ProviderBootReport,
+    ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{ErrorCode, GumgumError, Subsystem};
 
@@ -76,30 +76,11 @@ impl ServerClient {
         self.get_json("/v0/providers", "providers").await
     }
 
-    pub(crate) async fn configure_provider(
-        &self,
-        request: &ProviderConfigureRequest,
-    ) -> gumgum_core::Result<ProviderConfigureReport> {
-        self.post_json("/v0/providers/configure", request, "provider configure")
-            .await
-    }
-
     pub(crate) async fn boot_default_providers(&self) -> gumgum_core::Result<ProviderBootReport> {
         self.post_json(
             "/v0/providers/defaults/boot",
             &serde_json::json!({}),
             "provider boot",
-        )
-        .await
-    }
-
-    pub(crate) async fn init_minio_credentials(
-        &self,
-    ) -> gumgum_core::Result<ProviderCredentialsInitReport> {
-        self.post_json(
-            "/v0/providers/minio/credentials/init",
-            &serde_json::json!({}),
-            "provider credentials",
         )
         .await
     }
@@ -156,6 +137,47 @@ impl ServerClient {
         .await
     }
 
+    pub(crate) async fn delete_revision(
+        &self,
+        worker: &str,
+        revision_id: i64,
+    ) -> gumgum_core::Result<gumgum_api::DeploymentRevisionDeleteReport> {
+        let path = format!("/v0/revisions/{worker}/{revision_id}");
+        let response = self
+            .http
+            .delete(self.url(&path))
+            .send()
+            .await
+            .map_err(|source| {
+                self.api_error(
+                    "failed to call gumgumd deployment revision delete API",
+                    source,
+                )
+            })?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+        ) {
+            return Err(self.unsupported_revision_delete_error(worker, revision_id));
+        }
+        response
+            .error_for_status()
+            .map_err(|source| {
+                self.api_error(
+                    "gumgumd deployment revision delete API returned an error",
+                    source,
+                )
+            })?
+            .json()
+            .await
+            .map_err(|source| {
+                self.api_error(
+                    "gumgumd deployment revision delete API returned invalid JSON",
+                    source,
+                )
+            })
+    }
+
     pub(crate) async fn revisions(
         &self,
         worker: &str,
@@ -187,6 +209,34 @@ impl ServerClient {
     pub(crate) async fn events(&self, limit: u32) -> gumgum_core::Result<EventsReport> {
         self.get_json(&format!("/v0/events?limit={limit}"), "events")
             .await
+    }
+
+    pub(crate) async fn bucket_object(
+        &self,
+        action: &str,
+        request: &BucketObjectRequest,
+    ) -> gumgum_core::Result<BucketObjectReport> {
+        let path = format!("/v0/buckets/{action}");
+        let response = self
+            .http
+            .post(self.url(&path))
+            .json(request)
+            .send()
+            .await
+            .map_err(|source| self.api_error("failed to call gumgumd bucket object API", source))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(self.unsupported_bucket_object_error(action));
+        }
+        response
+            .error_for_status()
+            .map_err(|source| {
+                self.api_error("gumgumd bucket object API returned an error", source)
+            })?
+            .json()
+            .await
+            .map_err(|source| {
+                self.api_error("gumgumd bucket object API returned invalid JSON", source)
+            })
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(
@@ -284,10 +334,28 @@ impl ServerClient {
             self.host
         ))
         .next_command(format!(
-            "gumgum setup {} --root-domain <domain>",
+            "gumgum server add {} --root-domain <domain>",
             self.host
         ))
-        .next_command(format!("gumgum server {} upgrade", self.host))
+        .next_command(format!("gumgum server upgrade --host {}", self.host))
+        .build()
+    }
+
+    fn unsupported_revision_delete_error(&self, worker: &str, revision_id: i64) -> GumgumError {
+        GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::Io,
+            "gumgumd does not expose safe deployment revision delete API",
+        )
+        .likely_cause(format!(
+            "server {} returned 404/405 for DELETE /v0/revisions/{worker}/{revision_id}; the daemon is probably older than the CLI or was installed before safe rollback revision pruning was added",
+            self.host
+        ))
+        .next_command(format!(
+            "gumgum server add {} --root-domain <domain>",
+            self.host
+        ))
+        .next_command(format!("gumgum server upgrade --host {}", self.host))
         .build()
     }
 
@@ -302,10 +370,28 @@ impl ServerClient {
             self.host
         ))
         .next_command(format!(
-            "gumgum setup {} --root-domain <domain>",
+            "gumgum server add {} --root-domain <domain>",
             self.host
         ))
-        .next_command("gumgum version")
+        .next_command(format!("gumgum server upgrade --host {}", self.host))
+        .build()
+    }
+
+    fn unsupported_bucket_object_error(&self, action: &str) -> GumgumError {
+        GumgumError::structured(
+            Subsystem::Api,
+            ErrorCode::Io,
+            "gumgumd does not expose bucket object API",
+        )
+        .likely_cause(format!(
+            "server {} returned 404 for POST /v0/buckets/{action}; the daemon is probably older than the CLI or was installed before bucket object APIs were added",
+            self.host
+        ))
+        .next_command(format!("gumgum server upgrade --host {}", self.host))
+        .next_command(format!(
+            "gumgum server capabilities list --host {} --require gumgum:buckets:objects",
+            self.host
+        ))
         .build()
     }
 }
@@ -328,8 +414,33 @@ mod tests {
         assert_eq!(
             report.next_commands,
             vec![
-                "gumgum setup starbase2 --root-domain <domain>",
-                "gumgum server starbase2 upgrade",
+                "gumgum server add starbase2 --root-domain <domain>",
+                "gumgum server upgrade --host starbase2",
+            ]
+        );
+    }
+
+    #[test]
+    fn unsupported_revision_delete_error_explains_old_daemon() {
+        let report = ServerClient::new("starbase2")
+            .unsupported_revision_delete_error("api", 8)
+            .to_report();
+
+        assert_eq!(
+            report.message,
+            "gumgumd does not expose safe deployment revision delete API"
+        );
+        assert!(
+            report
+                .likely_cause
+                .unwrap()
+                .contains("DELETE /v0/revisions/api/8")
+        );
+        assert_eq!(
+            report.next_commands,
+            vec![
+                "gumgum server add starbase2 --root-domain <domain>",
+                "gumgum server upgrade --host starbase2",
             ]
         );
     }
@@ -353,8 +464,25 @@ mod tests {
         assert_eq!(
             report.next_commands,
             vec![
-                "gumgum setup 192.168.0.3 --root-domain <domain>",
-                "gumgum version",
+                "gumgum server add 192.168.0.3 --root-domain <domain>",
+                "gumgum server upgrade --host 192.168.0.3",
+            ]
+        );
+    }
+
+    #[test]
+    fn unsupported_bucket_object_error_explains_old_daemon() {
+        let report = ServerClient::new("starbase2")
+            .unsupported_bucket_object_error("ls")
+            .to_report();
+
+        assert_eq!(report.message, "gumgumd does not expose bucket object API");
+        assert!(report.likely_cause.unwrap().contains("POST /v0/buckets/ls"));
+        assert_eq!(
+            report.next_commands,
+            vec![
+                "gumgum server upgrade --host starbase2",
+                "gumgum server capabilities list --host starbase2 --require gumgum:buckets:objects",
             ]
         );
     }

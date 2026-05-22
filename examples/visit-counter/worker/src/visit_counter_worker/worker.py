@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol
 
@@ -40,6 +42,27 @@ S3_FORCE_PATH_STYLE = os.environ.get("VISIT_REQUESTS_BUCKET_FORCE_PATH_STYLE") =
 KAFKA_BROKERS = os.environ.get("VISIT_EVENTS_QUEUE_BROKERS")
 KAFKA_TOPIC = os.environ.get("VISIT_EVENTS_QUEUE_TOPIC")
 KAFKA_GROUP_ID = os.environ.get("VISIT_EVENTS_QUEUE_GROUP_ID", "visit-counter-worker")
+HEALTH_PORT = int(os.environ.get("PORT", "3000"))
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+        if self.path == "/healthz":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok\n")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib signature
+        return
+
+
+def start_health_server() -> None:
+    server = ThreadingHTTPServer(("0.0.0.0", HEALTH_PORT), HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
 
 
 class VisitStore(Protocol):
@@ -262,6 +285,7 @@ def process_message(
 def main() -> None:
     BUCKET_DIR.mkdir(parents=True, exist_ok=True)
     QUEUE_DIR.mkdir(parents=True, exist_ok=True)
+    start_health_server()
     store = visit_store()
     bucket = request_bucket()
     events = event_source()

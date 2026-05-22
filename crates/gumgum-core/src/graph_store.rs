@@ -922,6 +922,26 @@ impl GraphStore {
         }
     }
 
+    pub fn delete_deployment_revision(&self, worker: &str, revision_id: i64) -> Result<bool> {
+        self.init()?;
+        let conn = self.open()?;
+        let deleted = conn
+            .execute(
+                "DELETE FROM deployment_revisions WHERE worker = ?1 AND id = ?2",
+                params![worker, revision_id],
+            )
+            .map_err(|source| self.error("could not delete deployment revision", source))?
+            > 0;
+        if deleted {
+            self.record_activity_event(
+                format!("deployment/{worker}/revision/{revision_id}"),
+                "deployment_revision.delete",
+                format!("deleted deployment revision {revision_id} for {worker}"),
+            )?;
+        }
+        Ok(deleted)
+    }
+
     pub fn deployment_revisions(
         &self,
         worker: &str,
@@ -1352,7 +1372,9 @@ fn binding_values(
             let password = secret.unwrap_or(credentials.password);
             vec![(
                 binding.to_owned(),
-                format!("postgres://{username}:{password}@{dns}:5432/{database}"),
+                format!(
+                    "postgres://{username}:{password}@gumgum-provider-postgres-main:5432/{database}"
+                ),
             )]
         }
         Capability::Kv => {
@@ -1360,15 +1382,24 @@ fn binding_values(
                 .unwrap_or_else(crate::ProviderCredentials::redis_local_dev);
             vec![(
                 binding.to_owned(),
-                format!("redis://:{}@{dns}:6379/0", credentials.password),
+                format!(
+                    "redis://:{}@gumgum-provider-redis-main:6379/0",
+                    credentials.password
+                ),
             )]
         }
         Capability::Blob => {
             let credentials = provider_credentials("minio.main")
                 .unwrap_or_else(crate::ProviderCredentials::minio_local_dev);
             vec![
-                (binding.to_owned(), format!("s3://{dns}/{name}")),
-                (format!("{binding}_ENDPOINT"), format!("http://{dns}:9000")),
+                (
+                    binding.to_owned(),
+                    format!("s3://gumgum-provider-minio-main/{name}"),
+                ),
+                (
+                    format!("{binding}_ENDPOINT"),
+                    "http://gumgum-provider-minio-main:9000".to_owned(),
+                ),
                 (format!("{binding}_BUCKET"), crate::sanitize_name(name)),
                 (format!("{binding}_ACCESS_KEY_ID"), credentials.username),
                 (format!("{binding}_SECRET_ACCESS_KEY"), credentials.password),
@@ -1378,9 +1409,15 @@ fn binding_values(
         Capability::Queue => vec![
             (
                 binding.to_owned(),
-                format!("kafka://{dns}:9092/{}", crate::sanitize_name(name)),
+                format!(
+                    "kafka://gumgum-provider-redpanda-main:9092/{}",
+                    crate::sanitize_name(name)
+                ),
             ),
-            (format!("{binding}_BROKERS"), format!("{dns}:9092")),
+            (
+                format!("{binding}_BROKERS"),
+                "gumgum-provider-redpanda-main:9092".to_owned(),
+            ),
             (format!("{binding}_TOPIC"), crate::sanitize_name(name)),
         ],
         Capability::Observability => vec![
@@ -1661,11 +1698,11 @@ mod tests {
         let env = store.binding_env("api").unwrap();
         assert!(env.contains(&(
             "DATABASE_URL".to_owned(),
-            "postgres://gumgum:gumgum-local-dev@main.db.leostera.dev:5432/main".to_owned()
+            "postgres://gumgum:gumgum-local-dev@gumgum-provider-postgres-main:5432/main".to_owned()
         )));
         assert!(env.contains(&(
             "SESSIONS".to_owned(),
-            "redis://:gumgum-local-dev@sessions.kv.leostera.dev:6379/0".to_owned()
+            "redis://:gumgum-local-dev@gumgum-provider-redis-main:6379/0".to_owned()
         )));
         store
             .materialize_object(&GlobalObject {
@@ -1687,7 +1724,7 @@ mod tests {
         let env = store.binding_env("api").unwrap();
         assert!(env.contains(&(
             "UPLOADS_ENDPOINT".to_owned(),
-            "http://user-uploads.blob.leostera.dev:9000".to_owned()
+            "http://gumgum-provider-minio-main:9000".to_owned()
         )));
         assert!(env.contains(&("UPLOADS_BUCKET".to_owned(), "user-uploads".to_owned())));
         assert!(env.contains(&("UPLOADS_ACCESS_KEY_ID".to_owned(), "gumgum".to_owned())));
@@ -1716,7 +1753,7 @@ mod tests {
         let env = store.binding_env("api").unwrap();
         assert!(env.contains(&(
             "VISIT_EVENTS_QUEUE_BROKERS".to_owned(),
-            "visit-events.queue.leostera.dev:9092".to_owned()
+            "gumgum-provider-redpanda-main:9092".to_owned()
         )));
         assert!(env.contains(&(
             "VISIT_EVENTS_QUEUE_TOPIC".to_owned(),
@@ -1836,6 +1873,26 @@ mod tests {
         let latest = store.rollback_revision("api", None).unwrap().unwrap();
         assert_eq!(latest.id, revisions[0].id);
         assert!(store.rollback_revision("api", Some(-1)).unwrap().is_none());
+
+        assert!(
+            store
+                .delete_deployment_revision("api", revisions[0].id)
+                .unwrap()
+        );
+        assert!(
+            store
+                .rollback_revision("api", Some(revisions[0].id))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !store
+                .delete_deployment_revision("api", revisions[0].id)
+                .unwrap()
+        );
+        let remaining = store.deployment_revisions("api", 10).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, revisions[1].id);
         let _ = fs::remove_file(store.path);
     }
 }

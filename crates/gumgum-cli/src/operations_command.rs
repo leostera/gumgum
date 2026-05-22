@@ -1,4 +1,3 @@
-use crate::{OperationsArgs, print_value, resolve_server, server_client::ServerClient};
 use gumgum_core::{ControlPlaneEventKind, ReconcileEvent, ReconcileEventStatus};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -22,32 +21,7 @@ pub(crate) struct OperationSummary {
     pub(crate) targets: Vec<String>,
 }
 
-pub(crate) async fn operations(args: OperationsArgs, json: bool) -> gumgum_core::Result<()> {
-    let server = resolve_server(args.host)?;
-    let events = ServerClient::new(server.host)
-        .events(args.limit)
-        .await?
-        .events;
-    let report = OperationsReport {
-        ok: true,
-        operations: summarize_operations(&events),
-    };
-    if json {
-        print_value(true, &report);
-    } else if report.operations.is_empty() {
-        println!("no operations recorded");
-    } else {
-        for operation in report.operations {
-            println!("{}", operation_line(&operation));
-            for target in operation.targets.iter().take(5) {
-                println!("  - {target}");
-            }
-        }
-    }
-    Ok(())
-}
-
-fn summarize_operations(events: &[ReconcileEvent]) -> Vec<OperationSummary> {
+pub(crate) fn summarize_operations(events: &[ReconcileEvent]) -> Vec<OperationSummary> {
     let mut groups: BTreeMap<String, Vec<&ReconcileEvent>> = BTreeMap::new();
     for event in events {
         let operation_id = event
@@ -107,7 +81,7 @@ fn operation_kind(events: &[&ReconcileEvent]) -> String {
     }
 }
 
-fn operation_line(operation: &OperationSummary) -> String {
+pub(crate) fn operation_line(operation: &OperationSummary) -> String {
     format!(
         "{} {} {} events={} planned={} executed={} failed={} latest={}",
         operation.operation_id,

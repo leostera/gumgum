@@ -1,11 +1,11 @@
 #![allow(clippy::items_after_test_module)]
 
-use crate::{DeployArgs, progress};
+use crate::{DeployArgs, progress, resolve_server};
 use gumgum_api::{DeployApplyReport, DeployRequest, DeploymentDeleteRequest, ServerRecord};
 use gumgum_core::{
-    ConfigStore, DeploymentDescriptor, ErrorCode, GumgumError, GumgumInstaller, ManifestKind,
-    PlanGraph, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
-    run_setup_command_streaming as run_command_streaming, sanitize_name, validate_path,
+    ConfigStore, DeploymentDescriptor, ErrorCode, GumgumError, ManifestKind, PlanGraph, Subsystem,
+    WorkerManifest, load_worker_path, load_workspace_path,
+    run_setup_command_streaming as run_command_streaming, validate_path,
 };
 use serde::Serialize;
 use std::{path::PathBuf, process::Stdio, time::Duration};
@@ -57,13 +57,7 @@ pub(crate) async fn deploy(
 ) -> gumgum_core::Result<DeployOutput> {
     let kind = validate_path(&args.path)?.manifest_kind;
     let server = match args.host.clone() {
-        Some(host) => Some(ServerRecord {
-            name: sanitize_name(&host),
-            host: host.clone(),
-            root_domain: String::new(),
-            test_domain: String::new(),
-            health_url: format!("http://{host}:7777/healthz"),
-        }),
+        Some(host) => Some(resolve_server(Some(host))?),
         None => ConfigStore::from_home_env()?.load_default_server()?,
     };
     match kind {
@@ -169,14 +163,6 @@ async fn deploy_one(
         .ensure_manifest_bindings(manifest)
         .await?;
     run_remote_deploy(&server, manifest, &report, quiet).await?;
-    progress(
-        quiet,
-        format!(
-            "configuring local resolver for {} -> {}",
-            server.test_domain, server.host
-        ),
-    );
-    GumgumInstaller::configure_client_resolver(&server.test_domain, &server.host, quiet).await?;
     report.ok = true;
     report.dry_run = false;
     report.message = match &report.health_url {
@@ -233,15 +219,18 @@ async fn run_remote_deploy(
         .as_deref()
         .unwrap_or_else(|| manifest.worker.build_context.as_deref().unwrap_or("."));
     let host = &server.host;
-    let local_image = local_push_image(&report.image);
+    let tunnel_port = 55001;
+    let local_image = local_push_image(&report.image, tunnel_port);
     let route = deploy_route(report, server);
 
     wait_for_remote_registry(host, quiet).await?;
     progress(quiet, format!("opening registry tunnel to {host}"));
     let mut tunnel = TokioCommand::new("ssh")
         .arg("-N")
+        .arg("-o")
+        .arg("ExitOnForwardFailure=yes")
         .arg("-L")
-        .arg("55000:127.0.0.1:55000")
+        .arg(format!("{tunnel_port}:127.0.0.1:55000"))
         .arg(host)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -317,7 +306,19 @@ async fn apply_deploy_via_daemon(
     host: &str,
     request: &DeployRequest,
 ) -> gumgum_core::Result<DeployApplyReport> {
-    ServerClient::new(host).deploy(request).await
+    let report = ServerClient::new(host).deploy(request).await?;
+    if report.ok {
+        Ok(report)
+    } else {
+        Err(GumgumError::structured(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            format!("gumgumd failed to reconcile deployment {}", request.worker),
+        )
+        .likely_cause(report.actions.join("; "))
+        .next_command(format!("gumgum logs {} --host {host}", request.worker))
+        .build())
+    }
 }
 
 async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Result<()> {
@@ -329,8 +330,8 @@ async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Resul
     run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await
 }
 
-fn local_push_image(image: &str) -> String {
-    image.replacen("127.0.0.1", "localhost", 1)
+fn local_push_image(image: &str, tunnel_port: u16) -> String {
+    image.replacen("127.0.0.1:55000", &format!("localhost:{tunnel_port}"), 1)
 }
 
 fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> String {
@@ -389,8 +390,8 @@ mod deploy_hardening_tests {
     #[test]
     fn local_registry_image_uses_tunnel_loopback_for_push() {
         assert_eq!(
-            local_push_image("127.0.0.1:55000/dev.leostera/root/api:gg1"),
-            "localhost:55000/dev.leostera/root/api:gg1"
+            local_push_image("127.0.0.1:55000/dev.leostera/root/api:gg1", 55001),
+            "localhost:55001/dev.leostera/root/api:gg1"
         );
     }
 

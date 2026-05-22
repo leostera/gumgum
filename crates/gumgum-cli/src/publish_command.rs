@@ -1,7 +1,8 @@
 use crate::{PublishArgs, print_value, resolve_server};
+use gumgum_api::ServerRecord;
 use gumgum_core::{
-    DeploymentDescriptor, ErrorCode, GumgumError, PlanEdge, PlanGraph, PlanNode, Subsystem,
-    load_worker_path, validate_path,
+    DeploymentDescriptor, ErrorCode, GumgumError, ManifestKind, PlanEdge, PlanGraph, PlanNode,
+    Subsystem, WorkerManifest, load_worker_path, load_workspace_path, validate_path,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,22 @@ pub(crate) struct PublishReport {
     pub(crate) message: String,
 }
 
+#[derive(Debug, Serialize)]
+pub(crate) struct WorkspacePublishReport {
+    pub(crate) ok: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) workspace: String,
+    pub(crate) workers: Vec<PublishReport>,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum PublishOutput {
+    Worker(PublishReport),
+    Workspace(WorkspacePublishReport),
+}
+
 pub(crate) async fn publish(
     args: PublishArgs,
     dry_run: bool,
@@ -33,36 +50,110 @@ pub(crate) async fn publish(
         .next_command("gumgum --dry-run publish <worker>")
         .build());
     }
-    let server = resolve_server(args.host)?;
+    let server = resolve_server(args.host.clone())?;
+    let output = publish_output(args, &server)?;
+    if json {
+        print_value(true, &output);
+    } else {
+        for line in publish_output_lines(&output) {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+fn publish_output(args: PublishArgs, server: &ServerRecord) -> gumgum_core::Result<PublishOutput> {
     let path = publish_manifest_path(&args.target)?;
-    let manifest = load_worker_path(&path)?;
-    validate_path(&path)?;
-    let local = DeploymentDescriptor::from_manifest(&path, &manifest, Some(&server), false);
-    let public = DeploymentDescriptor::from_manifest(&path, &manifest, Some(&server), true);
-    let local_routes = local.routes;
-    let public_routes = args
-        .public_domain
-        .map(|domain| vec![domain])
-        .unwrap_or(public.routes);
-    let report = PublishReport {
+    match validate_path(&path)?.manifest_kind {
+        ManifestKind::Worker => {
+            let manifest = load_worker_path(&path)?;
+            Ok(PublishOutput::Worker(publish_report(
+                &path,
+                &manifest,
+                server,
+                &args.tunnel,
+                args.public_domain,
+            )))
+        }
+        ManifestKind::Workspace => {
+            if args.public_domain.is_some() {
+                return Err(GumgumError::structured(
+                    Subsystem::Cli,
+                    ErrorCode::InvalidArgs,
+                    "--public-domain requires a single worker target",
+                )
+                .next_command("gumgum --dry-run publish api/gumgum.toml --public-domain <domain>")
+                .build());
+            }
+            let workspace = load_workspace_path(&path)?;
+            let root = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let mut workers = Vec::new();
+            for member in &workspace.workspace.members {
+                let member_path = root.join(member).join("gumgum.toml");
+                let manifest = load_worker_path(&member_path)?;
+                workers.push(publish_report(
+                    &member_path,
+                    &manifest,
+                    server,
+                    &args.tunnel,
+                    None,
+                ));
+            }
+            Ok(PublishOutput::Workspace(WorkspacePublishReport {
+                ok: true,
+                dry_run: true,
+                workspace: workspace.workspace.name,
+                workers,
+                message: "workspace publish dry-run; no public routes changed".to_owned(),
+            }))
+        }
+    }
+}
+
+fn publish_report(
+    path: &Path,
+    manifest: &WorkerManifest,
+    server: &ServerRecord,
+    tunnel: &str,
+    public_domain: Option<String>,
+) -> PublishReport {
+    let local = DeploymentDescriptor::from_manifest(path, manifest, Some(server), false);
+    let public = DeploymentDescriptor::from_manifest(path, manifest, Some(server), true);
+    let manifest_local_routes = manifest
+        .ingress
+        .iter()
+        .map(|ingress| ingress.local_domain.clone())
+        .filter(|route| !route.is_empty())
+        .collect::<Vec<_>>();
+    let manifest_public_routes = manifest
+        .ingress
+        .iter()
+        .filter_map(|ingress| ingress.public_domain.clone())
+        .filter(|route| !route.is_empty())
+        .collect::<Vec<_>>();
+    let local_routes = if manifest_local_routes.is_empty() {
+        local.routes
+    } else {
+        manifest_local_routes
+    };
+    let public_routes = public_domain.map(|domain| vec![domain]).unwrap_or_else(|| {
+        if manifest_public_routes.is_empty() {
+            public.routes
+        } else {
+            manifest_public_routes
+        }
+    });
+    PublishReport {
         ok: true,
         dry_run: true,
         worker: manifest.worker.name.clone(),
         local_routes_preserved: local_routes.clone(),
         public_routes: public_routes.clone(),
-        tunnel: args.tunnel,
+        tunnel: tunnel.to_owned(),
         plan_graph: publish_plan_graph(&manifest.worker.name, &local_routes, &public_routes),
         plan: publish_plan_lines(&manifest.worker.name, &local_routes, &public_routes),
         message: "publish dry-run; no public route changed".to_owned(),
-    };
-    if json {
-        print_value(true, &report);
-    } else {
-        for line in publish_lines(&report) {
-            println!("{line}");
-        }
     }
-    Ok(())
 }
 
 fn publish_manifest_path(target: &Path) -> gumgum_core::Result<PathBuf> {
@@ -131,6 +222,26 @@ fn publish_plan_graph(
     PlanGraph::new(nodes, edges)
 }
 
+fn publish_output_lines(output: &PublishOutput) -> Vec<String> {
+    match output {
+        PublishOutput::Worker(report) => publish_lines(report),
+        PublishOutput::Workspace(report) => {
+            let mut lines = vec![format!("Workspace: {}", report.workspace)];
+            for worker in &report.workers {
+                lines.push(format!("Worker: {}", worker.worker));
+                lines.extend(
+                    publish_lines(worker)
+                        .into_iter()
+                        .skip(1)
+                        .map(|line| format!("  {line}")),
+                );
+            }
+            lines.push(report.message.clone());
+            lines
+        }
+    }
+}
+
 fn publish_lines(report: &PublishReport) -> Vec<String> {
     let mut lines = vec![format!("Worker: {}", report.worker)];
     for route in &report.local_routes_preserved {
@@ -153,6 +264,7 @@ fn publish_lines(report: &PublishReport) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn publish_lines_preserve_local_and_plan_public_route() {
@@ -192,5 +304,63 @@ mod tests {
         assert!(graph.nodes.iter().any(|node| node.kind == "public_route"));
         assert!(graph.nodes.iter().any(|node| node.kind == "local_route"));
         assert!(graph.edges.iter().any(|edge| edge.kind == "publishes_as"));
+    }
+
+    #[test]
+    fn publish_output_expands_workspace_members() {
+        let dir = temp_dir("workspace");
+        fs::create_dir_all(dir.join("api")).unwrap();
+        fs::create_dir_all(dir.join("worker")).unwrap();
+        fs::write(
+            dir.join("gumgum.toml"),
+            "[workspace]\nname = \"visit-counter\"\nmembers = [\"api\", \"worker\"]\n",
+        )
+        .unwrap();
+        for worker in ["api", "worker"] {
+            fs::write(
+                dir.join(worker).join("gumgum.toml"),
+                format!(
+                    "[project]\nnamespace = \"visit-counter\"\n\n[worker]\nname = \"{worker}\"\nbuild_context = \".\"\nport = 3000\nhealth = \"/healthz\"\n"
+                ),
+            )
+            .unwrap();
+        }
+        let output = publish_output(
+            PublishArgs {
+                target: dir.join("gumgum.toml"),
+                host: None,
+                public_domain: None,
+                tunnel: "byo".to_owned(),
+            },
+            &server_record(),
+        )
+        .unwrap();
+        let PublishOutput::Workspace(report) = output else {
+            panic!("expected workspace report")
+        };
+        assert_eq!(report.workers.len(), 2);
+        assert_eq!(report.workers[0].worker, "api");
+        assert_eq!(report.workers[1].worker, "worker");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "gumgum-publish-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn server_record() -> ServerRecord {
+        ServerRecord {
+            name: "starbase2".to_owned(),
+            host: "192.168.0.3".to_owned(),
+            root_domain: "leostera.dev".to_owned(),
+            test_domain: "leostera.test".to_owned(),
+            health_url: "http://starbase2:7777/healthz".to_owned(),
+        }
     }
 }
