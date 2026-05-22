@@ -1,6 +1,6 @@
 use crate::{CloudflareGrant, ErrorCode, GumgumError, Result, Subsystem};
 use reqwest::Client;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::Deserialize;
 
 const API_BASE: &str = "https://api.cloudflare.com/client/v4";
 const CADDY_SERVICE: &str = "http://caddy-gateway:80";
@@ -46,35 +46,54 @@ impl CloudflareClient {
     }
 
     async fn zone(&self, name: &str) -> Result<Zone> {
-        let response: ListResponse<Zone> = self
-            .get(&format!("/zones?name={}", url_encode(name)))
+        let response = self
+            .get_json(&format!("/zones?name={}", url_encode(name)))
             .await?;
-        response.result.into_iter().next().ok_or_else(|| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::InvalidArgs,
-                format!("Cloudflare zone {name} was not found"),
-            )
-            .likely_cause("check that the API token is scoped to this zone")
-            .build()
-        })
+        result_array(&response)
+            .and_then(|zones| zones.first().cloned())
+            .and_then(|value| serde_json::from_value(value).ok())
+            .ok_or_else(|| {
+                GumgumError::structured(
+                    Subsystem::Config,
+                    ErrorCode::InvalidArgs,
+                    format!("Cloudflare zone {name} was not found"),
+                )
+                .likely_cause("check that the API token is scoped to this zone")
+                .build()
+            })
     }
 
     async fn ensure_tunnel(&self, account_id: &str, name: &str) -> Result<Tunnel> {
-        let existing: ListResponse<Tunnel> = self
-            .get(&format!(
+        let existing = self
+            .get_json(&format!(
                 "/accounts/{account_id}/cfd_tunnel?name={}",
                 url_encode(name)
             ))
             .await?;
-        if let Some(tunnel) = existing.result.into_iter().find(|tunnel| !tunnel.deleted) {
+        if let Some(tunnel) = result_array(&existing).and_then(|tunnels| {
+            tunnels.into_iter().find_map(|value| {
+                let tunnel: Tunnel = serde_json::from_value(value).ok()?;
+                if !tunnel.deleted_at.is_some() && !tunnel.deleted.unwrap_or(false) {
+                    Some(tunnel)
+                } else {
+                    None
+                }
+            })
+        }) {
             return Ok(tunnel);
         }
-        self.post(
-            &format!("/accounts/{account_id}/cfd_tunnel"),
-            &serde_json::json!({ "name": name, "config_src": "cloudflare" }),
-        )
-        .await
+        let created = self
+            .post_json(
+                &format!("/accounts/{account_id}/cfd_tunnel"),
+                &serde_json::json!({ "name": name, "config_src": "cloudflare" }),
+            )
+            .await?;
+        serde_json::from_value(result_value(&created)?.clone()).map_err(|source| {
+            cf_message_error(
+                "could not decode Cloudflare tunnel create response",
+                source.to_string(),
+            )
+        })
     }
 
     async fn ensure_tunnel_config(
@@ -83,32 +102,43 @@ impl CloudflareClient {
         tunnel_id: &str,
         hostname: &str,
     ) -> Result<()> {
-        let _: CloudflareEnvelope<serde_json::Value> = self
-            .put_raw(
-                &format!("/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations"),
-                &serde_json::json!({
-                    "config": {
-                        "ingress": [
-                            { "hostname": hostname, "service": CADDY_SERVICE },
-                            { "service": "http_status:404" }
-                        ]
-                    }
-                }),
-            )
-            .await?;
+        self.put_json(
+            &format!("/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations"),
+            &serde_json::json!({
+                "config": {
+                    "ingress": [
+                        { "hostname": hostname, "service": CADDY_SERVICE },
+                        { "service": "http_status:404" }
+                    ]
+                }
+            }),
+        )
+        .await?;
         Ok(())
     }
 
     async fn tunnel_token(&self, account_id: &str, tunnel_id: &str) -> Result<String> {
-        self.get(&format!(
-            "/accounts/{account_id}/cfd_tunnel/{tunnel_id}/token"
+        let response = self
+            .get_json(&format!(
+                "/accounts/{account_id}/cfd_tunnel/{tunnel_id}/token"
+            ))
+            .await?;
+        let result = result_value(&response)?;
+        if let Some(token) = result.as_str() {
+            return Ok(token.to_owned());
+        }
+        if let Some(token) = result.get("token").and_then(|value| value.as_str()) {
+            return Ok(token.to_owned());
+        }
+        Err(cf_message_error(
+            "could not decode Cloudflare tunnel token response",
+            result.to_string(),
         ))
-        .await
     }
 
     async fn upsert_cname(&self, zone_id: &str, hostname: &str, target: &str) -> Result<()> {
-        let existing: ListResponse<DnsRecord> = self
-            .get(&format!(
+        let existing = self
+            .get_json(&format!(
                 "/zones/{zone_id}/dns_records?type=CNAME&name={}",
                 url_encode(hostname)
             ))
@@ -120,79 +150,64 @@ impl CloudflareClient {
             "proxied": true,
             "ttl": 1
         });
-        if let Some(record) = existing.result.into_iter().next() {
-            let _: DnsRecord = self
-                .put(
-                    &format!("/zones/{zone_id}/dns_records/{}", record.id),
-                    &body,
-                )
+        if let Some(record_id) = result_array(&existing).and_then(|records| {
+            records
+                .first()
+                .and_then(|record| record.get("id"))
+                .and_then(|id| id.as_str())
+                .map(ToOwned::to_owned)
+        }) {
+            self.put_json(&format!("/zones/{zone_id}/dns_records/{record_id}"), &body)
                 .await?;
         } else {
-            let _: DnsRecord = self
-                .post(&format!("/zones/{zone_id}/dns_records"), &body)
+            self.post_json(&format!("/zones/{zone_id}/dns_records"), &body)
                 .await?;
         }
         Ok(())
     }
 
-    async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        self.decode(self.http.get(format!("{API_BASE}{path}")))
+    async fn get_json(&self, path: &str) -> Result<serde_json::Value> {
+        self.decode_json(self.http.get(format!("{API_BASE}{path}")))
             .await
     }
 
-    async fn post<T: DeserializeOwned>(&self, path: &str, body: &serde_json::Value) -> Result<T> {
-        self.decode(self.http.post(format!("{API_BASE}{path}")).json(body))
+    async fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.decode_json(self.http.post(format!("{API_BASE}{path}")).json(body))
             .await
     }
 
-    async fn put<T: DeserializeOwned>(&self, path: &str, body: &serde_json::Value) -> Result<T> {
-        self.decode(self.http.put(format!("{API_BASE}{path}")).json(body))
+    async fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.decode_json(self.http.put(format!("{API_BASE}{path}")).json(body))
             .await
     }
 
-    async fn put_raw<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &serde_json::Value,
-    ) -> Result<T> {
-        self.decode_raw(self.http.put(format!("{API_BASE}{path}")).json(body))
-            .await
-    }
-
-    async fn decode<T: DeserializeOwned>(&self, request: reqwest::RequestBuilder) -> Result<T> {
-        Ok(self
-            .decode_raw::<CloudflareEnvelope<T>>(request)
-            .await?
-            .result)
-    }
-
-    async fn decode_raw<T: DeserializeOwned>(&self, request: reqwest::RequestBuilder) -> Result<T> {
-        request
+    async fn decode_json(&self, request: reqwest::RequestBuilder) -> Result<serde_json::Value> {
+        let response = request
             .bearer_auth(&self.token)
             .send()
             .await
             .map_err(|source| cf_error("Cloudflare API request failed", source))?
             .error_for_status()
-            .map_err(|source| cf_error("Cloudflare API returned an error", source))?
-            .json()
+            .map_err(|source| cf_error("Cloudflare API returned an error", source))?;
+        let body = response
+            .text()
             .await
-            .map_err(|source| cf_error("could not decode Cloudflare API response", source))
+            .map_err(|source| cf_error("could not read Cloudflare API response body", source))?;
+        serde_json::from_str(&body).map_err(|source| {
+            cf_message_error(
+                "could not decode Cloudflare API response",
+                format!(
+                    "{source}; body: {}",
+                    body.chars().take(500).collect::<String>()
+                ),
+            )
+        })
     }
 }
 
 pub struct CloudflareRoute {
     pub actions: Vec<String>,
     pub tunnel_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CloudflareEnvelope<T> {
-    result: T,
-}
-
-#[derive(Debug, Deserialize)]
-struct ListResponse<T> {
-    result: Vec<T>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,17 +226,33 @@ struct Tunnel {
     id: String,
     name: String,
     #[serde(default)]
-    deleted: bool,
+    deleted: Option<bool>,
+    #[serde(default)]
+    deleted_at: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct DnsRecord {
-    id: String,
+fn result_value(response: &serde_json::Value) -> Result<&serde_json::Value> {
+    response.get("result").ok_or_else(|| {
+        cf_message_error(
+            "Cloudflare API response did not include a result",
+            response.to_string(),
+        )
+    })
+}
+
+fn result_array(response: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    response.get("result")?.as_array().cloned()
 }
 
 fn cf_error(message: &str, source: reqwest::Error) -> GumgumError {
     GumgumError::structured(Subsystem::Config, ErrorCode::Io, message)
         .likely_cause(source.to_string())
+        .build()
+}
+
+fn cf_message_error(message: &str, cause: String) -> GumgumError {
+    GumgumError::structured(Subsystem::Config, ErrorCode::Io, message)
+        .likely_cause(cause)
         .build()
 }
 
