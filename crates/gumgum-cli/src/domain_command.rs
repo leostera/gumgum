@@ -69,6 +69,21 @@ pub(crate) async fn add_domain(
                 || action.starts_with("Cloudflare zone verification failed:")
         })
     {
+        if !json {
+            for action in &report.actions {
+                println!("→ {action}");
+            }
+            if report
+                .actions
+                .iter()
+                .any(|action| action.starts_with("Cloudflare zone verification failed:"))
+            {
+                println!(
+                    "The saved Cloudflare token cannot see {}. Create or update a token that includes this domain, then paste it below.",
+                    args.name
+                );
+            }
+        }
         let grant = cloudflare::authorize_zone(&args.name).await?;
         report = client
             .add_domain(&DomainAddRequest {

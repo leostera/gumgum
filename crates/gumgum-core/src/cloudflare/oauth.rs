@@ -4,15 +4,14 @@ use std::io::{self, Write};
 use super::types::{CLOUDFLARE_PROVIDER, CloudflareGrant};
 
 const REQUIRED_PERMISSIONS: &[(&str, &str, &str)] = &[
-    ("Zone", "DNS: Edit", "Every domain GumGum should manage"),
-    ("Zone", "Zone: Read", "Every domain GumGum should manage"),
+    ("Zone", "Zone Read", "All zones GumGum should manage"),
+    ("Zone", "DNS Write", "All zones GumGum should manage"),
     (
         "Account",
-        "Cloudflare Tunnel: Edit",
+        "Cloudflare One Connector: cloudflared Write",
         "Account used for Cloudflare Tunnel ingress",
     ),
 ];
-const CLOUDFLARE_TUNNEL_FALLBACK_PERMISSION: &str = "If Cloudflare Tunnel: Edit is not available in your dashboard, use Account / Zero Trust: Edit as the broader fallback.";
 
 pub async fn ensure_authorized_for_zone(
     store: &ConfigStore,
@@ -41,19 +40,21 @@ pub async fn ensure_authorized_for_zone(
 
 pub async fn authorize_zone(zone_name: &str) -> Result<CloudflareGrant> {
     eprintln!("Cloudflare API token required for {zone_name}.");
-    eprintln!("Create a Cloudflare API token with these permissions:");
-    eprintln!("  Scope    Permission                 Applies to");
+    eprintln!("Create a Cloudflare API token with these permission policies:");
+    eprintln!("  Scope    Permission                                      Applies to");
     eprintln!(
-        "  -------  -------------------------  ---------------------------------------------------------------"
+        "  -------  ----------------------------------------------  ---------------------------------------------------------------"
     );
     for (scope, permission, applies_to) in REQUIRED_PERMISSIONS {
-        eprintln!("  {scope:<7}  {permission:<25}  {applies_to}");
+        eprintln!("  {scope:<7}  {permission:<46}  {applies_to}");
     }
-    eprintln!("Scope the token to this domain now: {zone_name}");
+    eprintln!("Use Cloudflare's token builder as:");
+    eprintln!("  All zones in your account: Zone Read, DNS Write");
+    eprintln!("  Entire account: Cloudflare One Connector: cloudflared Write");
+    eprintln!("Make sure the zone list includes: {zone_name}");
     eprintln!(
         "When adding more Cloudflare-managed domains later, update/recreate the token to include those domains too."
     );
-    eprintln!("{CLOUDFLARE_TUNNEL_FALLBACK_PERMISSION}");
     eprintln!("Cloudflare token page: https://dash.cloudflare.com/profile/api-tokens");
     eprint!("Paste Cloudflare API token: ");
     io::stderr().flush().map_err(|source| {

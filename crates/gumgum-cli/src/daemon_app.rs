@@ -176,6 +176,26 @@ async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<Domain
     };
     if request.provider == gumgum_core::DomainProvider::Cloudflare {
         if let Some(grant) = request.cloudflare_grant {
+            if let Err(error) = gumgum_core::cloudflare::api::CloudflareClient::new(&grant)
+                .validate_zone_access(&request.name)
+                .await
+            {
+                return Json(DomainReport {
+                    ok: false,
+                    name: request.name,
+                    provider: request.provider,
+                    ingress: request.ingress,
+                    actions: vec![format!(
+                        "Cloudflare zone verification failed: {}",
+                        error.to_report().message
+                    )],
+                    message: "Cloudflare grant was not saved".to_owned(),
+                });
+            }
+            actions.push(format!(
+                "verified Cloudflare zone access for {} using provided grant",
+                request.name
+            ));
             if let Err(error) = store.save_cloudflare_grant(&grant) {
                 return Json(DomainReport {
                     ok: false,
