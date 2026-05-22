@@ -341,7 +341,7 @@ impl ServerClient {
             self.host
         ))
         .next_command(format!(
-            "gumgum server add {} --root-domain <domain>",
+            "gumgum server add {} --domain <domain>",
             self.host
         ))
         .next_command(format!("gumgum server upgrade --host {}", self.host))
@@ -359,7 +359,7 @@ impl ServerClient {
             self.host
         ))
         .next_command(format!(
-            "gumgum server add {} --root-domain <domain>",
+            "gumgum server add {} --domain <domain>",
             self.host
         ))
         .next_command(format!("gumgum server upgrade --host {}", self.host))
@@ -377,7 +377,7 @@ impl ServerClient {
             self.host
         ))
         .next_command(format!(
-            "gumgum server add {} --root-domain <domain>",
+            "gumgum server add {} --domain <domain>",
             self.host
         ))
         .next_command(format!("gumgum server upgrade --host {}", self.host))
@@ -421,7 +421,7 @@ mod tests {
         assert_eq!(
             report.next_commands,
             vec![
-                "gumgum server add starbase2 --root-domain <domain>",
+                "gumgum server add starbase2 --domain <domain>",
                 "gumgum server upgrade --host starbase2",
             ]
         );
@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(
             report.next_commands,
             vec![
-                "gumgum server add starbase2 --root-domain <domain>",
+                "gumgum server add starbase2 --domain <domain>",
                 "gumgum server upgrade --host starbase2",
             ]
         );
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(
             report.next_commands,
             vec![
-                "gumgum server add 192.168.0.3 --root-domain <domain>",
+                "gumgum server add 192.168.0.3 --domain <domain>",
                 "gumgum server upgrade --host 192.168.0.3",
             ]
         );

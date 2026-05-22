@@ -27,7 +27,7 @@ pub async fn run_setup_command_streaming(cmd: &mut TokioCommand, quiet: bool) ->
         Err(
             GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "setup command failed")
                 .likely_cause(format!("exit status {status}"))
-                .next_command("gumgum setup <host> --root-domain <domain> --dry-run")
+                .next_command("gumgum setup <host> --domain <domain> --dry-run")
                 .build(),
         )
     }
@@ -54,7 +54,7 @@ pub async fn run_setup_command(cmd: &mut TokioCommand) -> crate::Result<()> {
             } else {
                 stderr
             })
-            .next_command("gumgum setup <host> --root-domain <domain> --dry-run")
+            .next_command("gumgum setup <host> --domain <domain> --dry-run")
             .build(),
     )
 }

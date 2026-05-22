@@ -208,16 +208,10 @@ impl GumgumInstaller {
 }
 
 fn remote_setup_command(setup: &SetupTarget, quiet: bool) -> String {
-    let test_domain = if setup.test_domain.is_empty() {
-        String::new()
-    } else {
-        format!(" --test-domain {}", shell_quote(&setup.test_domain))
-    };
     format!(
-        "~/.gumgum/bin/gumgum setup 127.0.0.1 --name {} --root-domain {}{}{}",
+        "~/.gumgum/bin/gumgum setup 127.0.0.1 --name {} --domain {}{}",
         shell_quote(&setup.name),
         shell_quote(&setup.root_domain),
-        test_domain,
         if quiet { " --json" } else { "" }
     )
 }

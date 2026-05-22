@@ -97,7 +97,7 @@ gumgum version
 Use this when you want to run apps on your own machine:
 
 ```bash
-gumgum server add 0.0.0.0 --name local --root-domain example.dev
+gumgum server add 0.0.0.0 --name local --domain example.dev
 ```
 
 This configures a local gumgum server named `local`. GumGum does not install local DNS resolver entries; use real DNS, `/etc/hosts`, or `curl --resolve` for local testing.
@@ -107,7 +107,7 @@ This configures a local gumgum server named `local`. GumGum does not install loc
 Use this when you want to run apps on another machine over SSH:
 
 ```bash
-gumgum server add 203.0.113.10 --name prod --root-domain example.com
+gumgum server add 203.0.113.10 --name prod --domain example.com
 ```
 
 If SSH needs a user:
@@ -116,13 +116,13 @@ If SSH needs a user:
 gumgum server add 203.0.113.10 \
   --user root \
   --name prod \
-  --root-domain example.com
+  --domain example.com
 ```
 
 Preview setup without changing anything:
 
 ```bash
-gumgum --dry-run server add 203.0.113.10 --name prod --root-domain example.com
+gumgum --dry-run server add 203.0.113.10 --name prod --domain example.com
 ```
 
 ### Inspect and remove servers
@@ -173,7 +173,7 @@ gumgum init --name my-app
 Useful options:
 
 ```bash
-gumgum init --name my-app --root-domain example.com
+gumgum init --name my-app --domain example.com
 gumgum init --name my-app --namespace production
 gumgum init --name my-app --force
 ```
@@ -222,7 +222,7 @@ Servers run the GumGum control plane; domains describe DNS zones that a server c
 gumgum domain add leostera.dev --server starbase2 --provider cloudflare --ingress cloudflare
 ```
 
-`--provider manual` records the domain and prints the desired intent without changing DNS. `--provider cloudflare` starts a browser OAuth flow, then saves the Cloudflare grant on the GumGum server so future route convergence can manage DNS/tunnel state there. As setup sugar, `gumgum server add ... --root-domain leostera.dev --ingress cloudflare` installs the server and then adds that domain with Cloudflare ingress.
+`--provider manual` records the domain and prints the desired intent without changing DNS. `--provider cloudflare` starts a browser OAuth flow, then saves the Cloudflare grant on the GumGum server so future route convergence can manage DNS/tunnel state there. As setup sugar, `gumgum server add ... --domain leostera.dev --ingress cloudflare` installs the server and then adds that domain with Cloudflare ingress.
 
 ## Manage resources
 
@@ -265,7 +265,7 @@ Create with an explicit namespace or root domain when needed:
 
 ```bash
 gumgum db create app-db --namespace prod
-gumgum db create app-db --root-domain example.com
+gumgum db create app-db --domain example.com
 ```
 
 ### KV namespaces
@@ -689,7 +689,7 @@ Server commands:
 ```bash
 gumgum server
 gumgum server list
-gumgum server add <host> [--name <name>] [--user <user>] [--root-domain <domain>] [--test-domain <domain>]
+gumgum server add <host> [--name <name>] [--user <user>] [--domain <domain>]
 gumgum server rm <host-or-name>
 gumgum server ping --host <host-or-name>
 gumgum server capabilities list --host <host-or-name> [--require <capability,...>]

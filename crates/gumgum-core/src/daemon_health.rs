@@ -34,7 +34,7 @@ impl DaemonHealthClient {
             .map_err(|source| {
                 GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to reach gumgumd")
                     .likely_cause(source.to_string())
-                    .next_command(format!("gumgum setup {host} --root-domain <domain>"))
+                    .next_command(format!("gumgum setup {host} --domain <domain>"))
                     .build()
             })?
             .error_for_status()
@@ -85,7 +85,7 @@ impl DaemonHealthClient {
         Err(
             GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to reach gumgumd")
                 .likely_cause(last_error.unwrap_or_else(|| "health check timed out".to_owned()))
-                .next_command("gumgum setup 127.0.0.1 --root-domain <domain>")
+                .next_command("gumgum setup 127.0.0.1 --domain <domain>")
                 .build(),
         )
     }

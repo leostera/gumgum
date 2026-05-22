@@ -12,16 +12,16 @@ pub(crate) async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<SetupT
             "gumgum setup now requires an explicit host",
         )
         .likely_cause("server setup is explicit; use `server add` to register hosts")
-        .next_command("gumgum server add 0.0.0.0 --name local --root-domain <domain>")
-        .next_command("gumgum server add <host> --name <name> --root-domain <domain>")
+        .next_command("gumgum server add 0.0.0.0 --name local --domain <domain>")
+        .next_command("gumgum server add <host> --name <name> --domain <domain>")
         .build());
     }
     GumgumInstaller::resolve_target(SetupOptions {
         host: args.host,
         name: args.name,
         user: args.user,
-        root_domain: args.root_domain,
-        test_domain: args.test_domain,
+        root_domain: args.domain,
+        test_domain: None,
         ingress: Some(args.ingress.into()),
     })
     .await

@@ -179,7 +179,7 @@ fn resolve_server(host: Option<String>) -> gumgum_core::Result<ServerRecord> {
                     ErrorCode::InvalidArgs,
                     "no GumGum.dev server configured",
                 )
-                .next_command("gumgum server add <host> --root-domain <domain>")
+                .next_command("gumgum server add <host> --domain <domain>")
                 .build()
             }),
     }

@@ -388,10 +388,8 @@ pub(crate) struct SetupArgs {
     pub(crate) name: Option<String>,
     #[arg(long)]
     pub(crate) user: Option<String>,
-    #[arg(long)]
-    pub(crate) root_domain: Option<String>,
-    #[arg(long)]
-    pub(crate) test_domain: Option<String>,
+    #[arg(long, alias = "root-domain")]
+    pub(crate) domain: Option<String>,
     #[arg(long, value_enum, default_value_t = IngressArg::Direct)]
     pub(crate) ingress: IngressArg,
 }
@@ -460,10 +458,8 @@ pub(crate) struct ServerAddArgs {
     pub(crate) name: Option<String>,
     #[arg(long)]
     pub(crate) user: Option<String>,
-    #[arg(long)]
-    pub(crate) root_domain: Option<String>,
-    #[arg(long)]
-    pub(crate) test_domain: Option<String>,
+    #[arg(long, alias = "root-domain")]
+    pub(crate) domain: Option<String>,
     #[arg(long, value_enum, default_value_t = IngressArg::Direct)]
     pub(crate) ingress: IngressArg,
 }
@@ -596,7 +592,7 @@ mod tests {
                 "starbase2",
                 "--name",
                 "starbase2",
-                "--root-domain",
+                "--domain",
                 "leostera.dev",
             ])
             .unwrap()
@@ -606,7 +602,7 @@ mod tests {
                 command: Some(ServerSubcommand::Add(ServerAddArgs {
                     ref host,
                     name: Some(ref name),
-                    root_domain: Some(ref root_domain),
+                    domain: Some(ref root_domain),
                     ..
                 }))
             }) if host == "starbase2" && name == "starbase2" && root_domain == "leostera.dev"

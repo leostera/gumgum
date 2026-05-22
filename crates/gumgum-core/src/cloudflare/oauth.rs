@@ -13,6 +13,7 @@ use super::types::{CLOUDFLARE_PROVIDER, CloudflareGrant, CloudflareTokenResponse
 
 const AUTH_URL: &str = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN_URL: &str = "https://dash.cloudflare.com/oauth2/token";
+const WRANGLER_CLIENT_ID: &str = "54d11594-84e4-41aa-b438-e81b8faaee7f";
 const DEFAULT_SCOPES: &[&str] = &[
     "com.cloudflare.api.account.zone.list",
     "com.cloudflare.api.account.account_settings.read",
@@ -227,15 +228,8 @@ fn random_string(len: usize) -> String {
 }
 
 fn cloudflare_client_id() -> Result<String> {
-    std::env::var("GUMGUM_CLOUDFLARE_CLIENT_ID").map_err(|_| {
-        GumgumError::structured(
-            Subsystem::Config,
-            ErrorCode::InvalidArgs,
-            "Cloudflare OAuth client id is not configured",
-        )
-        .likely_cause("set GUMGUM_CLOUDFLARE_CLIENT_ID to the Wrangler-compatible OAuth client id")
-        .build()
-    })
+    Ok(std::env::var("GUMGUM_CLOUDFLARE_CLIENT_ID")
+        .unwrap_or_else(|_| WRANGLER_CLIENT_ID.to_owned()))
 }
 
 fn open_browser(url: &str) -> std::io::Result<()> {

@@ -192,7 +192,7 @@ async fn deploy_one(
             ErrorCode::InvalidArgs,
             "no GumGum.dev server configured",
         )
-        .next_command("gumgum setup <host> --root-domain <domain>")
+        .next_command("gumgum setup <host> --domain <domain>")
         .build()
     })?;
     DeployExecutor::new(&server, quiet)

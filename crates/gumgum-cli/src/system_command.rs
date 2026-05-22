@@ -167,8 +167,8 @@ async fn add_server(
         host: Some(args.host),
         name: args.name,
         user: args.user,
-        root_domain: args.root_domain,
-        test_domain: args.test_domain,
+        root_domain: args.domain,
+        test_domain: None,
         ingress: Some(args.ingress.into()),
     })
     .await?;
@@ -557,7 +557,7 @@ fn server_upgrade_actions(dry_run: bool) -> Vec<String> {
 fn print_server_list(servers: &[ServerRecord]) {
     if servers.is_empty() {
         println!("No GumGum.dev servers configured.");
-        println!("Run: gumgum server add <host> --name <name> --root-domain <domain>");
+        println!("Run: gumgum server add <host> --name <name> --domain <domain>");
         return;
     }
     println!("{:<18} {:<16} {:<20} HEALTH", "NAME", "HOST", "ROOT DOMAIN");
