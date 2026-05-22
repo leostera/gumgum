@@ -1411,6 +1411,19 @@ async fn daemon_deploy(
     let path = (*state.graph_path).clone();
     let reconcile_path = path.clone();
     let store = GraphStore::new(path.clone());
+    let previous_route = {
+        let path = path.clone();
+        let worker = request.worker.clone();
+        tokio::task::spawn_blocking(move || {
+            GraphStore::new(path)
+                .desired_deploy(&worker)
+                .map(|deploy| deploy.and_then(|deploy| deploy.route))
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+    };
     let mut reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
     let request_for_db = request.clone().into_desired_deploy();
     if reconciliation_steps.is_empty() {
@@ -1449,7 +1462,35 @@ async fn daemon_deploy(
                     )
                     .await
                     {
-                        Ok(mut dns_actions) => actions.append(&mut dns_actions),
+                        Ok(mut dns_actions) => {
+                            actions.append(&mut dns_actions);
+                            if let Some(previous_route) = previous_route.as_deref() {
+                                if previous_route != route {
+                                    match gumgum_core::cloudflare::dns::delete_published_route(
+                                        &domains,
+                                        &grant,
+                                        previous_route,
+                                    )
+                                    .await
+                                    {
+                                        Ok(mut cleanup_actions) => {
+                                            actions.append(&mut cleanup_actions)
+                                        }
+                                        Err(error) => {
+                                            let report = error.to_report();
+                                            let cause = report
+                                                .likely_cause
+                                                .map(|cause| format!(" ({cause})"))
+                                                .unwrap_or_default();
+                                            actions.push(format!(
+                                                "publish DNS cleanup failed: {}{}",
+                                                report.message, cause
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Err(error) => {
                             let report = error.to_report();
                             let cause = report

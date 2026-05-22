@@ -7,13 +7,7 @@ pub async fn ensure_published_route(
     grant: &CloudflareGrant,
     hostname: &str,
 ) -> Result<Vec<String>> {
-    let Some(domain) = domains
-        .iter()
-        .filter(|domain| {
-            hostname == domain.name || hostname.ends_with(&format!(".{}", domain.name))
-        })
-        .max_by_key(|domain| domain.name.len())
-    else {
+    let Some(domain) = matching_domain(domains, hostname) else {
         return Ok(vec![format!(
             "no managed domain matches {hostname}; DNS was not changed"
         )]);
@@ -35,4 +29,36 @@ pub async fn ensure_published_route(
             "Cloudflare direct DNS for {hostname} is not implemented yet"
         )]),
     }
+}
+
+pub async fn delete_published_route(
+    domains: &[DomainRecord],
+    grant: &CloudflareGrant,
+    hostname: &str,
+) -> Result<Vec<String>> {
+    let Some(domain) = matching_domain(domains, hostname) else {
+        return Ok(vec![format!(
+            "no managed domain matches stale route {hostname}; DNS was not changed"
+        )]);
+    };
+    match (domain.provider, domain.ingress) {
+        (DomainProvider::Cloudflare, _) => {
+            CloudflareClient::new(grant)
+                .delete_route_dns(&domain.name, hostname)
+                .await
+        }
+        (DomainProvider::Manual, _) => Ok(vec![format!(
+            "manual DNS cleanup required for stale route {hostname} under {}",
+            domain.name
+        )]),
+    }
+}
+
+fn matching_domain<'a>(domains: &'a [DomainRecord], hostname: &str) -> Option<&'a DomainRecord> {
+    domains
+        .iter()
+        .filter(|domain| {
+            hostname == domain.name || hostname.ends_with(&format!(".{}", domain.name))
+        })
+        .max_by_key(|domain| domain.name.len())
 }

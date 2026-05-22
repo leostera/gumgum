@@ -140,6 +140,18 @@ impl CloudflareClient {
         ))
     }
 
+    pub async fn delete_route_dns(&self, zone_name: &str, hostname: &str) -> Result<Vec<String>> {
+        let zone = self.zone(zone_name).await?;
+        let deleted = self.delete_cname(&zone.id, hostname).await?;
+        if deleted {
+            Ok(vec![format!("delete Cloudflare DNS CNAME {hostname}")])
+        } else {
+            Ok(vec![format!(
+                "Cloudflare DNS CNAME {hostname} was already absent"
+            )])
+        }
+    }
+
     async fn upsert_cname(&self, zone_id: &str, hostname: &str, target: &str) -> Result<()> {
         let existing = self
             .get_json(&format!(
@@ -170,6 +182,27 @@ impl CloudflareClient {
         Ok(())
     }
 
+    async fn delete_cname(&self, zone_id: &str, hostname: &str) -> Result<bool> {
+        let existing = self
+            .get_json(&format!(
+                "/zones/{zone_id}/dns_records?type=CNAME&name={}",
+                url_encode(hostname)
+            ))
+            .await?;
+        let Some(record_id) = result_array(&existing).and_then(|records| {
+            records
+                .first()
+                .and_then(|record| record.get("id"))
+                .and_then(|id| id.as_str())
+                .map(ToOwned::to_owned)
+        }) else {
+            return Ok(false);
+        };
+        self.delete_json(&format!("/zones/{zone_id}/dns_records/{record_id}"))
+            .await?;
+        Ok(true)
+    }
+
     async fn get_json(&self, path: &str) -> Result<serde_json::Value> {
         self.decode_json(self.http.get(format!("{API_BASE}{path}")))
             .await
@@ -182,6 +215,11 @@ impl CloudflareClient {
 
     async fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
         self.decode_json(self.http.put(format!("{API_BASE}{path}")).json(body))
+            .await
+    }
+
+    async fn delete_json(&self, path: &str) -> Result<serde_json::Value> {
+        self.decode_json(self.http.delete(format!("{API_BASE}{path}")))
             .await
     }
 
