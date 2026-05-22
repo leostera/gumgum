@@ -19,27 +19,35 @@ def configure_fallback_paths(monkeypatch, tmp_path):
 def test_visit_increments_counter_and_writes_bucket_and_queue(monkeypatch, tmp_path):
     configure_fallback_paths(monkeypatch, tmp_path)
 
-    first_visitor, first_count = server.record_visit(
+    first_visitor, first_count, first_total = server.record_visit(
         path="/", user_agent="pytest", visitor_id="visitor-1"
     )
-    second_visitor, second_count = server.record_visit(
+    second_visitor, second_count, second_total = server.record_visit(
         path="/", user_agent="pytest", visitor_id="visitor-1"
+    )
+    third_visitor, third_count, third_total = server.record_visit(
+        path="/", user_agent="pytest", visitor_id="visitor-2"
     )
 
-    assert (first_visitor, first_count) == ("visitor-1", 1)
-    assert (second_visitor, second_count) == ("visitor-1", 2)
+    assert (first_visitor, first_count, first_total) == ("visitor-1", 1, 1)
+    assert (second_visitor, second_count, second_total) == ("visitor-1", 2, 2)
+    assert (third_visitor, third_count, third_total) == ("visitor-2", 1, 3)
     kv = json.loads((tmp_path / "kv.json").read_text())
     assert kv["visitor:visitor-1:count"] == 2
+    assert kv["visitor:visitor-2:count"] == 1
+    assert kv["visits:total"] == 3
 
     request_objects = sorted((tmp_path / "bucket" / "requests").glob("*.json"))
     queue_messages = sorted((tmp_path / "queue").glob("*.json"))
-    assert len(request_objects) == 2
-    assert len(queue_messages) == 2
+    assert len(request_objects) == 3
+    assert len(queue_messages) == 3
 
     request = json.loads(request_objects[0].read_text())
     message = json.loads(queue_messages[0].read_text())
     assert request["visitor_id"] == "visitor-1"
     assert request["user_agent"] == "pytest"
     assert request["bucket_key"].startswith("requests/")
+    assert request["visitor_count"] in {"1", "2"}
+    assert request["total_count"] in {"1", "2", "3"}
     assert message["bucket"] == "visit-requests"
     assert message["key"].startswith("requests/")
