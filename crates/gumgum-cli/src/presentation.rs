@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use crate::deploy_command::{DeployOutput, DeployReport, WorkspaceDeployReport};
 use gumgum_api::ObjectReport;
 

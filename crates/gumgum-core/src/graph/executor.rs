@@ -234,7 +234,8 @@ impl GraphActionExecutor {
                 object_plan: Some(plan.clone()),
                 provider_credentials: credentials,
                 graph_path: None,
-                ..GraphExecutionContext::default()
+                #[cfg(test)]
+                fail_next_step: false,
             },
         )
         .await

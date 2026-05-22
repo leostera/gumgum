@@ -224,6 +224,7 @@ async fn daemon_delete_object(
     } else {
         GraphActionExecutor::execute_steps(
             &reconciliation_steps,
+            #[allow(clippy::needless_update)]
             GraphExecutionContext {
                 object_plan: Some(provider_plan.clone()),
                 provider_credentials,
@@ -1098,8 +1099,8 @@ mod tests {
         std::env::temp_dir().join(format!("gumgum-daemon-{label}-{nanos}.sqlite"))
     }
 
-    fn seed_revisions(path: &PathBuf) -> Vec<gumgum_core::DeploymentRevision> {
-        let store = GraphStore::new(path.clone());
+    fn seed_revisions(path: &std::path::Path) -> Vec<gumgum_core::DeploymentRevision> {
+        let store = GraphStore::new(path.to_path_buf());
         let first = DesiredDeploy {
             worker: "api".to_owned(),
             image: "registry/api:1".to_owned(),

@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use crate::{DeployArgs, progress};
 use gumgum_api::{DeployApplyReport, DeployRequest, DeploymentDeleteRequest, ServerRecord};
 use gumgum_core::{

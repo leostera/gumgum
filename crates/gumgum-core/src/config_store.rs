@@ -3,7 +3,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ServerRecord {
@@ -327,7 +330,7 @@ impl ConfigStore {
         })
     }
 
-    fn ensure_parent(&self, path: &PathBuf) -> Result<()> {
+    fn ensure_parent(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| {
                 GumgumError::structured(

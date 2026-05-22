@@ -7,18 +7,11 @@ pub(crate) fn progress(quiet: bool, message: impl AsRef<str>) {
     }
 }
 
-pub(crate) fn print_value<T: Serialize>(json: bool, value: &T) {
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(value).expect("serialize json")
-        );
-    } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(value).expect("serialize json")
-        );
-    }
+pub(crate) fn print_value<T: Serialize>(_json: bool, value: &T) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).expect("serialize json")
+    );
 }
 
 pub(crate) fn print_error(err: GumgumError) {

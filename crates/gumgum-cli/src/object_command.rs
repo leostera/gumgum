@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use crate::{
     BindObjectArgs, CreateObjectArgs, DeleteObjectArgs, ObjectArgs, ObjectCommand,
     UnbindObjectArgs, print_value, resolve_server,
