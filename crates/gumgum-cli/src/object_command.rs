@@ -2,8 +2,9 @@
 
 use crate::{
     BindObjectArgs, BucketArgs, BucketCommand, BucketCopyArgs, BucketPathArgs, CreateObjectArgs,
-    DeleteObjectArgs, ListObjectArgs, ObjectArgs, ObjectCommand, UnbindObjectArgs, print_value,
-    resolve_server,
+    DeleteObjectArgs, ListObjectArgs, ObjectArgs, ObjectCommand, UnbindObjectArgs,
+    bucket_paths::{is_local_bucket_path, split_remote_bucket_path},
+    print_value, resolve_server,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use gumgum_api::GraphReport;
@@ -343,36 +344,6 @@ fn print_bucket_command_report(
         print_bucket_object_report(report);
     }
     Ok(())
-}
-
-fn is_local_bucket_path(value: &str) -> bool {
-    value.starts_with("./")
-        || value.starts_with("../")
-        || value.starts_with('/')
-        || std::path::Path::new(value).exists()
-}
-
-fn split_remote_bucket_path(value: &str) -> gumgum_core::Result<(String, String)> {
-    let (bucket, path) = value
-        .trim_start_matches('/')
-        .split_once('/')
-        .ok_or_else(|| {
-            GumgumError::structured(
-                Subsystem::Cli,
-                ErrorCode::InvalidArgs,
-                format!("bucket object path must be bucket/path: {value}"),
-            )
-            .build()
-        })?;
-    if bucket.is_empty() || path.is_empty() {
-        return Err(GumgumError::structured(
-            Subsystem::Cli,
-            ErrorCode::InvalidArgs,
-            format!("bucket object path must be bucket/path: {value}"),
-        )
-        .build());
-    }
-    Ok((bucket.to_owned(), path.to_owned()))
 }
 
 fn print_bucket_object_report(report: &gumgum_api::BucketObjectReport) {

@@ -1,0 +1,5 @@
+assets/path/to/object.txt
+/assets/path.txt
+assets/
+./local.txt
+../local.txt

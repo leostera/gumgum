@@ -1,3 +1,4 @@
+mod bucket_paths;
 mod cli_args;
 mod cli_output;
 mod config_command;

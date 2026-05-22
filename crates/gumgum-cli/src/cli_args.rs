@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[command(name = "gumgum")]
 #[command(about = "GumGum.dev local cloud control plane")]
 #[command(version)]
-pub(crate) struct Cli {
+pub struct Cli {
     #[arg(long, global = true, help = "Emit stable JSON output")]
     pub(crate) json: bool,
     #[arg(long, global = true, help = "Plan without mutating state")]
@@ -453,6 +453,12 @@ pub(crate) struct ServerUpgradeArgs {
     pub(crate) host: Option<String>,
     #[arg(long)]
     pub(crate) user: Option<String>,
+}
+
+#[allow(dead_code)]
+pub fn parse_cli_args_for_fuzz(input: &str) -> bool {
+    let args = std::iter::once("gumgum").chain(input.split_whitespace());
+    Cli::try_parse_from(args).is_ok()
 }
 
 #[cfg(test)]

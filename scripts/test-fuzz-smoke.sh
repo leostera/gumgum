@@ -8,5 +8,7 @@ if ! command -v cargo-fuzz >/dev/null 2>&1; then
 fi
 
 cargo fuzz run manifest_parse -- -runs=1
+cargo fuzz run cli_args -- -runs=1
 cargo fuzz run graph_identifiers -- -runs=1
 cargo fuzz run api_requests -- -runs=1
+cargo fuzz run bucket_paths -- -runs=1

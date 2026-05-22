@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 serde_json = "1"
 gumgum-api = { path = "../crates/gumgum-api" }
+gumgum-cli = { path = "../crates/gumgum-cli" }
 gumgum-core = { path = "../crates/gumgum-core" }
 
 [[bin]]
@@ -31,3 +32,19 @@ bench = false
 name = "api_requests"
 path = "fuzz_targets/api_requests.rs"
 test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cli_args"
+path = "fuzz_targets/cli_args.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bucket_paths"
+path = "fuzz_targets/bucket_paths.rs"
+test = false
+doc = false
+bench = false

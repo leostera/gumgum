@@ -1,0 +1,4 @@
+init --name visit-counter --root-domain example.test
+worker create api
+bucket cp ./local.txt assets/local.txt
+events --grouped --json
