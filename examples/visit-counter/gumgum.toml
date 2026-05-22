@@ -1,6 +1,6 @@
 [project]
 name = "visit-counter"
-domain = "visitcounter.dev"
+domain = "leostera.dev"
 server = "starbase2"
 
 [workspace]
