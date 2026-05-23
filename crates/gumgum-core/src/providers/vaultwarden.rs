@@ -1,7 +1,7 @@
 use crate::{Capability, ContainerRunSpec, DockerEngine};
 use std::collections::HashMap;
 
-use super::docker::{ensure_network, inspect, start_existing};
+use super::docker::{ensure_network, start_existing};
 use super::types::{ProviderConfig, ProviderSpec, ProviderStatus};
 
 pub fn spec() -> ProviderSpec {
@@ -38,8 +38,21 @@ pub fn connection_examples(name: &str, _dns: &str) -> Vec<String> {
 pub(crate) async fn ensure() -> crate::Result<Vec<String>> {
     let provider = spec();
     ensure_network().await?;
-    if inspect(&provider.container).await {
-        return start_existing(&provider, "could not start vaultwarden provider").await;
+    if let Some(existing) = DockerEngine::local()?
+        .inspect_container(&provider.container)
+        .await?
+    {
+        if existing
+            .labels
+            .get("gumgum.platform.fingerprint")
+            .map(String::as_str)
+            == Some("v2")
+        {
+            return start_existing(&provider, "could not start vaultwarden provider").await;
+        }
+        DockerEngine::local()?
+            .remove_container_force(&provider.container)
+            .await?;
     }
     let docker = DockerEngine::local()?;
     docker.pull_image(&provider.image).await?;
@@ -56,12 +69,13 @@ pub(crate) async fn ensure() -> crate::Result<Vec<String>> {
                     "vaultwarden".to_owned(),
                 ),
                 ("gumgum.capability".to_owned(), "secret".to_owned()),
+                ("gumgum.platform.fingerprint".to_owned(), "v2".to_owned()),
             ]),
             env: vec![
                 ("SIGNUPS_ALLOWED".to_owned(), "false".to_owned()),
                 ("WEBSOCKET_ENABLED".to_owned(), "true".to_owned()),
             ],
-            binds: Vec::new(),
+            binds: vec!["gumgum-vaultwarden-data:/data".to_owned()],
             ports: Vec::new(),
             command: Vec::new(),
             entrypoint: Vec::new(),

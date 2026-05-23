@@ -1,5 +1,7 @@
 use crate::{Capability, ContainerRunSpec, DockerEngine};
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use super::types::{ProviderSpec, ProviderStatus};
 
@@ -30,41 +32,55 @@ pub(crate) fn connection_examples(_name: &str, dns: &str) -> Vec<String> {
 pub(crate) async fn ensure_platform_stack(root_domain: &str) -> crate::Result<Vec<String>> {
     let mut actions = Vec::new();
     for provider in platform_specs(root_domain) {
-        actions.extend(ensure_platform_container(&provider).await?);
+        actions.extend(ensure_platform_container(&provider, root_domain).await?);
     }
     Ok(actions)
 }
 
-async fn ensure_platform_container(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
+async fn ensure_platform_container(
+    provider: &ProviderSpec,
+    root_domain: &str,
+) -> crate::Result<Vec<String>> {
     let docker = DockerEngine::local()?;
     docker.ensure_network(GUMGUM_NETWORK).await?;
-    if docker
-        .inspect_container(&provider.container)
-        .await?
-        .is_some()
-    {
-        docker.start_container(&provider.container).await?;
-        return Ok(vec![format!("started existing {}", provider.container)]);
+    let desired = platform_run_spec(provider, root_domain);
+    if let Some(existing) = docker.inspect_container(&provider.container).await? {
+        let desired_fingerprint = platform_fingerprint(&desired);
+        if existing.labels.get("gumgum.platform.fingerprint") == Some(&desired_fingerprint) {
+            docker.start_container(&provider.container).await?;
+            return Ok(vec![format!("started existing {}", provider.container)]);
+        }
+        docker.remove_container_force(&provider.container).await?;
     }
     docker.pull_image(&provider.image).await?;
-    docker
-        .create_and_start_container(ContainerRunSpec {
-            name: provider.container.clone(),
-            image: provider.image.clone(),
-            network: GUMGUM_NETWORK.to_owned(),
-            restart_unless_stopped: true,
-            labels: platform_labels(provider),
-            env: platform_env(provider),
-            binds: Vec::new(),
-            ports: Vec::new(),
-            command: platform_command(provider),
-            entrypoint: Vec::new(),
-        })
-        .await?;
+    docker.create_and_start_container(desired).await?;
     Ok(vec![format!(
         "created platform service {} ({})",
         provider.container, provider.provider
     )])
+}
+
+fn platform_run_spec(provider: &ProviderSpec, root_domain: &str) -> ContainerRunSpec {
+    let env = platform_env(provider, root_domain);
+    let command = platform_command(provider);
+    let binds = platform_binds(provider);
+    let mut labels = platform_labels(provider);
+    labels.insert(
+        "gumgum.platform.fingerprint".to_owned(),
+        platform_fingerprint_parts(&env, &command, &binds),
+    );
+    ContainerRunSpec {
+        name: provider.container.clone(),
+        image: provider.image.clone(),
+        network: GUMGUM_NETWORK.to_owned(),
+        restart_unless_stopped: true,
+        labels,
+        env,
+        binds,
+        ports: Vec::new(),
+        command,
+        entrypoint: Vec::new(),
+    }
 }
 
 fn platform_labels(provider: &ProviderSpec) -> HashMap<String, String> {
@@ -78,7 +94,7 @@ fn platform_labels(provider: &ProviderSpec) -> HashMap<String, String> {
     ])
 }
 
-fn platform_env(provider: &ProviderSpec) -> Vec<(String, String)> {
+fn platform_env(provider: &ProviderSpec, root_domain: &str) -> Vec<(String, String)> {
     if provider.container == "gumgum-grafana" {
         vec![
             ("GF_USERS_ALLOW_SIGN_UP".to_owned(), "false".to_owned()),
@@ -90,7 +106,7 @@ fn platform_env(provider: &ProviderSpec) -> Vec<(String, String)> {
             ),
             (
                 "GF_SERVER_ROOT_URL".to_owned(),
-                "% (protocol)s://%(domain)s/".to_owned(),
+                format!("https://grafana.{root_domain}/"),
             ),
         ]
     } else {
@@ -98,10 +114,49 @@ fn platform_env(provider: &ProviderSpec) -> Vec<(String, String)> {
     }
 }
 
+fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
+    match provider.container.as_str() {
+        "gumgum-grafana" => vec!["gumgum-grafana-data:/var/lib/grafana".to_owned()],
+        "gumgum-prometheus" => vec!["gumgum-prometheus-data:/prometheus".to_owned()],
+        "gumgum-loki" => vec!["gumgum-loki-data:/loki".to_owned()],
+        "gumgum-tempo" => vec!["gumgum-tempo-data:/tmp/tempo".to_owned()],
+        _ => Vec::new(),
+    }
+}
+
+fn platform_fingerprint(spec: &ContainerRunSpec) -> String {
+    platform_fingerprint_parts(&spec.env, &spec.command, &spec.binds)
+}
+
+fn platform_fingerprint_parts(
+    env: &[(String, String)],
+    command: &[String],
+    binds: &[String],
+) -> String {
+    let mut parts = env
+        .iter()
+        .map(|(name, value)| format!("env:{name}={value}"))
+        .chain(command.iter().map(|value| format!("cmd:{value}")))
+        .chain(binds.iter().map(|value| format!("bind:{value}")))
+        .collect::<Vec<_>>();
+    parts.sort();
+    let mut hasher = DefaultHasher::new();
+    parts.hash(&mut hasher);
+    format!("v2:{:016x}", hasher.finish())
+}
+
 fn platform_command(provider: &ProviderSpec) -> Vec<String> {
     match provider.container.as_str() {
         "gumgum-loki" => vec!["-config.file=/etc/loki/local-config.yaml".to_owned()],
-        "gumgum-tempo" => vec!["-config.file=/etc/tempo.yaml".to_owned()],
+        "gumgum-tempo" => vec![
+            "-target=all".to_owned(),
+            "-server.http-listen-port=3200".to_owned(),
+            "-storage.trace.backend=local".to_owned(),
+            "-storage.trace.local.path=/tmp/tempo/traces".to_owned(),
+            "-auth.enabled=false".to_owned(),
+            "-distributor.receivers.otlp.protocols.grpc.endpoint=0.0.0.0:4317".to_owned(),
+            "-distributor.receivers.otlp.protocols.http.endpoint=0.0.0.0:4318".to_owned(),
+        ],
         _ => Vec::new(),
     }
 }
@@ -185,12 +240,16 @@ mod tests {
             .into_iter()
             .find(|spec| spec.container == "gumgum-grafana")
             .unwrap();
-        let env = platform_env(&grafana);
+        let env = platform_env(&grafana, "leostera.dev");
         assert!(env.contains(&("GF_USERS_ALLOW_SIGN_UP".to_owned(), "false".to_owned())));
         assert!(
             env.iter()
                 .any(|(name, _)| name == "GF_SECURITY_ADMIN_PASSWORD")
         );
+        assert!(env.contains(&(
+            "GF_SERVER_ROOT_URL".to_owned(),
+            "https://grafana.leostera.dev/".to_owned()
+        )));
     }
 
     #[test]
