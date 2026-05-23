@@ -1488,11 +1488,7 @@ async fn daemon_deploy_stream(
     let (sender, receiver) = mpsc::unbounded_channel::<gumgum_core::GumgumEvent>();
     tokio::spawn(async move {
         let report = daemon_deploy_report(state, request, Some(sender.clone())).await;
-        for event in report
-            .typed_events
-            .into_iter()
-            .filter(|event| !deploy_stream_sends_live(event))
-        {
+        for event in deploy_stream_report_tail_events(&report.typed_events) {
             if sender.send(event).is_err() {
                 break;
             }
@@ -1524,6 +1520,16 @@ fn deploy_stream_sends_live(event: &gumgum_core::GumgumEvent) -> bool {
             | gumgum_core::GumgumEvent::ReconcileStepExecuted { .. }
             | gumgum_core::GumgumEvent::ReconcileStepFailed { .. }
     )
+}
+
+fn deploy_stream_report_tail_events(
+    events: &[gumgum_core::GumgumEvent],
+) -> Vec<gumgum_core::GumgumEvent> {
+    events
+        .iter()
+        .filter(|event| !deploy_stream_sends_live(event))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -1944,6 +1950,53 @@ mod tests {
                 route: Some("api.example.test".to_owned()),
             },
         ));
+    }
+
+    #[test]
+    fn deploy_stream_tail_completes_report_events_without_duplicates() {
+        let step = gumgum_core::GraphActionPlanner::ensure_provider_step(
+            gumgum_core::ProviderName::new("manual.main").unwrap(),
+            gumgum_core::Capability::Manual,
+        );
+        let execution_events = vec![
+            step.planned_event(Some("reconcile-test".to_owned())),
+            step.executed_event(
+                Some("reconcile-test".to_owned()),
+                "configured manual provider manual.main",
+            ),
+        ];
+        let report_events = deploy_apply_typed_events(
+            "api@preview",
+            Some(("registry/api:rev1", Some("api.example.test"))),
+            &[step],
+            &execution_events,
+            &["configured manual provider manual.main".to_owned()],
+            true,
+            "desired deployment materialized and reconciled",
+        );
+
+        let mut streamed_events = vec![report_events[0].clone()];
+        streamed_events.extend(execution_events.clone());
+        streamed_events.extend(deploy_stream_report_tail_events(&report_events));
+
+        assert_eq!(streamed_events, report_events);
+        assert_eq!(
+            streamed_events
+                .iter()
+                .filter(|event| matches!(event, gumgum_core::GumgumEvent::DeploymentStarted { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            streamed_events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    gumgum_core::GumgumEvent::DeploymentSucceeded { .. }
+                ))
+                .count(),
+            1
+        );
     }
 
     #[test]
