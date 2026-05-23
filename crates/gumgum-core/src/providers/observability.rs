@@ -119,7 +119,6 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
         "gumgum-grafana" => vec!["gumgum-grafana-data:/var/lib/grafana".to_owned()],
         "gumgum-prometheus" => vec!["gumgum-prometheus-data:/prometheus".to_owned()],
         "gumgum-loki" => vec!["gumgum-loki-data:/loki".to_owned()],
-        "gumgum-tempo" => vec!["gumgum-tempo-data:/tmp/tempo".to_owned()],
         _ => Vec::new(),
     }
 }
