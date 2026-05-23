@@ -1498,6 +1498,12 @@ async fn daemon_deploy_stream(
             }
         }
     });
+    typed_event_stream_response(receiver)
+}
+
+fn typed_event_stream_response(
+    receiver: mpsc::UnboundedReceiver<gumgum_core::GumgumEvent>,
+) -> impl IntoResponse {
     let stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
         let event = receiver.recv().await?;
         let mut line = serde_json::to_vec(&event).ok()?;

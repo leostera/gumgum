@@ -122,20 +122,33 @@ impl ServerClient {
         &self,
         request: &DeployRequest,
     ) -> gumgum_core::Result<Vec<GumgumEvent>> {
+        self.post_typed_event_stream("/v0/deploy/stream", request, "deploy stream")
+            .await
+    }
+
+    async fn post_typed_event_stream<T: serde::Serialize + ?Sized>(
+        &self,
+        path: &str,
+        request: &T,
+        label: &str,
+    ) -> gumgum_core::Result<Vec<GumgumEvent>> {
         let response = self
             .http
-            .post(self.url("/v0/deploy/stream"))
+            .post(self.url(path))
             .json(request)
             .send()
             .await
-            .map_err(|source| self.api_error("failed to call gumgumd deploy stream API", source))?
+            .map_err(|source| {
+                self.api_error(format!("failed to call gumgumd {label} API"), source)
+            })?
             .error_for_status()
             .map_err(|source| {
-                self.api_error("gumgumd deploy stream API returned an error", source)
+                self.api_error(format!("gumgumd {label} API returned an error"), source)
             })?;
-        parse_typed_event_ndjson(&response.text().await.map_err(|source| {
-            self.api_error("gumgumd deploy stream API returned invalid text", source)
-        })?)
+        let body = response.text().await.map_err(|source| {
+            self.api_error(format!("gumgumd {label} API returned invalid text"), source)
+        })?;
+        parse_typed_event_ndjson(&body, label)
     }
 
     pub(crate) async fn delete_deploy(
@@ -423,7 +436,7 @@ impl ServerClient {
     }
 }
 
-fn parse_typed_event_ndjson(body: &str) -> gumgum_core::Result<Vec<GumgumEvent>> {
+fn parse_typed_event_ndjson(body: &str, label: &str) -> gumgum_core::Result<Vec<GumgumEvent>> {
     body.lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
@@ -431,7 +444,7 @@ fn parse_typed_event_ndjson(body: &str) -> gumgum_core::Result<Vec<GumgumEvent>>
                 GumgumError::structured(
                     Subsystem::Api,
                     ErrorCode::ManifestParseFailed,
-                    "gumgumd deploy stream returned invalid typed event JSON",
+                    format!("gumgumd {label} returned invalid typed event JSON"),
                 )
                 .likely_cause(source.to_string())
                 .build()
@@ -450,7 +463,7 @@ mod tests {
 {"type":"reconcile_step_executed","operation_id":"reconcile-test","target":"deployment/api@preview","action":"ensure_container","message":"executed","at":null}
 "#;
 
-        let events = parse_typed_event_ndjson(body).unwrap();
+        let events = parse_typed_event_ndjson(body, "deploy stream").unwrap();
 
         assert_eq!(events.len(), 2);
         assert!(matches!(
@@ -466,7 +479,7 @@ mod tests {
 
     #[test]
     fn deploy_stream_parser_rejects_invalid_event_lines() {
-        let report = parse_typed_event_ndjson("not-json\n")
+        let report = parse_typed_event_ndjson("not-json\n", "deploy stream")
             .unwrap_err()
             .to_report();
 

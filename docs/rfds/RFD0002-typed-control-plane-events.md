@@ -111,6 +111,8 @@ The daemon emits newline-delimited `GumgumEvent` records in this order:
 
 The same stream can later be offered as Server-Sent Events if browsers or dashboards need reconnection metadata. CLI `--json` should prefer raw NDJSON. Human mode should continue presenting the same typed events through `event_presenter`. The daemon advertises `gumgum:deployments:stream` when this endpoint is available.
 
+Track 3 keeps the generalized stream shape intentionally small: daemon code exposes a reusable typed-event NDJSON response helper, and the remote client has a reusable typed-event stream POST helper. New operation stream endpoints should only be added when an operation has meaningful long-running typed executor progress and an explicit daemon capability.
+
 ## Deferred work
 
 The following work is explicitly deferred to later slices:
