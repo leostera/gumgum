@@ -33,7 +33,7 @@ pub(crate) async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<Vec<Strin
     let provider = &plan.provider;
     let mut actions = ensure_provider(provider).await?;
     let topic = sanitize_name(&plan.name);
-    ensure_topic(&topic).await?;
+    ensure_topic(provider, &topic).await?;
     actions.push(format!("ensured topic {topic} on {}", provider.provider));
     actions.push(format!("published DNS {} to redpanda.main", plan.dns));
     Ok(actions)
@@ -43,7 +43,7 @@ pub(crate) async fn delete(plan: &ObjectProviderPlan) -> crate::Result<Vec<Strin
     let provider = &plan.provider;
     let mut actions = ensure_provider(provider).await?;
     let topic = sanitize_name(&plan.name);
-    delete_topic(&topic).await?;
+    delete_topic(provider, &topic).await?;
     actions.push(format!("deleted topic {topic} from {}", provider.provider));
     actions.push(format!("removed DNS {} from redpanda.main", plan.dns));
     Ok(actions)
@@ -73,16 +73,16 @@ pub(crate) async fn ensure_provider(provider: &ProviderSpec) -> crate::Result<Ve
             "--kafka-addr".to_owned(),
             "0.0.0.0:9092".to_owned(),
             "--advertise-kafka-addr".to_owned(),
-            "gumgum-provider-redpanda-main:9092".to_owned(),
+            format!("{}:9092", provider.container),
         ],
     )
     .await
 }
 
-async fn ensure_topic(topic: &str) -> crate::Result<()> {
+async fn ensure_topic(provider: &ProviderSpec, topic: &str) -> crate::Result<()> {
     DockerEngine::local()?
         .exec_success(
-            "gumgum-provider-redpanda-main",
+            &provider.container,
             Vec::new(),
             vec![
                 "rpk".to_owned(),
@@ -96,10 +96,10 @@ async fn ensure_topic(topic: &str) -> crate::Result<()> {
         .map(|_| ())
 }
 
-async fn delete_topic(topic: &str) -> crate::Result<()> {
+async fn delete_topic(provider: &ProviderSpec, topic: &str) -> crate::Result<()> {
     DockerEngine::local()?
         .exec_success(
-            "gumgum-provider-redpanda-main",
+            &provider.container,
             Vec::new(),
             vec![
                 "rpk".to_owned(),

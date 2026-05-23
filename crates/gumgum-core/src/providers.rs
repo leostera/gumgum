@@ -130,6 +130,39 @@ mod tests {
     }
 
     #[test]
+    fn env_scoped_objects_use_env_provider_containers() {
+        let db = object_provider_plan(
+            Capability::Db,
+            "visits-preview",
+            "visits-preview.db.example.test",
+        );
+        let kv = object_provider_plan(
+            Capability::Kv,
+            "sessions-release",
+            "sessions-release.kv.example.test",
+        );
+        let bucket = object_provider_plan(
+            Capability::Blob,
+            "uploads-preview",
+            "uploads-preview.bucket.example.test",
+        );
+        let queue = object_provider_plan(
+            Capability::Queue,
+            "events-release",
+            "events-release.queue.example.test",
+        );
+
+        assert_eq!(db.provider.provider, "postgres.preview");
+        assert_eq!(db.provider.container, "gumgum-provider-postgres-preview");
+        assert_eq!(kv.provider.provider, "redis.release");
+        assert_eq!(kv.provider.container, "gumgum-provider-redis-release");
+        assert_eq!(bucket.provider.provider, "minio.preview");
+        assert_eq!(bucket.provider.container, "gumgum-provider-minio-preview");
+        assert_eq!(queue.provider.provider, "redpanda.release");
+        assert_eq!(queue.provider.container, "gumgum-provider-redpanda-release");
+    }
+
+    #[test]
     fn provider_boot_requires_all_default_credentials() {
         let credentials = vec![(
             "redis.main".to_owned(),

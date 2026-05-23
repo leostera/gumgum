@@ -54,7 +54,7 @@ pub(crate) async fn ensure(
     let provider = &plan.provider;
     let mut actions = ensure_provider(provider, credentials.clone()).await?;
     let bucket = sanitize_name(&plan.name);
-    ensure_bucket(&bucket, &credentials).await?;
+    ensure_bucket(provider, &bucket, &credentials).await?;
     actions.push(format!("ensured bucket {bucket} on {}", provider.provider));
     actions.push(format!("published DNS {} to minio.main", plan.dns));
     Ok(actions)
@@ -67,7 +67,7 @@ pub(crate) async fn delete(
     let provider = &plan.provider;
     let mut actions = ensure_provider(provider, credentials.clone()).await?;
     let bucket = sanitize_name(&plan.name);
-    delete_bucket(&bucket, &credentials).await?;
+    delete_bucket(provider, &bucket, &credentials).await?;
     actions.push(format!(
         "deleted bucket {bucket} from {}",
         provider.provider
@@ -100,9 +100,14 @@ pub(crate) async fn ensure_provider(
     .await
 }
 
-async fn ensure_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate::Result<()> {
+async fn ensure_bucket(
+    provider: &ProviderSpec,
+    bucket: &str,
+    credentials: &ProviderCredentials,
+) -> crate::Result<()> {
     let script = format!(
-        "set -e; mc alias set gumgum-minio http://gumgum-provider-minio-main:9000 '{}' '{}'; mc mb --ignore-existing gumgum-minio/{}",
+        "set -e; mc alias set gumgum-minio http://{}:9000 '{}' '{}'; mc mb --ignore-existing gumgum-minio/{}",
+        provider.container,
         shell_single_quote(&credentials.username),
         shell_single_quote(&credentials.password),
         shell_single_quote(bucket)
@@ -110,9 +115,14 @@ async fn ensure_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate
     run_minio_mc(script).await
 }
 
-async fn delete_bucket(bucket: &str, credentials: &ProviderCredentials) -> crate::Result<()> {
+async fn delete_bucket(
+    provider: &ProviderSpec,
+    bucket: &str,
+    credentials: &ProviderCredentials,
+) -> crate::Result<()> {
     let script = format!(
-        "set -e; mc alias set gumgum-minio http://gumgum-provider-minio-main:9000 '{}' '{}'; mc rb --force gumgum-minio/{} || true",
+        "set -e; mc alias set gumgum-minio http://{}:9000 '{}' '{}'; mc rb --force gumgum-minio/{} || true",
+        provider.container,
         shell_single_quote(&credentials.username),
         shell_single_quote(&credentials.password),
         shell_single_quote(bucket)

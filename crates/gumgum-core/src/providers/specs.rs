@@ -22,8 +22,8 @@ pub fn provider_spec(capability: Capability) -> ProviderSpec {
 }
 
 pub fn object_provider_plan(capability: Capability, name: &str, dns: &str) -> ObjectProviderPlan {
-    let provider = provider_spec(capability);
     let safe_name = sanitize_name(name);
+    let provider = object_provider_spec(capability, &safe_name);
     ObjectProviderPlan {
         capability,
         name: name.to_owned(),
@@ -45,6 +45,36 @@ pub fn connection_examples(capability: Capability, name: &str, dns: &str) -> Vec
         Capability::Observability => super::observability::connection_examples(name, dns),
         Capability::Manual => Vec::new(),
     }
+}
+
+fn object_provider_spec(capability: Capability, safe_name: &str) -> ProviderSpec {
+    let provider = provider_spec(capability);
+    let Some(env) = object_environment(safe_name) else {
+        return provider;
+    };
+    let env = sanitize_name(env);
+    let provider_name = provider
+        .provider
+        .rsplit_once('.')
+        .map(|(prefix, _)| format!("{prefix}.{env}"))
+        .unwrap_or_else(|| format!("{}.{}", provider.provider, env));
+    let container = provider
+        .container
+        .strip_suffix("-main")
+        .map(|prefix| format!("{prefix}-{env}"))
+        .unwrap_or_else(|| format!("{}-{env}", provider.container));
+    ProviderSpec {
+        provider: provider_name,
+        container,
+        ..provider
+    }
+}
+
+fn object_environment(safe_name: &str) -> Option<&str> {
+    safe_name
+        .strip_suffix("-preview")
+        .map(|_| "preview")
+        .or_else(|| safe_name.strip_suffix("-release").map(|_| "release"))
 }
 
 fn provider_actions(capability: Capability, safe_name: &str, dns: &str) -> Vec<String> {

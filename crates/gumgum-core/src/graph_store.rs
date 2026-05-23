@@ -1449,6 +1449,7 @@ fn binding_values(
             let credentials = provider_credentials("postgres.main")
                 .unwrap_or_else(crate::ProviderCredentials::postgres_local_dev);
             let database = crate::sanitize_name(name);
+            let provider_container = provider_container_for_object(Capability::Db, name);
             let username = if secret.is_some() {
                 database.clone()
             } else {
@@ -1457,19 +1458,18 @@ fn binding_values(
             let password = secret.unwrap_or(credentials.password);
             vec![(
                 binding.to_owned(),
-                format!(
-                    "postgres://{username}:{password}@gumgum-provider-postgres-main:5432/{database}"
-                ),
+                format!("postgres://{username}:{password}@{provider_container}:5432/{database}"),
             )]
         }
         Capability::Kv => {
             let credentials = provider_credentials("redis.main")
                 .unwrap_or_else(crate::ProviderCredentials::redis_local_dev);
+            let provider_container = provider_container_for_object(Capability::Kv, name);
             vec![
                 (
                     binding.to_owned(),
                     format!(
-                        "redis://:{}@gumgum-provider-redis-main:6379/0",
+                        "redis://:{}@{provider_container}:6379/0",
                         credentials.password
                     ),
                 ),
@@ -1482,14 +1482,15 @@ fn binding_values(
         Capability::Blob => {
             let credentials = provider_credentials("minio.main")
                 .unwrap_or_else(crate::ProviderCredentials::minio_local_dev);
+            let provider_container = provider_container_for_object(Capability::Blob, name);
             vec![
                 (
                     binding.to_owned(),
-                    format!("s3://gumgum-provider-minio-main/{name}"),
+                    format!("s3://{provider_container}/{name}"),
                 ),
                 (
                     format!("{binding}_ENDPOINT"),
-                    "http://gumgum-provider-minio-main:9000".to_owned(),
+                    format!("http://{provider_container}:9000"),
                 ),
                 (format!("{binding}_BUCKET"), crate::sanitize_name(name)),
                 (format!("{binding}_ACCESS_KEY_ID"), credentials.username),
@@ -1497,20 +1498,23 @@ fn binding_values(
                 (format!("{binding}_FORCE_PATH_STYLE"), "true".to_owned()),
             ]
         }
-        Capability::Queue => vec![
-            (
-                binding.to_owned(),
-                format!(
-                    "kafka://gumgum-provider-redpanda-main:9092/{}",
-                    crate::sanitize_name(name)
+        Capability::Queue => {
+            let provider_container = provider_container_for_object(Capability::Queue, name);
+            vec![
+                (
+                    binding.to_owned(),
+                    format!(
+                        "kafka://{provider_container}:9092/{}",
+                        crate::sanitize_name(name)
+                    ),
                 ),
-            ),
-            (
-                format!("{binding}_BROKERS"),
-                "gumgum-provider-redpanda-main:9092".to_owned(),
-            ),
-            (format!("{binding}_TOPIC"), crate::sanitize_name(name)),
-        ],
+                (
+                    format!("{binding}_BROKERS"),
+                    format!("{provider_container}:9092"),
+                ),
+                (format!("{binding}_TOPIC"), crate::sanitize_name(name)),
+            ]
+        }
         Capability::Observability => vec![
             (binding.to_owned(), format!("http://{dns}:4317")),
             (
@@ -1521,6 +1525,28 @@ fn binding_values(
         ],
         _ => vec![(binding.to_owned(), binding_value(kind, name, dns))],
     }
+}
+
+fn provider_container_for_object(capability: Capability, name: &str) -> String {
+    let base = match capability {
+        Capability::Db => "gumgum-provider-postgres",
+        Capability::Kv => "gumgum-provider-redis",
+        Capability::Blob => "gumgum-provider-minio",
+        Capability::Queue => "gumgum-provider-redpanda",
+        Capability::Secret => "gumgum-provider-onepassword",
+        Capability::Observability => "gumgum-provider-otel",
+        Capability::Manual => "gumgum-provider-manual",
+    };
+    object_environment(&crate::sanitize_name(name))
+        .map(|env| format!("{base}-{env}"))
+        .unwrap_or_else(|| format!("{base}-main"))
+}
+
+fn object_environment(safe_name: &str) -> Option<&str> {
+    safe_name
+        .strip_suffix("-preview")
+        .map(|_| "preview")
+        .or_else(|| safe_name.strip_suffix("-release").map(|_| "release"))
 }
 
 fn provider_credentials(provider: &str) -> Option<crate::ProviderCredentials> {
@@ -2014,7 +2040,7 @@ mod tests {
         assert!(preview_env.is_empty());
         assert!(release_env.contains(&(
             "DATABASE_URL".to_owned(),
-            "postgres://gumgum:gumgum-local-dev@gumgum-provider-postgres-main:5432/main-release".to_owned()
+            "postgres://gumgum:gumgum-local-dev@gumgum-provider-postgres-release:5432/main-release".to_owned()
         )));
 
         let first = DesiredDeploy {
