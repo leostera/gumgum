@@ -494,38 +494,65 @@ async fn verify_route(
     quiet: bool,
 ) -> gumgum_core::Result<()> {
     progress(quiet, format!("verifying https://{route}{health}"));
-    let url = format!("http://{}{health}", server.host);
-    let status = TokioCommand::new("curl")
-        .arg("-fsS")
-        .arg("-H")
-        .arg(format!("Host: {route}"))
-        .arg(url)
-        .status()
-        .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Api,
-                ErrorCode::Io,
-                "failed to verify deployed route",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(GumgumError::structured(
-            Subsystem::Api,
-            ErrorCode::Io,
-            "deployed route did not respond",
-        )
-        .likely_cause(format!("curl exited with {status}"))
-        .next_command(format!(
-            "curl -H 'Host: {route}' http://{}{health}",
-            server.host
-        ))
-        .build())
+    let attempts = route_verification_attempts(server, route, health);
+    let mut failures = Vec::new();
+    for attempt in &attempts {
+        let status = TokioCommand::new("curl")
+            .args(&attempt.args)
+            .status()
+            .await
+            .map_err(|source| {
+                GumgumError::structured(
+                    Subsystem::Api,
+                    ErrorCode::Io,
+                    "failed to verify deployed route",
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })?;
+        if status.success() {
+            return Ok(());
+        }
+        failures.push(format!("{} exited with {status}", attempt.display));
     }
+    Err(GumgumError::structured(
+        Subsystem::Api,
+        ErrorCode::Io,
+        "deployed route did not respond",
+    )
+    .likely_cause(failures.join("; "))
+    .next_command(attempts[0].display.clone())
+    .next_command(attempts[1].display.clone())
+    .build())
+}
+
+struct RouteVerificationAttempt {
+    args: Vec<String>,
+    display: String,
+}
+
+fn route_verification_attempts(
+    server: &ServerRecord,
+    route: &str,
+    health: &str,
+) -> [RouteVerificationAttempt; 2] {
+    let public = format!("https://{route}{health}");
+    let host = format!("http://{}{health}", server.host);
+    [
+        RouteVerificationAttempt {
+            args: vec!["-fsS".to_owned(), public.clone()],
+            display: format!("curl -fsS {public}"),
+        },
+        RouteVerificationAttempt {
+            args: vec![
+                "-fsS".to_owned(),
+                "-H".to_owned(),
+                format!("Host: {route}"),
+                host.clone(),
+            ],
+            display: format!("curl -fsS -H 'Host: {route}' {host}"),
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -549,6 +576,28 @@ mod deploy_hardening_tests {
         assert_eq!(
             env_prefixed_container_name("gumgum-dev-leostera-api", crate::DeployEnv::Prod),
             "gumgum-prod-dev-leostera-api"
+        );
+    }
+
+    #[test]
+    fn route_verification_prefers_public_https_with_host_fallback() {
+        let server = ServerRecord {
+            name: "starbase2".to_owned(),
+            host: "192.168.0.3".to_owned(),
+            root_domain: "leostera.dev".to_owned(),
+            test_domain: String::new(),
+            health_url: "http://192.168.0.3:7777/healthz".to_owned(),
+        };
+        let attempts =
+            route_verification_attempts(&server, "visit-counter.leostera.dev", "/_/ready");
+
+        assert_eq!(
+            attempts[0].display,
+            "curl -fsS https://visit-counter.leostera.dev/_/ready"
+        );
+        assert_eq!(
+            attempts[1].display,
+            "curl -fsS -H 'Host: visit-counter.leostera.dev' http://192.168.0.3/_/ready"
         );
     }
 
