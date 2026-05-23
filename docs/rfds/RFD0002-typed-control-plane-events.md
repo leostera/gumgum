@@ -10,7 +10,13 @@
 
 GumGum's control plane should converge through typed events, graph mutations, desired graph transitions, action planning, and execution. This RFD records the Track 2 direction and the parts already implemented so future slices keep tightening the same spine instead of adding ad-hoc report or stringly mutation paths.
 
-- Normal mutations flow toward `Event -> GraphMutation -> DesiredGraph -> GumgumAction -> Executor`.
+The planning vocabulary is intentionally:
+
+```text
+CurrentGraph + DesiredGraph = ActionGraph
+```
+
+- Normal mutations flow toward `Event -> GraphMutation -> DesiredGraph`, then `CurrentGraph + DesiredGraph = ActionGraph`, then executor side effects.
 - CLI JSON event-like outputs should be newline-delimited typed events where the output is a stream of events.
 - Human CLI output remains a presenter over typed data, not the source of truth.
 - Grouped/aggregate views may remain report objects when explicitly requested.
@@ -37,11 +43,11 @@ A deployment starts as a user intent: deploy worker `api@preview` with image `re
 Today this intent is partially typed already:
 
 ```rust
-let old_graph = store.load_desired_graph()?;
+let current_graph = store.load_desired_graph()?;
 let mutation = desired_deploy.upsert_mutation()?;
-let new_graph = GraphMutation::apply_all(&old_graph, [&mutation]);
-let plan = GraphActionPlanner::plan_transition(&old_graph, &new_graph);
-let actions = GraphActionExecutor::execute_steps(&plan.steps, context).await?;
+let desired_graph = GraphMutation::apply_all(&current_graph, [&mutation]);
+let action_graph = GraphActionPlanner::plan_transition(&current_graph, &desired_graph);
+let actions = GraphActionExecutor::execute_steps(&action_graph.steps, context).await?;
 ```
 
 The CLI should not reconstruct meaning from `actions`. Instead, execution steps project into typed events:
@@ -88,8 +94,8 @@ The following work is explicitly deferred to later slices:
 
 - Live server-sent/event-streaming progress while long deploy operations run. Current deploy flow still returns typed events after daemon-side reconciliation returns, though the executor now has a report shape that can become a streaming source.
 - BuildKit or Docker daemon image build/push support. Local `docker build` and `docker push` remain shell-based until a dedicated build/push-auth slice.
-- A fully distinct `GumgumAction` enum if `GraphExecutionStep` stops being sufficient as the action graph surface.
-- Wider property tests for arbitrary `Event -> GraphMutation -> DesiredGraph -> ActionGraph` determinism.
+- A fully distinct `GumgumAction` enum if `GraphExecutionStep` stops being sufficient as the `ActionGraph` step surface.
+- Wider property tests for arbitrary `Event -> GraphMutation -> DesiredGraph`, then `CurrentGraph + DesiredGraph = ActionGraph`, determinism.
 - A compatibility policy for older daemons once typed events become mandatory instead of additive.
 
 ## Invariants

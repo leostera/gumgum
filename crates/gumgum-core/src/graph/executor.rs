@@ -139,6 +139,18 @@ pub struct GraphReconciliationPlan {
     pub steps: Vec<GraphExecutionStep>,
 }
 
+/// The graph of executable actions derived by comparing current state to desired state.
+///
+/// Keep the control-plane vocabulary explicit:
+///
+/// ```text
+/// CurrentGraph + DesiredGraph = ActionGraph
+/// ```
+pub type ActionGraph = GraphReconciliationPlan;
+
+/// Snapshot of the currently-known graph state used as the left-hand side of planning.
+pub type CurrentGraph = DesiredGraph;
+
 impl GraphReconciliationPlan {
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
@@ -206,12 +218,12 @@ impl GraphActionPlanner {
     }
 
     pub fn plan_transition(
-        old_graph: &DesiredGraph,
-        new_graph: &DesiredGraph,
-    ) -> GraphReconciliationPlan {
-        let actions = GraphReconciler::reconcile(old_graph, new_graph);
+        current_graph: &CurrentGraph,
+        desired_graph: &DesiredGraph,
+    ) -> ActionGraph {
+        let actions = GraphReconciler::reconcile(current_graph, desired_graph);
         let steps = Self::plan(&actions);
-        GraphReconciliationPlan { actions, steps }
+        ActionGraph { actions, steps }
     }
 
     pub fn ensure_provider_step(name: ProviderName, capability: Capability) -> GraphExecutionStep {
