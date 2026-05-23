@@ -81,18 +81,64 @@ pub(crate) async fn ensure(
     credentials: ProviderCredentials,
 ) -> crate::Result<Vec<String>> {
     ensure_network().await?;
-    if inspect(&provider.container).await {
-        return start_existing(provider, "could not start postgres provider").await;
+    let actions = if inspect(&provider.container).await {
+        start_existing(provider, "could not start postgres provider").await?
+    } else {
+        create_provider_container(
+            provider,
+            vec![
+                (
+                    credentials.username_env.clone(),
+                    credentials.username.clone(),
+                ),
+                (
+                    credentials.password_env.clone(),
+                    credentials.password.clone(),
+                ),
+            ],
+            Vec::new(),
+        )
+        .await?
+    };
+    wait_for_postgres(provider, &credentials).await?;
+    Ok(actions)
+}
+
+async fn wait_for_postgres(
+    provider: &ProviderSpec,
+    credentials: &ProviderCredentials,
+) -> crate::Result<()> {
+    let mut last_error = None;
+    for _ in 0..30 {
+        match DockerEngine::local()?
+            .exec_success(
+                &provider.container,
+                vec![("PGPASSWORD".to_owned(), credentials.password.clone())],
+                vec![
+                    "psql".to_owned(),
+                    "-U".to_owned(),
+                    credentials.username.clone(),
+                    "-d".to_owned(),
+                    "postgres".to_owned(),
+                    "-tAc".to_owned(),
+                    "SELECT 1".to_owned(),
+                ],
+            )
+            .await
+        {
+            Ok(output) if output.trim() == "1" => return Ok(()),
+            Ok(output) => last_error = Some(output),
+            Err(error) => last_error = Some(error.to_report().message),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    create_provider_container(
-        provider,
-        vec![
-            (credentials.username_env, credentials.username),
-            (credentials.password_env, credentials.password),
-        ],
-        Vec::new(),
+    Err(crate::GumgumError::structured(
+        crate::Subsystem::Setup,
+        crate::ErrorCode::Io,
+        "postgres provider did not become ready",
     )
-    .await
+    .likely_cause(last_error.unwrap_or_else(|| "readiness check timed out".to_owned()))
+    .build())
 }
 
 async fn database_exists(
@@ -247,6 +293,21 @@ fn sql_identifier(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn postgres_readiness_error_is_provider_specific() {
+        let error = crate::GumgumError::structured(
+            crate::Subsystem::Setup,
+            crate::ErrorCode::Io,
+            "postgres provider did not become ready",
+        )
+        .likely_cause("connection refused")
+        .build()
+        .to_report();
+
+        assert_eq!(error.message, "postgres provider did not become ready");
+        assert_eq!(error.likely_cause.as_deref(), Some("connection refused"));
+    }
 
     #[test]
     fn postgres_object_actions_include_database_and_dns() {
