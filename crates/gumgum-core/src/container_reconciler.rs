@@ -32,6 +32,7 @@ impl ContainerReconciler {
             .map(|_| format!("{{{{upstreams {}}}}}", request.port))
             .unwrap_or_default();
         let expected_route = request.route.clone().unwrap_or_default();
+        let expected_environment = deployment_environment(&request.worker);
         if docker
             .inspect_container(&request.container)
             .await?
@@ -40,6 +41,11 @@ impl ContainerReconciler {
                     && container.labels.get("caddy") == Some(&expected_route)
                     && container.labels.get("caddy.reverse_proxy") == Some(&expected_proxy)
                     && container.labels.get("gumgum.binding_env") == Some(&binding_env_fingerprint)
+                    && container
+                        .labels
+                        .get("gumgum.environment")
+                        .map(String::as_str)
+                        == expected_environment
             })
         {
             actions.push("container already matches desired image, route, and bindings".to_owned());
@@ -50,7 +56,7 @@ impl ContainerReconciler {
         }
         actions.push(format!("pull {}", request.image));
         docker.pull_image(&request.image).await?;
-        let network = if docker
+        let shared_network = if docker
             .container_running("gumgum-caddy")
             .await
             .unwrap_or(false)
@@ -59,6 +65,13 @@ impl ContainerReconciler {
         } else {
             "caddy-network"
         };
+        let env_network = deployment_network_name(&request.worker);
+        let network = env_network.as_deref().unwrap_or(shared_network);
+        if let Some(env_network) = &env_network {
+            if docker.ensure_network(env_network).await? {
+                actions.push(format!("create environment network {env_network}"));
+            }
+        }
         if !binding_env.is_empty() {
             actions.push(format!("project {} binding env var(s)", binding_env.len()));
         }
@@ -72,6 +85,9 @@ impl ContainerReconciler {
                 binding_env_fingerprint.clone(),
             ),
         ]);
+        if let Some(environment) = expected_environment {
+            labels.insert("gumgum.environment".to_owned(), environment.to_owned());
+        }
         if let Some(route) = &request.route {
             labels.insert("caddy".to_owned(), route.clone());
             labels.insert(
@@ -94,15 +110,11 @@ impl ContainerReconciler {
                 entrypoint: Vec::new(),
             })
             .await?;
-        if network != "gumgum-network"
-            && docker
-                .network_exists("gumgum-network")
-                .await
-                .unwrap_or(false)
+        if network != shared_network && docker.network_exists(shared_network).await.unwrap_or(false)
         {
-            actions.push(format!("connect {} to gumgum-network", request.container));
+            actions.push(format!("connect {} to {shared_network}", request.container));
             docker
-                .connect_container_to_network(&request.container, "gumgum-network")
+                .connect_container_to_network(&request.container, shared_network)
                 .await?;
         }
         Self::wait_for_container_health(&docker, &request.container, request.port, &request.health)
@@ -195,6 +207,18 @@ impl ContainerReconciler {
     }
 }
 
+fn deployment_environment(worker: &str) -> Option<&str> {
+    worker
+        .strip_suffix("-preview")
+        .map(|_| "preview")
+        .or_else(|| worker.strip_suffix("-release").map(|_| "release"))
+        .or_else(|| worker.split_once('@').map(|(_, env)| env))
+}
+
+fn deployment_network_name(worker: &str) -> Option<String> {
+    deployment_environment(worker).map(|env| format!("gumgum-{env}"))
+}
+
 fn binding_env_fingerprint(env: &[(String, String)]) -> String {
     let mut entries = env.to_vec();
     entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
@@ -211,6 +235,23 @@ fn binding_env_fingerprint(env: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deployment_network_name_follows_environment_suffix() {
+        assert_eq!(
+            deployment_network_name("api-preview").as_deref(),
+            Some("gumgum-preview")
+        );
+        assert_eq!(
+            deployment_network_name("api-release").as_deref(),
+            Some("gumgum-release")
+        );
+        assert_eq!(
+            deployment_network_name("api@preview").as_deref(),
+            Some("gumgum-preview")
+        );
+        assert_eq!(deployment_network_name("api").as_deref(), None);
+    }
 
     #[test]
     fn binding_env_fingerprint_is_stable_and_order_insensitive() {
