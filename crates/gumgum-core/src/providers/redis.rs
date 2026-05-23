@@ -111,7 +111,7 @@ async fn redis_accepts_password(
         )
         .await
     {
-        Ok(output) => Ok(output.contains("PONG")),
+        Ok(output) => Ok(output.trim() == "PONG"),
         Err(_) => Ok(false),
     }
 }
@@ -119,6 +119,12 @@ async fn redis_accepts_password(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redis_password_probe_rejects_auth_failed_pong_output() {
+        let output = "AUTH failed: ERR AUTH <password> called without any password configured for the default user.\nPONG\n";
+        assert_ne!(output.trim(), "PONG");
+    }
 
     #[test]
     fn redis_recreate_action_explains_password_drift() {
