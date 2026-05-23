@@ -390,7 +390,33 @@ async fn apply_deploy_via_daemon(
     host: &str,
     request: &DeployRequest,
 ) -> gumgum_core::Result<DeployApplyReport> {
-    let report = ServerClient::new(host).deploy(request).await?;
+    let client = ServerClient::new(host);
+    let version = client.version().await.ok();
+    let report = if version.as_ref().is_some_and(supports_deploy_event_stream) {
+        let typed_events = client.deploy_event_stream(request).await?;
+        let ok = !typed_events.iter().any(|event| {
+            matches!(
+                event,
+                GumgumEvent::DeploymentFailed { .. } | GumgumEvent::ReconcileStepFailed { .. }
+            )
+        });
+        DeployApplyReport {
+            ok,
+            worker: request.worker.clone(),
+            materialized: ok,
+            changed: true,
+            actions: Vec::new(),
+            reconciliation_steps: Vec::new(),
+            typed_events,
+            message: if ok {
+                "deployment event stream completed".to_owned()
+            } else {
+                "deployment event stream reported failure".to_owned()
+            },
+        }
+    } else {
+        client.deploy(request).await?
+    };
     if report.ok {
         Ok(report)
     } else {
@@ -412,6 +438,13 @@ async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Resul
     );
     let script = "for i in $(seq 1 20); do if docker inspect -f '{{.State.Running}}' gumgum-registry 2>/dev/null | grep -q true; then exit 0; fi; sleep 0.5; done; echo 'gumgum-registry is not running; is gumgumd active?' >&2; exit 1";
     run_command_streaming(TokioCommand::new("ssh").arg(host).arg(script), quiet).await
+}
+
+fn supports_deploy_event_stream(version: &gumgum_api::DaemonVersionReport) -> bool {
+    version
+        .capabilities
+        .iter()
+        .any(|capability| capability == "gumgum:deployments:stream")
 }
 
 fn local_push_image(image: &str, tunnel_port: u16) -> String {
@@ -489,6 +522,23 @@ mod deploy_hardening_tests {
             deployment_key("api", crate::DeployEnv::Release),
             "api@release"
         );
+    }
+
+    #[test]
+    fn deploy_event_stream_requires_advertised_capability() {
+        let mut version = gumgum_api::DaemonVersionReport {
+            ok: true,
+            version: "test".to_owned(),
+            git_sha: "test".to_owned(),
+            target: "test".to_owned(),
+            capabilities: vec!["gumgum:events".to_owned()],
+        };
+        assert!(!supports_deploy_event_stream(&version));
+
+        version
+            .capabilities
+            .push("gumgum:deployments:stream".to_owned());
+        assert!(supports_deploy_event_stream(&version));
     }
 
     #[test]

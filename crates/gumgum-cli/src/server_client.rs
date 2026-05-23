@@ -5,7 +5,7 @@ use gumgum_api::{
     EventsReport, GraphReport, LogsReport, ObjectDeleteRequest, ObjectReport, ObjectRequest,
     ProviderBootReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
-use gumgum_core::{ErrorCode, GumgumError, Subsystem};
+use gumgum_core::{ErrorCode, GumgumError, GumgumEvent, Subsystem};
 
 #[derive(Clone)]
 pub(crate) struct ServerClient {
@@ -116,6 +116,26 @@ impl ServerClient {
         request: &DeployRequest,
     ) -> gumgum_core::Result<DeployApplyReport> {
         self.post_json("/v0/deploy", request, "deploy").await
+    }
+
+    pub(crate) async fn deploy_event_stream(
+        &self,
+        request: &DeployRequest,
+    ) -> gumgum_core::Result<Vec<GumgumEvent>> {
+        let response = self
+            .http
+            .post(self.url("/v0/deploy/stream"))
+            .json(request)
+            .send()
+            .await
+            .map_err(|source| self.api_error("failed to call gumgumd deploy stream API", source))?
+            .error_for_status()
+            .map_err(|source| {
+                self.api_error("gumgumd deploy stream API returned an error", source)
+            })?;
+        parse_typed_event_ndjson(&response.text().await.map_err(|source| {
+            self.api_error("gumgumd deploy stream API returned invalid text", source)
+        })?)
     }
 
     pub(crate) async fn delete_deploy(
@@ -403,9 +423,58 @@ impl ServerClient {
     }
 }
 
+fn parse_typed_event_ndjson(body: &str) -> gumgum_core::Result<Vec<GumgumEvent>> {
+    body.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<GumgumEvent>(line).map_err(|source| {
+                GumgumError::structured(
+                    Subsystem::Api,
+                    ErrorCode::ManifestParseFailed,
+                    "gumgumd deploy stream returned invalid typed event JSON",
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deploy_stream_parser_reads_typed_ndjson_events() {
+        let body = r#"{"type":"reconcile_step_planned","operation_id":"reconcile-test","target":"deployment/api@preview","action":"ensure_container","message":"planned","at":null}
+{"type":"reconcile_step_executed","operation_id":"reconcile-test","target":"deployment/api@preview","action":"ensure_container","message":"executed","at":null}
+"#;
+
+        let events = parse_typed_event_ndjson(body).unwrap();
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            GumgumEvent::ReconcileStepPlanned { ref target, ref action, .. }
+                if target == "deployment/api@preview" && action == "ensure_container"
+        ));
+        assert!(matches!(
+            events[1],
+            GumgumEvent::ReconcileStepExecuted { ref message, .. } if message == "executed"
+        ));
+    }
+
+    #[test]
+    fn deploy_stream_parser_rejects_invalid_event_lines() {
+        let report = parse_typed_event_ndjson("not-json\n")
+            .unwrap_err()
+            .to_report();
+
+        assert_eq!(
+            report.message,
+            "gumgumd deploy stream returned invalid typed event JSON"
+        );
+    }
 
     #[test]
     fn unsupported_delete_error_explains_old_daemon() {
