@@ -363,6 +363,7 @@ async fn daemon_delete_object(
                 })
                 .collect(),
             reconciliation_steps: Vec::new(),
+            typed_events: Vec::new(),
             message: "object has active bindings; unbind it before deleting".to_owned(),
         });
     }
@@ -378,10 +379,13 @@ async fn daemon_delete_object(
             .and_then(Result::ok)
             .unwrap_or(false)
     };
-    let provider_actions = if request.preview {
-        vec!["preview only; no objects changed".to_owned()]
+    let (provider_actions, typed_events) = if request.preview {
+        (
+            vec!["preview only; no objects changed".to_owned()],
+            Vec::new(),
+        )
     } else {
-        GraphActionExecutor::execute_steps(
+        match GraphActionExecutor::execute_steps_report(
             &reconciliation_steps,
             #[allow(clippy::needless_update)]
             GraphExecutionContext {
@@ -392,12 +396,16 @@ async fn daemon_delete_object(
             },
         )
         .await
-        .unwrap_or_else(|error| {
-            vec![format!(
-                "object delete reconcile failed: {}",
-                error.to_report().message
-            )]
-        })
+        {
+            Ok(report) => (report.actions, report.typed_events),
+            Err(error) => (
+                vec![format!(
+                    "object delete reconcile failed: {}",
+                    error.to_report().message
+                )],
+                Vec::new(),
+            ),
+        }
     };
     Json(ObjectReport {
         ok: request.preview || deleted,
@@ -408,6 +416,7 @@ async fn daemon_delete_object(
         connection_examples: Vec::new(),
         provider_actions,
         reconciliation_steps,
+        typed_events,
         message: if request.preview {
             "object delete preview".to_owned()
         } else if deleted {
@@ -503,10 +512,13 @@ async fn daemon_create_object(
                 .unwrap_or_else(|_| gumgum_core::ProviderName::new("provider.local").unwrap()),
         ));
     }
-    let provider_actions = if request.preview {
-        vec!["preview only; no objects changed".to_owned()]
+    let (provider_actions, typed_events) = if request.preview {
+        (
+            vec!["preview only; no objects changed".to_owned()],
+            Vec::new(),
+        )
     } else {
-        GraphActionExecutor::execute_steps(
+        match GraphActionExecutor::execute_steps_report(
             &execution_steps,
             GraphExecutionContext {
                 object_plan: Some(provider_plan.clone()),
@@ -515,12 +527,16 @@ async fn daemon_create_object(
             },
         )
         .await
-        .unwrap_or_else(|error| {
-            vec![format!(
-                "provider reconcile failed: {}",
-                error.to_report().message
-            )]
-        })
+        {
+            Ok(report) => (report.actions, report.typed_events),
+            Err(error) => (
+                vec![format!(
+                    "provider reconcile failed: {}",
+                    error.to_report().message
+                )],
+                Vec::new(),
+            ),
+        }
     };
     let reconcile_ok = !provider_actions
         .iter()
@@ -534,6 +550,7 @@ async fn daemon_create_object(
         connection_examples: provider_plan.connection_examples,
         provider_actions,
         reconciliation_steps: execution_steps,
+        typed_events,
         message: if request.preview {
             "object create preview".to_owned()
         } else if capability == gumgum_core::Capability::Db {
@@ -581,6 +598,7 @@ fn missing_provider_credentials_report(
             "configure ~/.gumgum/providers/minio-main/credentials.json or run provider credential setup when available".to_owned(),
         ],
         reconciliation_steps: Vec::new(),
+        typed_events: Vec::new(),
         message: "provider credentials are not configured".to_owned(),
     }
 }
@@ -787,10 +805,13 @@ async fn daemon_delete_binding(
             .and_then(Result::ok)
             .unwrap_or(false)
     };
-    let binding_actions = if request.preview {
-        vec!["preview only; no bindings changed".to_owned()]
+    let (binding_actions, typed_events) = if request.preview {
+        (
+            vec!["preview only; no bindings changed".to_owned()],
+            Vec::new(),
+        )
     } else {
-        GraphActionExecutor::execute_steps(
+        match GraphActionExecutor::execute_steps_report(
             &reconciliation_steps,
             GraphExecutionContext {
                 graph_path: Some(graph_path),
@@ -798,12 +819,16 @@ async fn daemon_delete_binding(
             },
         )
         .await
-        .unwrap_or_else(|error| {
-            vec![format!(
-                "binding delete reconcile failed: {}",
-                error.to_report().message
-            )]
-        })
+        {
+            Ok(report) => (report.actions, report.typed_events),
+            Err(error) => (
+                vec![format!(
+                    "binding delete reconcile failed: {}",
+                    error.to_report().message
+                )],
+                Vec::new(),
+            ),
+        }
     };
     Json(BindingReport {
         ok: request.preview || deleted,
@@ -812,6 +837,7 @@ async fn daemon_delete_binding(
         binding: request.binding,
         binding_actions,
         reconciliation_steps,
+        typed_events,
         message: if request.preview {
             "binding delete preview".to_owned()
         } else if deleted {
@@ -847,10 +873,13 @@ async fn daemon_create_binding(
             .and_then(Result::ok)
             .unwrap_or(false)
     };
-    let binding_actions = if request.preview {
-        vec!["preview only; no bindings changed".to_owned()]
+    let (binding_actions, typed_events) = if request.preview {
+        (
+            vec!["preview only; no bindings changed".to_owned()],
+            Vec::new(),
+        )
     } else {
-        GraphActionExecutor::execute_steps(
+        match GraphActionExecutor::execute_steps_report(
             &reconciliation_steps,
             GraphExecutionContext {
                 graph_path: Some(graph_path),
@@ -858,12 +887,16 @@ async fn daemon_create_binding(
             },
         )
         .await
-        .unwrap_or_else(|error| {
-            vec![format!(
-                "binding reconcile failed: {}",
-                error.to_report().message
-            )]
-        })
+        {
+            Ok(report) => (report.actions, report.typed_events),
+            Err(error) => (
+                vec![format!(
+                    "binding reconcile failed: {}",
+                    error.to_report().message
+                )],
+                Vec::new(),
+            ),
+        }
     };
     Json(BindingReport {
         ok,
@@ -872,6 +905,7 @@ async fn daemon_create_binding(
         binding: request.binding,
         binding_actions,
         reconciliation_steps,
+        typed_events,
         message: if request.preview {
             "binding create preview".to_owned()
         } else {
@@ -1838,6 +1872,11 @@ mod tests {
         )
         .await;
         assert!(object_report.ok);
+        assert!(object_report.typed_events.iter().any(|event| matches!(
+            event,
+            gumgum_core::GumgumEvent::ReconcileStepExecuted { target, action, .. }
+                if target == "queue/visit-events" && action == "ensure_object"
+        )));
 
         let Json(binding_report) = daemon_create_binding(
             State(state.clone()),
@@ -1852,6 +1891,11 @@ mod tests {
         )
         .await;
         assert!(binding_report.ok);
+        assert!(binding_report.typed_events.iter().any(|event| matches!(
+            event,
+            gumgum_core::GumgumEvent::ReconcileStepExecuted { target, action, .. }
+                if target == "binding/api/VISIT_EVENTS_QUEUE" && action == "ensure_binding"
+        )));
 
         let events = GraphStore::new(path.clone())
             .list_reconcile_events(20)

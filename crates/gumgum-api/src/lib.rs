@@ -177,6 +177,8 @@ pub struct ObjectReport {
     pub provider_actions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reconciliation_steps: Vec<GraphExecutionStep>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed_events: Vec<GumgumEvent>,
     pub message: String,
 }
 
@@ -211,6 +213,8 @@ pub struct BindingReport {
     pub binding_actions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reconciliation_steps: Vec<GraphExecutionStep>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed_events: Vec<GumgumEvent>,
     pub message: String,
 }
 
