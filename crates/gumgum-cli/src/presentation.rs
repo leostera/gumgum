@@ -75,6 +75,12 @@ fn deploy_report_lines(report: &DeployReport) -> Vec<String> {
     if let Some(health_url) = &report.health_url {
         lines.push(format!("Health: {health_url}"));
     }
+    for artifact in &report.grafana {
+        lines.push(format!(
+            "Grafana {}: {} ({})",
+            artifact.kind, artifact.name, artifact.path
+        ));
+    }
     lines.push(format!("Image: {}", report.image));
     lines.push(format!("Container: {}", report.container));
     lines.push("Plan:".to_owned());
@@ -107,6 +113,7 @@ mod tests {
             port: 3000,
             routes: vec!["api.visit-counter.leostera.test".to_owned()],
             health_url: Some("http://api.visit-counter.leostera.test/healthz".to_owned()),
+            grafana: Vec::new(),
             plan: Vec::new(),
             plan_graph: PlanGraph::default(),
             events: Vec::new(),
@@ -142,6 +149,7 @@ mod tests {
             port: 3000,
             routes: vec!["api.visit-counter.leostera.test".to_owned()],
             health_url: Some("http://api.visit-counter.leostera.test/healthz".to_owned()),
+            grafana: Vec::new(),
             plan: Vec::new(),
             plan_graph,
             events: Vec::new(),

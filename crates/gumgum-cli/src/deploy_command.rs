@@ -14,6 +14,13 @@ use tokio::process::Command as TokioCommand;
 use crate::{deploy_executor::DeployExecutor, server_client::ServerClient};
 
 #[derive(Debug, Serialize)]
+pub(crate) struct GrafanaArtifactPlan {
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    pub(crate) path: String,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct DeployReport {
     pub(crate) ok: bool,
     pub(crate) dry_run: bool,
@@ -26,6 +33,8 @@ pub(crate) struct DeployReport {
     pub(crate) port: u16,
     pub(crate) routes: Vec<String>,
     pub(crate) health_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) grafana: Vec<GrafanaArtifactPlan>,
     pub(crate) plan: Vec<String>,
     pub(crate) plan_graph: PlanGraph,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -250,6 +259,13 @@ fn deploy_report(
         env.is_prod(),
     );
     descriptor.container = env_prefixed_container_name(&descriptor.container, env);
+    let grafana = grafana_artifact_plan(&path, manifest, project_name);
+    descriptor.plan.extend(grafana.iter().map(|artifact| {
+        format!(
+            "provision Grafana {} {} from {}",
+            artifact.kind, artifact.name, artifact.path
+        )
+    }));
     let events = vec![GumgumEvent::DeploymentPlanned {
         worker: descriptor.worker.clone(),
         environment: Some(env.label().to_owned()),
@@ -268,6 +284,7 @@ fn deploy_report(
         port: descriptor.port,
         routes: descriptor.routes,
         health_url: descriptor.health_url,
+        grafana,
         plan: descriptor.plan,
         plan_graph: descriptor.plan_graph,
         events,
@@ -473,6 +490,48 @@ fn local_push_image(image: &str, tunnel_port: u16) -> String {
     image.replacen("127.0.0.1:55000", &format!("localhost:{tunnel_port}"), 1)
 }
 
+fn grafana_artifact_plan(
+    manifest_path: &std::path::Path,
+    manifest: &WorkerManifest,
+    project_name: Option<&str>,
+) -> Vec<GrafanaArtifactPlan> {
+    let base_dir = manifest_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let project = project_name
+        .or_else(|| {
+            manifest
+                .project
+                .as_ref()
+                .map(|project| project.namespace.as_str())
+        })
+        .unwrap_or("root");
+    let mut artifacts = Vec::new();
+    if let Some(sources) = manifest
+        .observability
+        .as_ref()
+        .and_then(|observability| observability.grafana.as_ref())
+        .and_then(|grafana| grafana.sources.as_ref())
+    {
+        artifacts.push(GrafanaArtifactPlan {
+            kind: "datasource".to_owned(),
+            name: format!("{project} / datasources"),
+            path: base_dir.join(sources).display().to_string(),
+        });
+    }
+    artifacts.extend(
+        manifest
+            .dashboards
+            .iter()
+            .map(|dashboard| GrafanaArtifactPlan {
+                kind: "dashboard".to_owned(),
+                name: format!("{project} / {}", dashboard.name),
+                path: base_dir.join(&dashboard.path).display().to_string(),
+            }),
+    );
+    artifacts
+}
+
 fn deployment_key(worker: &str, env: crate::DeployEnv) -> String {
     format!("{worker}@{}", env.label())
 }
@@ -609,6 +668,58 @@ mod deploy_hardening_tests {
         assert_eq!(
             env_prefixed_container_name("gumgum-dev-leostera-api", crate::DeployEnv::Prod),
             "gumgum-prod-dev-leostera-api"
+        );
+    }
+
+    #[test]
+    fn grafana_artifact_plan_names_project_scoped_files() {
+        let manifest = WorkerManifest {
+            project: Some(gumgum_core::Project {
+                namespace: "kava-fund".to_owned(),
+            }),
+            worker: Worker {
+                name: "api".to_owned(),
+                image: None,
+                build_context: None,
+                command: None,
+                port: None,
+                checks: Default::default(),
+                health: None,
+            },
+            zone: Vec::new(),
+            ingress: Vec::new(),
+            database: Vec::new(),
+            kv: Vec::new(),
+            bucket: Vec::new(),
+            queue: Default::default(),
+            secrets: Vec::new(),
+            observability: Some(gumgum_core::Observability {
+                enable: true,
+                prometheus_metrics: "/_/metrics".to_owned(),
+                grafana: Some(gumgum_core::GrafanaObservability {
+                    sources: Some("../grafana/sources.json".to_owned()),
+                }),
+            }),
+            dashboards: vec![gumgum_core::Dashboard {
+                name: "API Overview".to_owned(),
+                path: "../grafana/dashboards/api-overview.json".to_owned(),
+            }],
+            limits: None,
+        };
+
+        let plan = grafana_artifact_plan(
+            std::path::Path::new("examples/visit-counter/api/gumgum.toml"),
+            &manifest,
+            None,
+        );
+
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].kind, "datasource");
+        assert_eq!(plan[0].name, "kava-fund / datasources");
+        assert!(
+            plan[1]
+                .path
+                .ends_with("grafana/dashboards/api-overview.json")
         );
     }
 
@@ -751,6 +862,7 @@ mod deploy_hardening_tests {
             port: 3000,
             routes: vec!["api.visit-counter.leostera.test".to_owned()],
             health_url: None,
+            grafana: Vec::new(),
             plan: Vec::new(),
             plan_graph: PlanGraph::default(),
             events: Vec::new(),
