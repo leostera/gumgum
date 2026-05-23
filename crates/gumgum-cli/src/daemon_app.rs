@@ -14,10 +14,10 @@ use gumgum_api::{
     ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
-    ConfigStore, DesiredDeploy, DesiredGraphNode, DesiredProvider, DomainRecord, ErrorCode,
-    GlobalObject, GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore,
-    GumgumError, LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph,
-    internal_db, not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
+    ConfigStore, DesiredDeploy, DesiredProvider, DomainRecord, ErrorCode, GlobalObject,
+    GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore, GumgumError,
+    LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph, internal_db,
+    not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::process::Command as TokioCommand;
@@ -654,20 +654,14 @@ async fn provider_configure_plan(
     graph_path: PathBuf,
     config: &gumgum_core::ProviderConfig,
 ) -> Option<Vec<gumgum_core::GraphExecutionStep>> {
-    let config = config.clone();
-    tokio::task::spawn_blocking(move || {
-        let store = GraphStore::new(graph_path);
-        let old_graph = store.load_desired_graph()?;
-        let mut new_graph = old_graph.clone();
-        new_graph.nodes.insert(DesiredGraphNode::Provider {
-            name: gumgum_core::ProviderName::new(&config.provider)?,
+    Some(
+        DesiredProvider {
+            name: config.provider.clone(),
             capability: config.capability,
-        });
-        Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-    })
-    .await
-    .ok()
-    .and_then(Result::ok)
+        }
+        .reconciliation_steps(graph_path)
+        .await,
+    )
 }
 
 async fn daemon_providers() -> Json<ProviderStatusReport> {
@@ -1730,20 +1724,11 @@ async fn deploy_reconciliation_plan(
     graph_path: PathBuf,
     request: &DeployRequest,
 ) -> Vec<gumgum_core::GraphExecutionStep> {
-    let request = request.clone();
-    tokio::task::spawn_blocking(move || {
-        let store = GraphStore::new(graph_path);
-        let old_graph = store.load_desired_graph()?;
-        let mut new_graph = old_graph.clone();
-        new_graph
-            .nodes
-            .insert(request.into_desired_deploy().graph_node()?);
-        Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-    })
-    .await
-    .ok()
-    .and_then(Result::ok)
-    .unwrap_or_default()
+    request
+        .clone()
+        .into_desired_deploy()
+        .reconciliation_steps(graph_path)
+        .await
 }
 
 #[cfg(test)]
@@ -1934,12 +1919,12 @@ mod tests {
         let graph = store.load_desired_graph().unwrap();
         assert!(!graph.nodes.iter().any(|node| matches!(
             node,
-            DesiredGraphNode::Object { name, .. }
+            gumgum_core::DesiredGraphNode::Object { name, .. }
                 if name.as_str() == "visit-events"
         )));
         assert!(!graph.nodes.iter().any(|node| matches!(
             node,
-            DesiredGraphNode::Binding { worker, name, .. }
+            gumgum_core::DesiredGraphNode::Binding { worker, name, .. }
                 if worker.as_str() == "api" && name.as_str() == "VISIT_EVENTS_QUEUE"
         )));
         assert!(store.list_reconcile_events(20).unwrap().is_empty());

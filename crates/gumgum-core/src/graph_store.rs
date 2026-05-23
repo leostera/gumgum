@@ -299,6 +299,23 @@ pub struct DesiredProvider {
     pub capability: Capability,
 }
 
+impl DesiredProvider {
+    pub fn graph_node(&self) -> Result<DesiredGraphNode> {
+        Ok(DesiredGraphNode::Provider {
+            name: ProviderName::new(&self.name)?,
+            capability: self.capability,
+        })
+    }
+
+    pub fn upsert_mutation(&self) -> Result<GraphMutation> {
+        Ok(GraphMutation::upsert_node(self.graph_node()?))
+    }
+
+    pub async fn reconciliation_steps(&self, graph_path: PathBuf) -> Vec<GraphExecutionStep> {
+        plan_graph_mutation(graph_path, self.upsert_mutation()).await
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GraphStore {
     path: PathBuf,
@@ -1653,11 +1670,16 @@ mod tests {
             binding: "USER_COUNTERS".to_owned(),
             access: "read-write".to_owned(),
         };
+        let provider = DesiredProvider {
+            name: "redis.main".to_owned(),
+            capability: Capability::Kv,
+        };
         let graph = DesiredGraph::default();
         let mutations = [
             deploy.upsert_mutation().unwrap(),
             object.upsert_mutation().unwrap(),
             binding.upsert_mutation().unwrap(),
+            provider.upsert_mutation().unwrap(),
         ];
         let graph = GraphMutation::apply_all(&graph, &mutations);
 
@@ -1678,6 +1700,12 @@ mod tests {
                 .nodes
                 .iter()
                 .any(|node| node.id() == "binding/api/USER_COUNTERS")
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.id() == "provider/redis.main")
         );
     }
 
