@@ -4,8 +4,8 @@ pub mod reconciler;
 pub mod types;
 
 pub use executor::{
-    GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphExecutionStep,
-    GraphExecutionTarget, GraphReconciliationPlan, GumgumAction,
+    GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphExecutionReport,
+    GraphExecutionStep, GraphExecutionTarget, GraphReconciliationPlan, GumgumAction,
 };
 pub use mutation::GraphMutation;
 pub use reconciler::{DesiredGraph, DesiredGraphNode, GraphReconcileAction, GraphReconciler};

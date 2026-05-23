@@ -76,6 +76,7 @@ Implemented in Track 1 and early Track 2:
 - `DesiredDeploy`, `GlobalObject`, and `WorkerBinding` expose mutation helpers.
 - `GumgumAction` currently aliases `GraphExecutionStep` as the action graph surface.
 - `GraphExecutionStep` can project planned/executed/failed `GumgumEvent`s.
+- `GraphActionExecutor::execute_steps_report` returns action strings plus typed execution events, giving future live streaming a core event source instead of forcing daemon/CLI reconstruction.
 - Daemon deploy/delete reports include `typed_events`.
 - `gumgum events --json` emits NDJSON typed events.
 - `gumgum --json deploy` emits NDJSON typed events for worker/workspace deploy and delete paths when typed events are available.
@@ -85,7 +86,7 @@ Implemented in Track 1 and early Track 2:
 
 The following work is explicitly deferred to later slices:
 
-- Live server-sent/event-streaming progress while long deploy operations run. Current deploy flow still returns typed events after daemon-side reconciliation returns.
+- Live server-sent/event-streaming progress while long deploy operations run. Current deploy flow still returns typed events after daemon-side reconciliation returns, though the executor now has a report shape that can become a streaming source.
 - BuildKit or Docker daemon image build/push support. Local `docker build` and `docker push` remain shell-based until a dedicated build/push-auth slice.
 - A fully distinct `GumgumAction` enum if `GraphExecutionStep` stops being sufficient as the action graph surface.
 - Wider property tests for arbitrary `Event -> GraphMutation -> DesiredGraph -> ActionGraph` determinism.

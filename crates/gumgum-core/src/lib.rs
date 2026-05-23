@@ -26,10 +26,10 @@ pub use domain::{DomainProvider, DomainRecord};
 pub use events::GumgumEvent;
 pub use graph::{
     BindingName, ContainerName, DesiredGraph, DesiredGraphNode, GraphActionExecutor,
-    GraphActionPlanner, GraphExecutionContext, GraphExecutionStep, GraphExecutionTarget,
-    GraphMutation, GraphNodeId, GraphReconcileAction, GraphReconciler, GraphReconciliationPlan,
-    GumgumAction, HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName, RouteHost,
-    WorkerId,
+    GraphActionPlanner, GraphExecutionContext, GraphExecutionReport, GraphExecutionStep,
+    GraphExecutionTarget, GraphMutation, GraphNodeId, GraphReconcileAction, GraphReconciler,
+    GraphReconciliationPlan, GumgumAction, HealthPath, ImageName, ObjectName, ObjectRef, Port,
+    ProviderName, RouteHost, WorkerId,
 };
 pub use graph_store::{
     ControlPlaneEventKind, DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject,
