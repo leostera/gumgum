@@ -118,7 +118,7 @@ Track 3 keeps the generalized stream shape intentionally small: daemon code expo
 The following work is explicitly deferred to later slices:
 
 - Extending live event streaming beyond deploy apply, including object/binding/provider reconciliation and a possible Server-Sent Events variant for browser dashboards.
-- BuildKit or Docker daemon image build/push support. Local `docker build` and `docker push` remain shell-based until a dedicated build/push-auth slice.
+- BuildKit or Docker daemon image build/push support. Local `docker build` and `docker push` remain shell-based for now; Track 4 hardens command-specific diagnostics without introducing a Docker runtime abstraction.
 - A fully distinct `GumgumAction` enum if `GraphExecutionStep` stops being sufficient as the `ActionGraph` step surface.
 - Wider property tests for arbitrary `Event -> GraphMutation -> DesiredGraph`, then `CurrentGraph + DesiredGraph = ActionGraph`, determinism.
 - A compatibility policy for older daemons once typed events become mandatory instead of additive.

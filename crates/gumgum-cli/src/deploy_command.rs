@@ -347,9 +347,19 @@ async fn run_remote_deploy(
         None
     };
     let _ = tunnel.kill().await;
-    build_result?;
-    if let Some(push_result) = push_result {
-        push_result?;
+    if let Err(error) = build_result {
+        return Err(deploy_command_failure(
+            "Docker image build failed",
+            error,
+            "docker info",
+        ));
+    }
+    if let Some(Err(error)) = push_result {
+        return Err(deploy_command_failure(
+            "Docker image push to GumGum.dev registry failed",
+            error,
+            format!("gumgum status --host {host}"),
+        ));
     }
 
     progress(
@@ -429,6 +439,19 @@ async fn apply_deploy_via_daemon(
         .next_command(format!("gumgum logs {} --host {host}", request.worker))
         .build())
     }
+}
+
+fn deploy_command_failure(
+    message: impl Into<String>,
+    source: GumgumError,
+    next_command: impl Into<String>,
+) -> GumgumError {
+    let report = source.to_report();
+    let likely_cause = report.likely_cause.unwrap_or(report.message);
+    GumgumError::structured(Subsystem::Setup, ErrorCode::Io, message)
+        .likely_cause(likely_cause)
+        .next_command(next_command)
+        .build()
 }
 
 async fn wait_for_remote_registry(host: &str, quiet: bool) -> gumgum_core::Result<()> {
@@ -522,6 +545,25 @@ mod deploy_hardening_tests {
             deployment_key("api", crate::DeployEnv::Release),
             "api@release"
         );
+    }
+
+    #[test]
+    fn deploy_command_failure_preserves_cause_with_actionable_next_command() {
+        let source =
+            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "setup command failed")
+                .likely_cause("Cannot connect to the Docker daemon")
+                .next_command("gumgum setup <host> --domain <domain> --dry-run")
+                .build();
+
+        let report =
+            deploy_command_failure("Docker image build failed", source, "docker info").to_report();
+
+        assert_eq!(report.message, "Docker image build failed");
+        assert_eq!(
+            report.likely_cause.as_deref(),
+            Some("Cannot connect to the Docker daemon")
+        );
+        assert_eq!(report.next_commands, vec!["docker info".to_owned()]);
     }
 
     #[test]
