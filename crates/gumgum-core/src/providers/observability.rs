@@ -154,8 +154,6 @@ fn platform_command(provider: &ProviderSpec) -> Vec<String> {
             "-storage.trace.backend=local".to_owned(),
             "-storage.trace.local.path=/tmp/tempo/traces".to_owned(),
             "-auth.enabled=false".to_owned(),
-            "-distributor.receivers.otlp.protocols.grpc.endpoint=0.0.0.0:4317".to_owned(),
-            "-distributor.receivers.otlp.protocols.http.endpoint=0.0.0.0:4318".to_owned(),
         ],
         _ => Vec::new(),
     }
