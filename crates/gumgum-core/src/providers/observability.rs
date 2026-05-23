@@ -158,6 +158,174 @@ fn platform_command(provider: &ProviderSpec) -> Vec<String> {
     }
 }
 
+pub async fn apply_grafana_artifact(
+    kind: &str,
+    name: &str,
+    content: serde_json::Value,
+) -> crate::Result<Vec<String>> {
+    let password = std::env::var("GUMGUM_GRAFANA_ADMIN_PASSWORD")
+        .unwrap_or_else(|_| "gumgum-local-dev".to_owned());
+    let client = reqwest::Client::new();
+    let grafana = DockerEngine::local()?
+        .inspect_container("gumgum-grafana")
+        .await?
+        .ok_or_else(|| {
+            crate::GumgumError::structured(
+                crate::Subsystem::Setup,
+                crate::ErrorCode::Io,
+                "Grafana platform container is not running",
+            )
+            .next_command("gumgum server add <host> --root-domain <domain>")
+            .build()
+        })?;
+    let ip = grafana
+        .networks
+        .get(GUMGUM_NETWORK)
+        .filter(|ip| !ip.is_empty())
+        .ok_or_else(|| {
+            crate::GumgumError::structured(
+                crate::Subsystem::Setup,
+                crate::ErrorCode::Io,
+                "Grafana platform container is not attached to gumgum network",
+            )
+            .build()
+        })?;
+    let base = format!("http://{ip}:3000");
+    match kind {
+        "datasource" => {
+            let datasources = content
+                .get("datasources")
+                .and_then(|value| value.as_array())
+                .ok_or_else(|| {
+                    crate::GumgumError::structured(
+                        crate::Subsystem::Setup,
+                        crate::ErrorCode::InvalidArgs,
+                        "Grafana datasource artifact must contain a datasources array",
+                    )
+                    .build()
+                })?;
+            let mut actions = Vec::new();
+            for datasource in datasources {
+                let datasource_name = datasource
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unnamed");
+                let response = client
+                    .post(format!("{base}/api/datasources"))
+                    .basic_auth("gumgum", Some(&password))
+                    .json(datasource)
+                    .send()
+                    .await
+                    .map_err(grafana_error)?;
+                if response.status().is_success() {
+                    actions.push(format!("created Grafana datasource {datasource_name}"));
+                } else if response.status().as_u16() == 409 {
+                    let uid =
+                        grafana_datasource_uid(&client, &base, &password, datasource_name).await?;
+                    let update = client
+                        .put(format!("{base}/api/datasources/uid/{uid}"))
+                        .basic_auth("gumgum", Some(&password))
+                        .json(datasource)
+                        .send()
+                        .await
+                        .map_err(grafana_error)?;
+                    if update.status().is_success() {
+                        actions.push(format!("updated Grafana datasource {datasource_name}"));
+                    } else {
+                        return Err(grafana_response_error(update).await);
+                    }
+                } else {
+                    return Err(grafana_response_error(response).await);
+                }
+            }
+            Ok(actions)
+        }
+        "dashboard" => {
+            let response = client
+                .post(format!("{base}/api/dashboards/db"))
+                .basic_auth("gumgum", Some(&password))
+                .json(&serde_json::json!({
+                    "dashboard": content,
+                    "overwrite": true,
+                    "message": format!("gumgum apply {name}"),
+                }))
+                .send()
+                .await
+                .map_err(grafana_error)?;
+            if response.status().is_success() {
+                Ok(vec![format!("applied Grafana dashboard {name}")])
+            } else {
+                Err(grafana_response_error(response).await)
+            }
+        }
+        other => Err(crate::GumgumError::structured(
+            crate::Subsystem::Setup,
+            crate::ErrorCode::InvalidArgs,
+            format!("unsupported Grafana artifact kind {other}"),
+        )
+        .build()),
+    }
+}
+
+async fn grafana_datasource_uid(
+    client: &reqwest::Client,
+    base: &str,
+    password: &str,
+    name: &str,
+) -> crate::Result<String> {
+    let response = client
+        .get(format!(
+            "{base}/api/datasources/name/{}",
+            grafana_path_escape(name)
+        ))
+        .basic_auth("gumgum", Some(password))
+        .send()
+        .await
+        .map_err(grafana_error)?;
+    if !response.status().is_success() {
+        return Err(grafana_response_error(response).await);
+    }
+    let value: serde_json::Value = response.json().await.map_err(grafana_error)?;
+    value
+        .get("uid")
+        .and_then(|uid| uid.as_str())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            crate::GumgumError::structured(
+                crate::Subsystem::Setup,
+                crate::ErrorCode::Io,
+                format!("Grafana datasource {name} did not include a uid"),
+            )
+            .build()
+        })
+}
+
+fn grafana_path_escape(value: &str) -> String {
+    value.replace(' ', "%20").replace('/', "%2F")
+}
+
+fn grafana_error(error: reqwest::Error) -> crate::GumgumError {
+    crate::GumgumError::structured(
+        crate::Subsystem::Setup,
+        crate::ErrorCode::Io,
+        "could not reach Grafana API",
+    )
+    .likely_cause(error.to_string())
+    .build()
+}
+
+async fn grafana_response_error(response: reqwest::Response) -> crate::GumgumError {
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    crate::GumgumError::structured(
+        crate::Subsystem::Setup,
+        crate::ErrorCode::Io,
+        format!("Grafana API returned {status}"),
+    )
+    .likely_cause(body)
+    .build()
+}
+
 pub(crate) async fn platform_statuses() -> Vec<ProviderStatus> {
     let mut statuses = Vec::new();
     for provider in platform_specs("example.invalid") {
@@ -259,6 +427,14 @@ mod tests {
         assert_eq!(
             labels.get("gumgum.capability").map(String::as_str),
             Some("observability")
+        );
+    }
+
+    #[test]
+    fn grafana_path_escape_handles_datasource_names() {
+        assert_eq!(
+            grafana_path_escape("Project / Prometheus"),
+            "Project%20%2F%20Prometheus"
         );
     }
 }

@@ -1,7 +1,9 @@
 #![allow(clippy::items_after_test_module)]
 
 use crate::{DeployArgs, event_presenter::print_events_json_lines, progress, resolve_server};
-use gumgum_api::{DeployApplyReport, DeployRequest, DeploymentDeleteRequest, ServerRecord};
+use gumgum_api::{
+    DeployApplyReport, DeployRequest, DeploymentDeleteRequest, GrafanaArtifactRequest, ServerRecord,
+};
 use gumgum_core::{
     ConfigStore, DeploymentDescriptor, ErrorCode, GumgumError, GumgumEvent, ManifestKind,
     PlanGraph, Subsystem, WorkerManifest, load_worker_path, load_workspace_path,
@@ -393,6 +395,7 @@ async fn run_remote_deploy(
         health: manifest.worker.ready_check_path().to_owned(),
     };
     apply_deploy_via_daemon(host, &request).await?;
+    apply_grafana_artifacts(host, &report.grafana, quiet).await?;
     if manifest.ingress.is_empty() {
         progress(
             quiet,
@@ -410,6 +413,54 @@ async fn run_remote_deploy(
         }
         Ok(())
     }
+}
+
+async fn apply_grafana_artifacts(
+    host: &str,
+    artifacts: &[GrafanaArtifactPlan],
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    if artifacts.is_empty() {
+        return Ok(());
+    }
+    let client = ServerClient::new(host.to_owned());
+    for artifact in artifacts {
+        progress(
+            quiet,
+            format!("applying Grafana {} {}", artifact.kind, artifact.name),
+        );
+        let bytes = std::fs::read(&artifact.path).map_err(|error| {
+            GumgumError::structured(
+                Subsystem::Cli,
+                ErrorCode::Io,
+                format!("could not read Grafana artifact {}", artifact.path),
+            )
+            .likely_cause(error.to_string())
+            .build()
+        })?;
+        let content: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+            GumgumError::structured(
+                Subsystem::Cli,
+                ErrorCode::ManifestParseFailed,
+                format!("could not parse Grafana artifact {}", artifact.path),
+            )
+            .likely_cause(error.to_string())
+            .build()
+        })?;
+        let report = client
+            .apply_grafana_artifact(&GrafanaArtifactRequest {
+                kind: artifact.kind.clone(),
+                name: artifact.name.clone(),
+                content,
+            })
+            .await?;
+        if !report.ok {
+            return Err(
+                GumgumError::structured(Subsystem::Api, ErrorCode::Io, report.message).build(),
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn apply_deploy_via_daemon(

@@ -104,6 +104,7 @@ impl DaemonApp {
                 "/v0/providers/defaults/boot",
                 post(daemon_boot_default_providers),
             )
+            .route("/v0/grafana/artifacts", post(daemon_apply_grafana_artifact))
             .route(
                 "/v0/providers/minio/credentials/init",
                 post(daemon_init_minio_credentials),
@@ -695,6 +696,29 @@ async fn daemon_providers() -> Json<ProviderStatusReport> {
         message: format!("{} provider(s)", providers.len()),
         providers,
     })
+}
+
+async fn daemon_apply_grafana_artifact(
+    Json(request): Json<gumgum_api::GrafanaArtifactRequest>,
+) -> Json<gumgum_api::GrafanaArtifactReport> {
+    match gumgum_core::providers::observability::apply_grafana_artifact(
+        &request.kind,
+        &request.name,
+        request.content,
+    )
+    .await
+    {
+        Ok(actions) => Json(gumgum_api::GrafanaArtifactReport {
+            ok: true,
+            message: "Grafana artifact applied".to_owned(),
+            actions,
+        }),
+        Err(error) => Json(gumgum_api::GrafanaArtifactReport {
+            ok: false,
+            actions: Vec::new(),
+            message: error.to_report().message,
+        }),
+    }
 }
 
 async fn daemon_boot_default_providers() -> Json<ProviderBootReport> {

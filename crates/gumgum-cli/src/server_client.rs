@@ -92,6 +92,14 @@ impl ServerClient {
         .await
     }
 
+    pub(crate) async fn apply_grafana_artifact(
+        &self,
+        request: &gumgum_api::GrafanaArtifactRequest,
+    ) -> gumgum_core::Result<gumgum_api::GrafanaArtifactReport> {
+        self.post_json("/v0/grafana/artifacts", request, "Grafana artifact")
+            .await
+    }
+
     pub(crate) async fn bind_object(
         &self,
         request: &BindingRequest,

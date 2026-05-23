@@ -97,6 +97,20 @@ pub struct DeployApplyReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GrafanaArtifactRequest {
+    pub kind: String,
+    pub name: String,
+    pub content: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GrafanaArtifactReport {
+    pub ok: bool,
+    pub actions: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LogsReport {
     pub ok: bool,
     pub container: String,
