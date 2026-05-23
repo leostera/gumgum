@@ -772,7 +772,22 @@ async fn daemon_boot_default_providers() -> Json<ProviderBootReport> {
     match credentials {
         Ok(credentials) => {
             match ProviderReconciler::boot_defaults(&credentials, &root_domain).await {
-                Ok(actions) => {
+                Ok(mut actions) => {
+                    if let (Ok(domains), Ok(Some(grant))) =
+                        (store.load_domains(), store.load_cloudflare_grant())
+                    {
+                        let grafana_host = format!("grafana.{root_domain}");
+                        if let Ok(mut route_actions) =
+                            gumgum_core::cloudflare::dns::ensure_published_route(
+                                &domains,
+                                &grant,
+                                &grafana_host,
+                            )
+                            .await
+                        {
+                            actions.append(&mut route_actions);
+                        }
+                    }
                     let providers = ProviderReconciler::statuses().await;
                     Json(ProviderBootReport {
                         ok: true,

@@ -121,13 +121,27 @@ impl LocalPlatform {
 
     async fn ensure_caddy(quiet: bool) -> crate::Result<()> {
         let docker = DockerEngine::local()?;
-        if docker.inspect_container(CADDY_CONTAINER).await?.is_some() {
-            docker.start_container(CADDY_CONTAINER).await?;
-            return Ok(());
-        }
-
         let expose_host_ports =
             port_available(Ipv4Addr::UNSPECIFIED, 80) && port_available(Ipv4Addr::UNSPECIFIED, 443);
+        if let Some(existing) = docker.inspect_container(CADDY_CONTAINER).await? {
+            let has_http = existing
+                .ports
+                .iter()
+                .any(|port| port.host_port == 80 && port.container_port == 80);
+            let has_https = existing
+                .ports
+                .iter()
+                .any(|port| port.host_port == 443 && port.container_port == 443);
+            if !expose_host_ports || (has_http && has_https) {
+                docker.start_container(CADDY_CONTAINER).await?;
+                return Ok(());
+            }
+            if !quiet {
+                eprintln!("  recreate {CADDY_CONTAINER} to publish host ports 80/443");
+            }
+            docker.remove_container_force(CADDY_CONTAINER).await?;
+        }
+
         if !expose_host_ports && !quiet {
             eprintln!(
                 "warning: ports 80/443 are already in use; starting {CADDY_CONTAINER} for tunnel-only ingress without host port bindings"

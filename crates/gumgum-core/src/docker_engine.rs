@@ -16,6 +16,7 @@ pub struct ContainerSnapshot {
     pub running: bool,
     pub healthy: Option<bool>,
     pub networks: HashMap<String, String>,
+    pub ports: Vec<PortBindingSpec>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -109,6 +110,30 @@ impl DockerEngine {
                     .map(|(network, endpoint)| {
                         let ip = endpoint.ip_address.unwrap_or_default();
                         (network, ip)
+                    })
+                    .collect(),
+                ports: container
+                    .host_config
+                    .as_ref()
+                    .and_then(|config| config.port_bindings.clone())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .flat_map(|(key, bindings)| {
+                        let (container_port, protocol) = key
+                            .split_once('/')
+                            .map(|(port, protocol)| (port.parse::<u16>().ok(), protocol.to_owned()))
+                            .unwrap_or((None, "tcp".to_owned()));
+                        bindings
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(move |binding| {
+                                Some(PortBindingSpec {
+                                    host_ip: binding.host_ip,
+                                    host_port: binding.host_port?.parse().ok()?,
+                                    container_port: container_port?,
+                                    protocol: protocol.clone(),
+                                })
+                            })
                     })
                     .collect(),
             })),
