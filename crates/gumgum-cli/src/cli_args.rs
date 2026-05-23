@@ -326,7 +326,10 @@ pub(crate) struct EventsArgs {
     pub(crate) limit: u32,
     #[arg(long, help = "Filter events by kind: mutation or reconciliation")]
     pub(crate) kind: Option<String>,
-    #[arg(long, help = "Group events by operation id")]
+    #[arg(
+        long,
+        help = "Group events by operation id; with --json this returns a grouped report object"
+    )]
     pub(crate) grouped: bool,
 }
 
