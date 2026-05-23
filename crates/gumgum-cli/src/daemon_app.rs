@@ -157,6 +157,8 @@ fn daemon_version_report() -> DaemonVersionReport {
             "gumgum:deployments:delete".to_owned(),
             "gumgum:deployments:stream".to_owned(),
             "gumgum:buckets:objects".to_owned(),
+            "gumgum:grafana:artifacts".to_owned(),
+            "gumgum:observability:prometheus_scrapes".to_owned(),
         ],
     }
 }
@@ -2431,6 +2433,16 @@ mod tests {
             report
                 .capabilities
                 .contains(&"gumgum:buckets:objects".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"gumgum:grafana:artifacts".to_owned())
+        );
+        assert!(
+            report
+                .capabilities
+                .contains(&"gumgum:observability:prometheus_scrapes".to_owned())
         );
     }
 

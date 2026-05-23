@@ -131,7 +131,7 @@ impl ContainerReconciler {
         Self::remove_stale_containers(
             docker,
             request,
-            vec![format!("gumgum.worker={}", request.worker)],
+            stale_worker_container_labels(&request.worker),
             "remove stale deployment container",
         )
         .await
@@ -207,6 +207,13 @@ impl ContainerReconciler {
     }
 }
 
+fn stale_worker_container_labels(worker: &str) -> Vec<String> {
+    vec![
+        "gumgum.managed=deployment".to_owned(),
+        format!("gumgum.worker={worker}"),
+    ]
+}
+
 fn deployment_environment(worker: &str) -> Option<&str> {
     worker
         .strip_suffix("-preview")
@@ -235,6 +242,17 @@ fn binding_env_fingerprint(env: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_worker_cleanup_is_scoped_to_gumgum_deployments() {
+        assert_eq!(
+            stale_worker_container_labels("api-preview"),
+            vec![
+                "gumgum.managed=deployment".to_owned(),
+                "gumgum.worker=api-preview".to_owned()
+            ]
+        );
+    }
 
     #[test]
     fn deployment_network_name_follows_environment_suffix() {

@@ -88,6 +88,22 @@ set or when Playwright is unavailable. It logs in, resolves the configured
 dashboard through the Grafana API, opens the dashboard URL, and checks that the
 fixture panel renders.
 
+## Disposable-host mutating platform E2E
+
+```bash
+GUMGUM_E2E_HOST=<disposable-host> \
+GUMGUM_E2E_ROOT_DOMAIN=<domain> \
+GUMGUM_ALLOW_MUTATION=1 \
+ARTIFACT_DIR=/tmp/gumgum-platform-e2e \
+scripts/e2e-platform-disposable.sh
+```
+
+This tier deploys the visit-counter fixture, verifies Grafana artifacts through
+Grafana APIs, and runs rollback revision/preview safety checks. It skips without
+explicit host/domain/mutation env vars and refuses `starbase2` unless
+`GUMGUM_ALLOW_STARBASE2_MUTATION=1` is also set. Use `MODE=capabilities`,
+`MODE=deploy-grafana`, or `MODE=rollback-safety` for narrower checks.
+
 ## Visit-counter staged smoke
 
 ```bash
