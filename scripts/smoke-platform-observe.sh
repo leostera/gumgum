@@ -11,13 +11,14 @@ GRAFANA_PASSWORD=${GUMGUM_GRAFANA_PASSWORD:-gumgum-local-dev}
 DASHBOARD_QUERY=${GUMGUM_GRAFANA_DASHBOARD_QUERY:-API Overview}
 PROMETHEUS_EXPECT_JOBS=${GUMGUM_PROMETHEUS_EXPECT_JOBS:-gumgum-preview-api,gumgum-prod-api}
 PROMETHEUS_QUERY=${GUMGUM_PROMETHEUS_QUERY:-visit_counter_info}
+CLOUDFLARE_EXPECT_HOSTS=${GUMGUM_CLOUDFLARE_EXPECT_HOSTS:-grafana.${ROOT_DOMAIN}}
 ARTIFACT_DIR=${ARTIFACT_DIR:-}
 
 if [[ -z "$HOST" ]]; then
   cat <<'EOF'
 skip: set GUMGUM_SMOKE_HOST=<host> to run platform observation smoke checks
 optional env:
-  MODE=all|status|grafana|prometheus
+  MODE=all|status|grafana|prometheus|cloudflare|backends
   GUMGUM_ROOT_DOMAIN=leostera.dev
   GUMGUM_GRAFANA_URL=https://grafana.<root-domain>
   GUMGUM_GRAFANA_USER=gumgum
@@ -25,6 +26,7 @@ optional env:
   GUMGUM_GRAFANA_DASHBOARD_QUERY='API Overview'
   GUMGUM_PROMETHEUS_EXPECT_JOBS='gumgum-preview-api,gumgum-prod-api'
   GUMGUM_PROMETHEUS_QUERY='visit_counter_info'
+  GUMGUM_CLOUDFLARE_EXPECT_HOSTS='grafana.<root-domain>,visit-counter.<root-domain>'
   ARTIFACT_DIR=/tmp/gumgum-platform-smoke
 EOF
   exit 0
@@ -145,6 +147,126 @@ PY
   echo "ok: prometheus API smoke passed"
 }
 
+cloudflare_smoke() {
+  echo "== Cloudflare/tunnel smoke: host=$HOST hosts=$CLOUDFLARE_EXPECT_HOSTS =="
+  local cf_file
+  cf_file=$(mktemp)
+  ssh "$HOST" "GUMGUM_CLOUDFLARE_EXPECT_HOSTS='$CLOUDFLARE_EXPECT_HOSTS' python3 -" <<'PY' | python3 -m json.tool | tee "$cf_file"
+import json, os, pathlib, urllib.request, urllib.parse
+root = pathlib.Path.home() / '.gumgum'
+grant_path = root / 'cloudflare' / 'grant.json'
+domains_path = root / 'domains.json'
+if not grant_path.exists():
+    raise SystemExit('missing Cloudflare grant on remote host')
+if not domains_path.exists():
+    raise SystemExit('missing domains.json on remote host')
+grant = json.load(open(grant_path))
+headers = {'Authorization': 'Bearer ' + grant['access_token']}
+hosts = [host for host in os.environ['GUMGUM_CLOUDFLARE_EXPECT_HOSTS'].split(',') if host]
+zone_name = grant.get('zone_name') or max(hosts, key=len).split('.', 1)[1]
+zone_resp = json.load(urllib.request.urlopen(urllib.request.Request(
+    'https://api.cloudflare.com/client/v4/zones?name=' + urllib.parse.quote(zone_name),
+    headers=headers,
+), timeout=30))
+if not zone_resp.get('success') or not zone_resp.get('result'):
+    raise SystemExit('Cloudflare zone lookup failed')
+zone = zone_resp['result'][0]
+account_id = zone['account']['id']
+tunnels = json.load(urllib.request.urlopen(urllib.request.Request(
+    f'https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel?name=gumgum',
+    headers=headers,
+), timeout=30))['result']
+tunnel = next((t for t in tunnels if not t.get('deleted') and t.get('deleted_at') is None), None)
+if not tunnel:
+    raise SystemExit('gumgum Cloudflare tunnel missing')
+config = json.load(urllib.request.urlopen(urllib.request.Request(
+    f'https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{tunnel["id"]}/configurations',
+    headers=headers,
+), timeout=30)).get('result', {}).get('config', {})
+ingress_hosts = {entry.get('hostname') for entry in config.get('ingress', []) if entry.get('hostname')}
+records = {}
+for host in hosts:
+    rec_resp = json.load(urllib.request.urlopen(urllib.request.Request(
+        f'https://api.cloudflare.com/client/v4/zones/{zone["id"]}/dns_records?name=' + urllib.parse.quote(host),
+        headers=headers,
+    ), timeout=30))
+    matches = rec_resp.get('result', [])
+    if not matches:
+        raise SystemExit(f'missing Cloudflare DNS record for {host}')
+    if host not in ingress_hosts:
+        raise SystemExit(f'missing tunnel ingress for {host}')
+    records[host] = [{k: rec.get(k) for k in ('type', 'name', 'content', 'proxied', 'comment')} for rec in matches]
+print(json.dumps({'zone': zone_name, 'tunnel': tunnel['id'], 'tunnel_status': tunnel.get('status'), 'hosts': hosts, 'records': records}, indent=2))
+PY
+  if [[ -n "$ARTIFACT_DIR" ]]; then cp "$cf_file" "$ARTIFACT_DIR/cloudflare.json"; fi
+  for host in ${CLOUDFLARE_EXPECT_HOSTS//,/ }; do
+    local dns_file
+    dns_file=$(mktemp)
+    { dig +short "$host" A || true; dig +short "$host" CNAME || true; } | tee "$dns_file"
+    if [[ -n "$ARTIFACT_DIR" ]]; then cp "$dns_file" "$ARTIFACT_DIR/dns-$host.txt"; fi
+    if [[ ! -s "$dns_file" ]]; then
+      fail "public DNS did not resolve $host"
+    fi
+  done
+  echo "ok: Cloudflare/tunnel smoke passed"
+}
+
+backends_smoke() {
+  echo "== observability backend smoke: host=$HOST =="
+  local backends_file
+  backends_file=$(mktemp)
+  ssh "$HOST" 'python3 - <<"PY"
+import json, socket, subprocess, urllib.request
+
+def ip(name):
+    out = subprocess.check_output(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", name], text=True).strip()
+    if not out:
+        raise SystemExit(f"missing ip for {name}")
+    return out
+
+def http_get(name, port, path):
+    import time
+    addr = ip(name)
+    last = None
+    for _ in range(6):
+        try:
+            with urllib.request.urlopen(f"http://{addr}:{port}{path}", timeout=10) as resp:
+                return resp.status, resp.read(200).decode(errors="replace")
+        except Exception as error:
+            last = error
+            time.sleep(5)
+    raise last
+
+def tcp_open(name, port):
+    addr = ip(name)
+    with socket.create_connection((addr, port), timeout=5):
+        return True
+
+results = {}
+for name, port, path in [("gumgum-loki", 3100, "/ready"), ("gumgum-tempo", 3200, "/ready")]:
+    status, body = http_get(name, port, path)
+    if status >= 400:
+        raise SystemExit(f"{name}{path} returned {status}")
+    results[name] = {"status": status, "body": body[:120]}
+for port in (4317, 4318):
+    if not tcp_open("gumgum-otel", port):
+        raise SystemExit(f"gumgum-otel:{port} not reachable")
+results["gumgum-otel"] = {"ports": [4317, 4318]}
+inspect = subprocess.check_output(["docker", "inspect", "gumgum-vaultwarden"], text=True)
+value = json.loads(inspect)[0]
+env = value.get("Config", {}).get("Env", [])
+mounts = value.get("Mounts", [])
+if "SIGNUPS_ALLOWED=false" not in env:
+    raise SystemExit("Vaultwarden signups are not disabled")
+if not any(mount.get("Destination") == "/data" for mount in mounts):
+    raise SystemExit("Vaultwarden /data mount missing")
+results["gumgum-vaultwarden"] = {"signups_disabled": True, "data_mount": True}
+print(json.dumps(results, indent=2))
+PY' | python3 -m json.tool | tee "$backends_file"
+  if [[ -n "$ARTIFACT_DIR" ]]; then cp "$backends_file" "$ARTIFACT_DIR/backends.json"; fi
+  echo "ok: observability backend smoke passed"
+}
+
 grafana_smoke() {
   echo "== grafana public/API smoke: url=$GRAFANA_URL dashboard=$DASHBOARD_QUERY =="
   local login_file
@@ -204,11 +326,15 @@ case "$MODE" in
     status_smoke
     grafana_smoke
     prometheus_smoke
+    cloudflare_smoke
+    backends_smoke
     ;;
   status) status_smoke ;;
   grafana) grafana_smoke ;;
   prometheus) prometheus_smoke ;;
-  *) fail "unknown MODE=$MODE (expected all|status|grafana|prometheus)" ;;
+  cloudflare) cloudflare_smoke ;;
+  backends) backends_smoke ;;
+  *) fail "unknown MODE=$MODE (expected all|status|grafana|prometheus|cloudflare|backends)" ;;
 esac
 
 if [[ -n "$ARTIFACT_DIR" ]]; then
