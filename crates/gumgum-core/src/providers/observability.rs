@@ -70,7 +70,7 @@ fn platform_run_spec(provider: &ProviderSpec, root_domain: &str) -> ContainerRun
     let env = platform_env(provider, root_domain);
     let command = platform_command(provider);
     let binds = platform_binds(provider);
-    let mut labels = platform_labels(provider);
+    let mut labels = platform_labels(provider, root_domain);
     labels.insert(
         "gumgum.platform.fingerprint".to_owned(),
         platform_fingerprint_parts(&env, &command, &binds),
@@ -89,15 +89,24 @@ fn platform_run_spec(provider: &ProviderSpec, root_domain: &str) -> ContainerRun
     }
 }
 
-fn platform_labels(provider: &ProviderSpec) -> HashMap<String, String> {
-    HashMap::from([
+fn platform_labels(provider: &ProviderSpec, root_domain: &str) -> HashMap<String, String> {
+    let mut labels = HashMap::from([
         ("gumgum.managed".to_owned(), "platform".to_owned()),
         (
             "gumgum.platform.service".to_owned(),
             provider.container.trim_start_matches("gumgum-").to_owned(),
         ),
         ("gumgum.capability".to_owned(), "observability".to_owned()),
-    ])
+    ]);
+    if provider.container == "gumgum-grafana" {
+        labels.insert("caddy".to_owned(), format!("grafana.{root_domain}"));
+        labels.insert(
+            "caddy.reverse_proxy".to_owned(),
+            "{{upstreams 3000}}".to_owned(),
+        );
+        labels.insert("caddy.tls".to_owned(), "internal".to_owned());
+    }
+    labels
 }
 
 fn platform_env(provider: &ProviderSpec, root_domain: &str) -> Vec<(String, String)> {
@@ -153,7 +162,7 @@ fn platform_fingerprint_parts(
     parts.sort();
     let mut hasher = DefaultHasher::new();
     parts.hash(&mut hasher);
-    format!("v2:{:016x}", hasher.finish())
+    format!("v3:{:016x}", hasher.finish())
 }
 
 fn platform_command(provider: &ProviderSpec) -> Vec<String> {
@@ -586,7 +595,7 @@ mod tests {
 
     #[test]
     fn platform_labels_mark_observability_singletons() {
-        let labels = platform_labels(&spec());
+        let labels = platform_labels(&spec(), "leostera.dev");
         assert_eq!(
             labels.get("gumgum.managed").map(String::as_str),
             Some("platform")
@@ -618,5 +627,26 @@ mod tests {
                 .any(|bind| bind.ends_with(":/etc/prometheus/prometheus.yml:ro"))
         );
         assert!(spec.command.contains(&"--web.enable-lifecycle".to_owned()));
+    }
+
+    #[test]
+    fn grafana_platform_labels_publish_route() {
+        let grafana = platform_specs("leostera.dev")
+            .into_iter()
+            .find(|spec| spec.container == "gumgum-grafana")
+            .unwrap();
+        let labels = platform_labels(&grafana, "leostera.dev");
+        assert_eq!(
+            labels.get("caddy").map(String::as_str),
+            Some("grafana.leostera.dev")
+        );
+        assert_eq!(
+            labels.get("caddy.reverse_proxy").map(String::as_str),
+            Some("{{upstreams 3000}}")
+        );
+        assert_eq!(
+            labels.get("caddy.tls").map(String::as_str),
+            Some("internal")
+        );
     }
 }
