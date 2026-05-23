@@ -43,7 +43,10 @@ impl ContainerReconciler {
             })
         {
             actions.push("container already matches desired image, route, and bindings".to_owned());
-            return Ok((false, actions));
+            let before_cleanup = actions.len();
+            actions.extend(Self::remove_stale_worker_containers(&docker, request).await?);
+            actions.extend(Self::remove_stale_route_containers(&docker, request).await?);
+            return Ok((actions.len() > before_cleanup, actions));
         }
         actions.push(format!("pull {}", request.image));
         docker.pull_image(&request.image).await?;
