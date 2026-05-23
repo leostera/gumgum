@@ -1,5 +1,6 @@
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Path as AxumPath, Query, State},
     http::header::CONTENT_TYPE,
     response::IntoResponse,
@@ -21,8 +22,8 @@ use gumgum_core::{
     LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph, internal_db,
     not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
 };
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-use tokio::process::Command as TokioCommand;
+use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio::{process::Command as TokioCommand, sync::mpsc};
 
 #[derive(Clone)]
 pub(crate) struct DaemonState {
@@ -528,6 +529,7 @@ async fn daemon_create_object(
                 object_plan: Some(provider_plan.clone()),
                 provider_credentials,
                 graph_path: Some((*state.graph_path).clone()),
+                event_sender: None,
             },
         )
         .await
@@ -1271,6 +1273,7 @@ async fn daemon_rollback(
                     object_plan: None,
                     provider_credentials: None,
                     graph_path: Some(graph_path.clone()),
+                    event_sender: None,
                 },
             )
             .await;
@@ -1482,11 +1485,42 @@ async fn daemon_deploy_stream(
     State(state): State<DaemonState>,
     Json(request): Json<DeployRequest>,
 ) -> impl IntoResponse {
-    let Json(report) = daemon_deploy(State(state), Json(request)).await;
-    let body = typed_events_ndjson(&report.typed_events);
-    ([(CONTENT_TYPE, "application/x-ndjson")], body)
+    let (sender, receiver) = mpsc::unbounded_channel::<gumgum_core::GumgumEvent>();
+    tokio::spawn(async move {
+        let report = daemon_deploy_report(state, request, Some(sender.clone())).await;
+        for event in report
+            .typed_events
+            .into_iter()
+            .filter(|event| !deploy_stream_sends_live(event))
+        {
+            if sender.send(event).is_err() {
+                break;
+            }
+        }
+    });
+    let stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
+        let event = receiver.recv().await?;
+        let mut line = serde_json::to_vec(&event).ok()?;
+        line.push(b'\n');
+        Some((Ok::<_, Infallible>(line), receiver))
+    });
+    (
+        [(CONTENT_TYPE, "application/x-ndjson")],
+        Body::from_stream(stream),
+    )
 }
 
+fn deploy_stream_sends_live(event: &gumgum_core::GumgumEvent) -> bool {
+    matches!(
+        event,
+        gumgum_core::GumgumEvent::DeploymentStarted { .. }
+            | gumgum_core::GumgumEvent::ReconcileStepPlanned { .. }
+            | gumgum_core::GumgumEvent::ReconcileStepExecuted { .. }
+            | gumgum_core::GumgumEvent::ReconcileStepFailed { .. }
+    )
+}
+
+#[cfg(test)]
 fn typed_events_ndjson(events: &[gumgum_core::GumgumEvent]) -> String {
     let mut body = String::new();
     for event in events {
@@ -1502,6 +1536,14 @@ async fn daemon_deploy(
     State(state): State<DaemonState>,
     Json(request): Json<DeployRequest>,
 ) -> Json<DeployApplyReport> {
+    Json(daemon_deploy_report(state, request, None).await)
+}
+
+async fn daemon_deploy_report(
+    state: DaemonState,
+    request: DeployRequest,
+    event_sender: Option<mpsc::UnboundedSender<gumgum_core::GumgumEvent>>,
+) -> DeployApplyReport {
     let path = (*state.graph_path).clone();
     let reconcile_path = path.clone();
     let store = GraphStore::new(path.clone());
@@ -1523,7 +1565,7 @@ async fn daemon_deploy(
             match ConfigStore::from_home_env().and_then(|store| store.load_domains()) {
                 Ok(domains) if !managed_domain_matches(&domains, route) => {
                     let worker = request.worker.clone();
-                    return Json(DeployApplyReport {
+                    return DeployApplyReport {
                         ok: false,
                         worker: request.worker,
                         materialized: false,
@@ -1538,11 +1580,11 @@ async fn daemon_deploy(
                             error: "published route domain is not registered on this server".to_owned(),
                         }],
                         message: "deployment blocked before reconciliation; published route domain is not registered on this server".to_owned(),
-                    });
+                    };
                 }
                 Err(error) => {
                     let worker = request.worker.clone();
-                    return Json(DeployApplyReport {
+                    return DeployApplyReport {
                         ok: false,
                         worker: request.worker,
                         materialized: false,
@@ -1558,7 +1600,7 @@ async fn daemon_deploy(
                             error: "domain configuration could not be loaded".to_owned(),
                         }],
                         message: "deployment blocked before reconciliation; domain configuration could not be loaded".to_owned(),
-                    });
+                    };
                 }
                 _ => {}
             }
@@ -1569,10 +1611,18 @@ async fn daemon_deploy(
     if reconciliation_steps.is_empty() {
         reconciliation_steps.push(request_for_db.execution_step());
     }
+    if let Some(sender) = &event_sender {
+        let _ = sender.send(gumgum_core::GumgumEvent::DeploymentStarted {
+            worker: logical_deployment_worker(&request.worker).to_owned(),
+            environment: deployment_env(&request.worker),
+            image: request.image.clone(),
+        });
+    }
     let deploy_context = GraphExecutionContext {
         object_plan: None,
         provider_credentials: None,
         graph_path: Some(reconcile_path),
+        event_sender: event_sender.clone(),
     };
     let (mut actions, execution_typed_events) = match GraphActionExecutor::execute_steps_report(
         &reconciliation_steps,
@@ -1690,7 +1740,7 @@ async fn daemon_deploy(
         ok,
         &message,
     );
-    Json(DeployApplyReport {
+    DeployApplyReport {
         ok,
         worker: request.worker,
         materialized,
@@ -1705,7 +1755,7 @@ async fn daemon_deploy(
         } else {
             "desired deployment materialized and reconciled".to_owned()
         },
-    })
+    }
 }
 
 fn deploy_apply_typed_events(
@@ -1859,6 +1909,35 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"type\":\"reconcile_step_planned\""));
         assert!(lines[1].contains("\"type\":\"reconcile_step_executed\""));
+    }
+
+    #[test]
+    fn deploy_stream_filters_events_already_sent_live() {
+        assert!(deploy_stream_sends_live(
+            &gumgum_core::GumgumEvent::DeploymentStarted {
+                worker: "api".to_owned(),
+                environment: Some("preview".to_owned()),
+                image: "registry/api:rev1".to_owned(),
+            },
+        ));
+        assert!(deploy_stream_sends_live(
+            &gumgum_core::GumgumEvent::ReconcileStepExecuted {
+                id: None,
+                operation_id: None,
+                target: "container:api".to_owned(),
+                action: "ensure_container".to_owned(),
+                message: "recreated container".to_owned(),
+                at: None,
+            },
+        ));
+        assert!(!deploy_stream_sends_live(
+            &gumgum_core::GumgumEvent::DeploymentSucceeded {
+                worker: "api".to_owned(),
+                environment: Some("preview".to_owned()),
+                revision: Some("rev1".to_owned()),
+                route: Some("api.example.test".to_owned()),
+            },
+        ));
     }
 
     #[test]

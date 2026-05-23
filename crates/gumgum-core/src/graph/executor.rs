@@ -5,6 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "target")]
@@ -277,6 +278,7 @@ pub struct GraphExecutionContext {
     pub object_plan: Option<ObjectProviderPlan>,
     pub provider_credentials: Option<ProviderCredentials>,
     pub graph_path: Option<PathBuf>,
+    pub event_sender: Option<mpsc::UnboundedSender<crate::GumgumEvent>>,
     #[cfg(test)]
     pub fail_next_step: bool,
 }
@@ -333,6 +335,7 @@ impl GraphActionExecutor {
                 object_plan: Some(plan.clone()),
                 provider_credentials: credentials,
                 graph_path: None,
+                event_sender: None,
                 #[cfg(test)]
                 fail_next_step: false,
             },
@@ -378,29 +381,35 @@ impl GraphExecutionSession {
                 step,
                 step.description.clone(),
             )?;
-            report
-                .typed_events
-                .push(step.planned_event(self.operation_id.clone()));
+            let planned_event = step.planned_event(self.operation_id.clone());
+            self.emit_event(planned_event.clone());
+            report.typed_events.push(planned_event);
             match self.execute_step(step).await {
                 Ok(step_actions) => {
                     let message = step_actions.join("; ");
                     self.record(crate::ReconcileEventStatus::Executed, step, message.clone())?;
-                    report
-                        .typed_events
-                        .push(step.executed_event(self.operation_id.clone(), message));
+                    let executed_event = step.executed_event(self.operation_id.clone(), message);
+                    self.emit_event(executed_event.clone());
+                    report.typed_events.push(executed_event);
                     report.actions.extend(step_actions);
                 }
                 Err(error) => {
                     let message = error.to_report().message.clone();
                     self.record(crate::ReconcileEventStatus::Failed, step, message.clone())?;
-                    report
-                        .typed_events
-                        .push(step.failed_event(self.operation_id.clone(), message));
+                    let failed_event = step.failed_event(self.operation_id.clone(), message);
+                    self.emit_event(failed_event.clone());
+                    report.typed_events.push(failed_event);
                     return Err(error);
                 }
             }
         }
         Ok(report)
+    }
+
+    fn emit_event(&self, event: crate::GumgumEvent) {
+        if let Some(sender) = &self.context.event_sender {
+            let _ = sender.send(event);
+        }
     }
 
     async fn execute_step(&mut self, step: &GraphExecutionStep) -> crate::Result<Vec<String>> {
@@ -859,6 +868,39 @@ mod tests {
             crate::GumgumEvent::ReconcileStepExecuted { ref target, ref message, .. }
                 if target == "provider/manual.main"
                     && message == "configured manual provider manual.main"
+        ));
+    }
+
+    #[tokio::test]
+    async fn executor_sends_typed_events_while_it_executes_steps() {
+        let step = GraphActionPlanner::ensure_provider_step(
+            ProviderName::new("manual.main").unwrap(),
+            Capability::Manual,
+        );
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+
+        let report = GraphActionExecutor::execute_steps_report(
+            &[step],
+            GraphExecutionContext {
+                event_sender: Some(sender),
+                ..GraphExecutionContext::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let first = receiver.recv().await.unwrap();
+        let second = receiver.recv().await.unwrap();
+        assert_eq!(report.typed_events, vec![first.clone(), second.clone()]);
+        assert!(matches!(
+            first,
+            crate::GumgumEvent::ReconcileStepPlanned { ref target, .. }
+                if target == "provider/manual.main"
+        ));
+        assert!(matches!(
+            second,
+            crate::GumgumEvent::ReconcileStepExecuted { ref target, .. }
+                if target == "provider/manual.main"
         ));
     }
 

@@ -829,6 +829,7 @@ dependencies = [
  "axum",
  "base64",
  "clap",
+ "futures-util",
  "gumgum-api",
  "gumgum-core",
  "reqwest",

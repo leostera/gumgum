@@ -84,8 +84,8 @@ Implemented in Track 1 and early Track 2:
 - `GraphStore::preview_mutation(s)` returns a `GraphTransitionPreview` with `current_graph`, `desired_graph`, and `action_graph` fields.
 - `GumgumAction` currently aliases `GraphExecutionStep` as the action graph surface.
 - `GraphExecutionStep` can project planned/executed/failed `GumgumEvent`s.
-- `GraphActionExecutor::execute_steps_report` returns action strings plus typed execution events, giving future live streaming a core event source instead of forcing daemon/CLI reconstruction.
-- Daemon deploy/delete/object/binding reports include `typed_events`.
+- `GraphActionExecutor::execute_steps_report` returns action strings plus typed execution events, and `GraphExecutionContext::event_sender` can receive those typed events while each action executes.
+- Daemon deploy/delete/object/binding reports include `typed_events`; deploy stream requests wire the executor event sender into the NDJSON response body so action events flush while reconciliation runs.
 - `gumgum events --json` emits NDJSON typed events.
 - `gumgum --json deploy` emits NDJSON typed events for worker/workspace deploy and delete paths when typed events are available.
 - `crates/gumgum-cli/src/event_presenter.rs` centralizes human and NDJSON event rendering.
@@ -100,7 +100,7 @@ Content-Type: application/json
 Accept: application/x-ndjson
 ```
 
-The first implementation may return report-derived NDJSON after deploy completion; the contract is intentionally the same event stream shape that a later implementation can flush live while execution runs.
+The stream endpoint now returns an `application/x-ndjson` response body backed by the executor event sender. Deployment start and per-action reconciliation events can flush while execution runs; the completion lifecycle event is emitted from the final typed deploy report.
 
 The daemon emits newline-delimited `GumgumEvent` records in this order:
 
@@ -115,7 +115,7 @@ The same stream can later be offered as Server-Sent Events if browsers or dashbo
 
 The following work is explicitly deferred to later slices:
 
-- Live server-sent/event-streaming progress while long deploy operations run. Current deploy flow still returns typed events after daemon-side reconciliation returns, though the executor now has a report shape that can become a streaming source.
+- Extending live event streaming beyond deploy apply, including object/binding/provider reconciliation and a possible Server-Sent Events variant for browser dashboards.
 - BuildKit or Docker daemon image build/push support. Local `docker build` and `docker push` remain shell-based until a dedicated build/push-auth slice.
 - A fully distinct `GumgumAction` enum if `GraphExecutionStep` stops being sufficient as the `ActionGraph` step surface.
 - Wider property tests for arbitrary `Event -> GraphMutation -> DesiredGraph`, then `CurrentGraph + DesiredGraph = ActionGraph`, determinism.
