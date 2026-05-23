@@ -1,6 +1,8 @@
 use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
+    http::header::CONTENT_TYPE,
+    response::IntoResponse,
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -78,6 +80,7 @@ impl DaemonApp {
                 "/v0/deploy",
                 post(daemon_deploy).delete(daemon_delete_deploy),
             )
+            .route("/v0/deploy/stream", post(daemon_deploy_stream))
             .route("/v0/rollback", post(daemon_rollback))
             .route("/v0/revisions/{worker}", get(daemon_revisions))
             .route(
@@ -146,6 +149,7 @@ fn daemon_version_report() -> DaemonVersionReport {
             "gumgum:bindings:delete".to_owned(),
             "gumgum:objects:delete".to_owned(),
             "gumgum:deployments:delete".to_owned(),
+            "gumgum:deployments:stream".to_owned(),
             "gumgum:buckets:objects".to_owned(),
         ],
     }
@@ -1474,6 +1478,26 @@ async fn daemon_delete_deploy(
     })
 }
 
+async fn daemon_deploy_stream(
+    State(state): State<DaemonState>,
+    Json(request): Json<DeployRequest>,
+) -> impl IntoResponse {
+    let Json(report) = daemon_deploy(State(state), Json(request)).await;
+    let body = typed_events_ndjson(&report.typed_events);
+    ([(CONTENT_TYPE, "application/x-ndjson")], body)
+}
+
+fn typed_events_ndjson(events: &[gumgum_core::GumgumEvent]) -> String {
+    let mut body = String::new();
+    for event in events {
+        if let Ok(line) = serde_json::to_string(event) {
+            body.push_str(&line);
+            body.push('\n');
+        }
+    }
+    body
+}
+
 async fn daemon_deploy(
     State(state): State<DaemonState>,
     Json(request): Json<DeployRequest>,
@@ -1813,6 +1837,28 @@ mod tests {
         third.route = Some("api-v3.example.test".to_owned());
         store.materialize_deploy(&third).unwrap();
         store.deployment_revisions("api", 10).unwrap()
+    }
+
+    #[test]
+    fn typed_events_ndjson_streams_one_event_per_line() {
+        let step = gumgum_core::GraphActionPlanner::ensure_provider_step(
+            gumgum_core::ProviderName::new("manual.main").unwrap(),
+            gumgum_core::Capability::Manual,
+        );
+        let events = vec![
+            step.planned_event(Some("reconcile-test".to_owned())),
+            step.executed_event(
+                Some("reconcile-test".to_owned()),
+                "configured manual provider manual.main",
+            ),
+        ];
+
+        let body = typed_events_ndjson(&events);
+        let lines = body.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"type\":\"reconcile_step_planned\""));
+        assert!(lines[1].contains("\"type\":\"reconcile_step_executed\""));
     }
 
     #[test]

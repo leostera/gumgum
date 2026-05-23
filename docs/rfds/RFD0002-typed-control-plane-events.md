@@ -92,7 +92,7 @@ Implemented in Track 1 and early Track 2:
 
 ## Live event streaming sketch
 
-Live streaming should reuse the same event vocabulary rather than introduce a separate progress protocol. A future endpoint can expose a stream such as:
+Live streaming should reuse the same event vocabulary rather than introduce a separate progress protocol. The initial endpoint shape is:
 
 ```text
 POST /v0/deploy/stream
@@ -100,14 +100,16 @@ Content-Type: application/json
 Accept: application/x-ndjson
 ```
 
-The daemon would emit newline-delimited `GumgumEvent` records in this order:
+The first implementation may return report-derived NDJSON after deploy completion; the contract is intentionally the same event stream shape that a later implementation can flush live while execution runs.
+
+The daemon emits newline-delimited `GumgumEvent` records in this order:
 
 1. deployment lifecycle start event,
 2. `ActionGraph` planned events derived from `CurrentGraph + DesiredGraph`,
 3. per-action executed/failed events from executor progress,
 4. deployment lifecycle succeeded/failed event.
 
-The same stream can later be offered as Server-Sent Events if browsers or dashboards need reconnection metadata. CLI `--json` should prefer raw NDJSON. Human mode should continue presenting the same typed events through `event_presenter`.
+The same stream can later be offered as Server-Sent Events if browsers or dashboards need reconnection metadata. CLI `--json` should prefer raw NDJSON. Human mode should continue presenting the same typed events through `event_presenter`. The daemon advertises `gumgum:deployments:stream` when this endpoint is available.
 
 ## Deferred work
 
