@@ -5,17 +5,17 @@ use super::types::{ObjectProviderPlan, ProviderSpec};
 pub fn spec() -> ProviderSpec {
     ProviderSpec {
         capability: Capability::Secret,
-        provider: "onepassword.main".to_owned(),
-        container: "gumgum-provider-onepassword-main".to_owned(),
-        image: "1password/connect-api:latest".to_owned(),
-        port: 8080,
-        protocol: "onepassword-connect".to_owned(),
+        provider: "secrets.platform".to_owned(),
+        container: "gumgum-vaultwarden".to_owned(),
+        image: "vaultwarden/server:latest".to_owned(),
+        port: 80,
+        protocol: "bitwarden-compatible".to_owned(),
     }
 }
 
 pub(crate) fn actions(safe_name: &str, _dns: &str) -> Vec<String> {
     vec![
-        "configure a secret provider such as vaultwarden.main".to_owned(),
+        "configure the platform secret provider secrets.platform".to_owned(),
         format!("map secret {safe_name} from the configured secret provider"),
         "do not materialize secret values in the graph".to_owned(),
     ]

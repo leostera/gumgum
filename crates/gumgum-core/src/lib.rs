@@ -292,8 +292,8 @@ impl Capability {
             Self::Kv => "redis.main",
             Self::Blob => "minio.main",
             Self::Queue => "redpanda.main",
-            Self::Secret => "onepassword.main",
-            Self::Observability => "otel.platform",
+            Self::Secret => "secrets.platform",
+            Self::Observability => "observability.platform",
             Self::Manual => "manual.main",
         }
     }

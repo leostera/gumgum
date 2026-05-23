@@ -43,10 +43,10 @@ impl ProviderConfig {
         let provider = match (capability, kind.as_str()) {
             (Capability::Secret, "local") => "local.secrets".to_owned(),
             (Capability::Secret, "vaultwarden") | (Capability::Secret, "bitwarden") => {
-                "vaultwarden.main".to_owned()
+                "secrets.platform".to_owned()
             }
             (Capability::Secret, "onepassword") | (Capability::Secret, "onepassword-connect") => {
-                "onepassword.main".to_owned()
+                "secrets.platform".to_owned()
             }
             _ => capability.provider().to_owned(),
         };

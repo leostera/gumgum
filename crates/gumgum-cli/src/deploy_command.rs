@@ -386,13 +386,12 @@ async fn run_remote_deploy(
         );
         Ok(())
     } else {
-        verify_route(
-            server,
-            route.as_ref().expect("ingress deploy has a route"),
-            manifest.worker.ready_check_path(),
-            quiet,
-        )
-        .await
+        let route = route.as_ref().expect("ingress deploy has a route");
+        verify_route(server, route, manifest.worker.ready_check_path(), quiet).await?;
+        if let Some(metrics_path) = observability_metrics_path(manifest) {
+            verify_observability_metrics(server, route, metrics_path, quiet).await?;
+        }
+        Ok(())
     }
 }
 
@@ -487,6 +486,39 @@ fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> Option<String>
     report.routes.first().cloned()
 }
 
+fn observability_metrics_path(manifest: &WorkerManifest) -> Option<&str> {
+    manifest
+        .observability
+        .as_ref()
+        .filter(|observability| observability.enable)
+        .map(|observability| observability.prometheus_metrics.as_str())
+}
+
+async fn verify_observability_metrics(
+    server: &ServerRecord,
+    route: &str,
+    metrics_path: &str,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    progress(
+        quiet,
+        format!("verifying Prometheus metrics at https://{route}{metrics_path}"),
+    );
+    verify_route(server, route, metrics_path, quiet)
+        .await
+        .map_err(|error| {
+            let report = error.to_report();
+            GumgumError::structured(
+                Subsystem::Api,
+                ErrorCode::Io,
+                "observability metrics endpoint did not respond",
+            )
+            .likely_cause(report.likely_cause.unwrap_or(report.message))
+            .next_command(format!("curl -fsS https://{route}{metrics_path}"))
+            .build()
+        })
+}
+
 async fn verify_route(
     server: &ServerRecord,
     route: &str,
@@ -558,6 +590,7 @@ fn route_verification_attempts(
 #[cfg(test)]
 mod deploy_hardening_tests {
     use super::*;
+    use gumgum_core::{Worker, WorkerManifest};
 
     #[test]
     fn local_registry_image_uses_tunnel_loopback_for_push() {
@@ -576,6 +609,43 @@ mod deploy_hardening_tests {
         assert_eq!(
             env_prefixed_container_name("gumgum-dev-leostera-api", crate::DeployEnv::Prod),
             "gumgum-prod-dev-leostera-api"
+        );
+    }
+
+    #[test]
+    fn observability_metrics_path_only_when_enabled() {
+        let mut manifest = WorkerManifest {
+            project: None,
+            worker: Worker {
+                name: "api".to_owned(),
+                image: None,
+                build_context: None,
+                command: None,
+                port: None,
+                checks: Default::default(),
+                health: None,
+            },
+            zone: Vec::new(),
+            ingress: Vec::new(),
+            database: Vec::new(),
+            kv: Vec::new(),
+            bucket: Vec::new(),
+            queue: Default::default(),
+            secrets: Vec::new(),
+            observability: None,
+            dashboards: Vec::new(),
+            limits: None,
+        };
+        assert_eq!(observability_metrics_path(&manifest), None);
+
+        manifest.observability = Some(gumgum_core::Observability {
+            enable: true,
+            prometheus_metrics: "/custom/metrics".to_owned(),
+            grafana: None,
+        });
+        assert_eq!(
+            observability_metrics_path(&manifest),
+            Some("/custom/metrics")
         );
     }
 

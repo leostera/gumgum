@@ -129,6 +129,7 @@ impl ProviderReconciler {
             });
         }
         statuses.push(super::vaultwarden::status().await);
+        statuses.extend(super::observability::platform_statuses().await);
         statuses
     }
 }

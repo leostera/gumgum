@@ -244,7 +244,7 @@ mod tests {
         let old_graph = DesiredGraph::default();
         let new_graph = DesiredGraph::new([
             DesiredGraphNode::Provider {
-                name: ProviderName::new("vaultwarden.main").unwrap(),
+                name: ProviderName::new("secrets.platform").unwrap(),
                 capability: Capability::Secret,
             },
             DesiredGraphNode::Worker {
@@ -261,7 +261,7 @@ mod tests {
 
         assert_eq!(actions.len(), 3);
         assert!(actions.contains(&GraphReconcileAction::EnsureProvider {
-            name: ProviderName::new("vaultwarden.main").unwrap(),
+            name: ProviderName::new("secrets.platform").unwrap(),
             capability: Capability::Secret
         }));
         assert!(actions.contains(&GraphReconcileAction::EnsureWorker {

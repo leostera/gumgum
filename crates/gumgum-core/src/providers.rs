@@ -32,10 +32,10 @@ mod tests {
             Some("http://onepassword:8080".to_owned()),
             Some("GumGum".to_owned()),
         );
-        assert_eq!(onepassword.provider, "onepassword.main");
+        assert_eq!(onepassword.provider, "secrets.platform");
         assert_eq!(onepassword.vault.as_deref(), Some("GumGum"));
         let vaultwarden = ProviderConfig::new(Capability::Secret, "vaultwarden", None, None);
-        assert_eq!(vaultwarden.provider, "vaultwarden.main");
+        assert_eq!(vaultwarden.provider, "secrets.platform");
     }
 
     #[test]
@@ -54,15 +54,16 @@ mod tests {
         assert_eq!(blob.protocol, "s3");
 
         let secret = provider_spec(Capability::Secret);
-        assert_eq!(secret.provider, "onepassword.main");
-        assert_eq!(secret.protocol, "onepassword-connect");
+        assert_eq!(secret.provider, "secrets.platform");
+        assert_eq!(secret.container, "gumgum-vaultwarden");
+        assert_eq!(secret.protocol, "bitwarden-compatible");
     }
 
     #[tokio::test]
     async fn provider_statuses_cover_inspectable_backends() {
         let statuses = ProviderReconciler::statuses().await;
 
-        assert_eq!(statuses.len(), 7);
+        assert_eq!(statuses.len(), 12);
         assert!(
             statuses
                 .iter()
@@ -71,7 +72,7 @@ mod tests {
         assert!(
             statuses
                 .iter()
-                .any(|status| status.provider == "vaultwarden.main")
+                .any(|status| status.provider == "secrets.platform")
         );
         assert!(
             statuses
@@ -253,13 +254,13 @@ mod tests {
     #[test]
     fn vaultwarden_module_owns_secret_provider_details() {
         let spec = vaultwarden::spec();
-        assert_eq!(spec.provider, "vaultwarden.main");
-        assert_eq!(spec.container, "gumgum-provider-vaultwarden-main");
+        assert_eq!(spec.provider, "secrets.platform");
+        assert_eq!(spec.container, "gumgum-vaultwarden");
         assert_eq!(spec.protocol, "bitwarden-compatible");
         assert!(
             vaultwarden::actions("stripe-api-key", "stripe.secret.example.test")
                 .iter()
-                .any(|action| action.contains("vaultwarden.main"))
+                .any(|action| action.contains("secrets.platform"))
         );
         assert!(
             vaultwarden::connection_examples("stripe-api-key", "stripe.secret.example.test")
@@ -277,7 +278,7 @@ mod tests {
         );
         let actions = secret::provider_actions(&plan);
 
-        assert_eq!(plan.provider.provider, "onepassword.main");
+        assert_eq!(plan.provider.provider, "secrets.platform");
         assert!(
             actions
                 .iter()

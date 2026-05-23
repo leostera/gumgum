@@ -529,8 +529,8 @@ mod tests {
     #[test]
     fn provider_and_object_names_reject_empty_or_whitespace() {
         assert_eq!(
-            ProviderName::new(" vaultwarden.main ").unwrap().as_str(),
-            "vaultwarden.main"
+            ProviderName::new(" secrets.platform ").unwrap().as_str(),
+            "secrets.platform"
         );
         assert_eq!(
             ObjectName::new(" peekaboo-assets ").unwrap().as_str(),

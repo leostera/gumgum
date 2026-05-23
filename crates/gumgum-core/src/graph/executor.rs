@@ -317,7 +317,7 @@ impl GraphActionExecutor {
         capability: Capability,
     ) -> crate::Result<Vec<String>> {
         match (name, capability) {
-            ("vaultwarden.main", Capability::Secret) => {
+            ("secrets.platform", Capability::Secret) => {
                 crate::providers::vaultwarden::ensure().await
             }
             _ => Ok(vec![format!("configured {capability} provider {name}")]),
@@ -726,13 +726,13 @@ mod tests {
         let old_graph = DesiredGraph::default();
         let new_graph = DesiredGraph::new([
             crate::DesiredGraphNode::Provider {
-                name: ProviderName::new("vaultwarden.main").unwrap(),
+                name: ProviderName::new("secrets.platform").unwrap(),
                 capability: Capability::Secret,
             },
             crate::DesiredGraphNode::Object {
                 capability: Capability::Secret,
                 name: ObjectName::new("stripe-api-key").unwrap(),
-                provider: ProviderName::new("vaultwarden.main").unwrap(),
+                provider: ProviderName::new("secrets.platform").unwrap(),
             },
         ]);
 
@@ -743,27 +743,27 @@ mod tests {
         assert!(plan.steps.iter().any(|step| matches!(
             step.target,
             GraphExecutionTarget::Provider { ref name, capability: Capability::Secret }
-                if name.as_str() == "vaultwarden.main"
+                if name.as_str() == "secrets.platform"
         )));
     }
 
     #[test]
     fn planner_can_synthesize_idempotent_provider_step() {
         let step = GraphActionPlanner::ensure_provider_step(
-            ProviderName::new("vaultwarden.main").unwrap(),
+            ProviderName::new("secrets.platform").unwrap(),
             Capability::Secret,
         );
 
         assert_eq!(
             step.target,
             GraphExecutionTarget::Provider {
-                name: ProviderName::new("vaultwarden.main").unwrap(),
+                name: ProviderName::new("secrets.platform").unwrap(),
                 capability: Capability::Secret,
             }
         );
         assert_eq!(
             step.description,
-            "ensure provider vaultwarden.main exists and is running"
+            "ensure provider secrets.platform exists and is running"
         );
     }
 
@@ -946,7 +946,7 @@ mod tests {
     fn planner_routes_provider_actions_to_provider_executor_target() {
         let steps = GraphActionPlanner::plan(&[
             GraphReconcileAction::EnsureProvider {
-                name: ProviderName::new("vaultwarden.main").unwrap(),
+                name: ProviderName::new("secrets.platform").unwrap(),
                 capability: Capability::Secret,
             },
             GraphReconcileAction::EnsureObject {
@@ -959,7 +959,7 @@ mod tests {
         assert_eq!(
             steps[0].target,
             GraphExecutionTarget::Provider {
-                name: ProviderName::new("vaultwarden.main").unwrap(),
+                name: ProviderName::new("secrets.platform").unwrap(),
                 capability: Capability::Secret,
             }
         );
@@ -1002,7 +1002,7 @@ mod tests {
         let step = GraphActionPlanner::ensure_object_step(
             Capability::Secret,
             ObjectName::new("stripe-api-key").unwrap(),
-            ProviderName::new("onepassword.main").unwrap(),
+            ProviderName::new("secrets.platform").unwrap(),
         );
         let actions = GraphActionExecutor::execute_object_provider_steps(&[step], &plan, None)
             .await

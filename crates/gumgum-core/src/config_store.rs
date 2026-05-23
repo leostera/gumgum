@@ -556,13 +556,13 @@ mod tests {
 
         store.save_provider_config(&config).unwrap();
         assert_eq!(
-            store.load_provider_config("onepassword.main").unwrap(),
+            store.load_provider_config("secrets.platform").unwrap(),
             Some(config)
         );
         assert!(
             store
                 .root()
-                .join("providers/onepassword-main/config.json")
+                .join("providers/secrets-platform/config.json")
                 .exists()
         );
         let _ = fs::remove_dir_all(store.root());

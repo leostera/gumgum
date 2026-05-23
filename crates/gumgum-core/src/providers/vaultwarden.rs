@@ -6,8 +6,8 @@ use super::types::{ProviderConfig, ProviderSpec, ProviderStatus};
 pub fn spec() -> ProviderSpec {
     ProviderSpec {
         capability: Capability::Secret,
-        provider: "vaultwarden.main".to_owned(),
-        container: "gumgum-provider-vaultwarden-main".to_owned(),
+        provider: "secrets.platform".to_owned(),
+        container: "gumgum-vaultwarden".to_owned(),
         image: "vaultwarden/server:latest".to_owned(),
         port: 80,
         protocol: "bitwarden-compatible".to_owned(),
@@ -21,8 +21,8 @@ pub(crate) fn handles_config(config: &ProviderConfig) -> bool {
 
 pub fn actions(safe_name: &str, _dns: &str) -> Vec<String> {
     vec![
-        "ensure vaultwarden.main provider is running".to_owned(),
-        format!("map secret {safe_name} through vaultwarden.main"),
+        "ensure secrets.platform provider is running".to_owned(),
+        format!("map secret {safe_name} through secrets.platform"),
         "do not materialize secret values in the graph".to_owned(),
     ]
 }

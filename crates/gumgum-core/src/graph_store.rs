@@ -1626,7 +1626,7 @@ mod tests {
                 kind: ControlPlaneEventKind::Reconciliation,
                 operation_id: None,
                 status: ReconcileEventStatus::Planned,
-                target: "provider/vaultwarden.main".to_owned(),
+                target: "provider/secrets.platform".to_owned(),
                 action: "ensure provider".to_owned(),
                 message: "planned provider reconcile".to_owned(),
             })
@@ -1636,7 +1636,7 @@ mod tests {
                 kind: ControlPlaneEventKind::Reconciliation,
                 operation_id: None,
                 status: ReconcileEventStatus::Executed,
-                target: "provider/vaultwarden.main".to_owned(),
+                target: "provider/secrets.platform".to_owned(),
                 action: "ensure provider".to_owned(),
                 message: "provider reconciled".to_owned(),
             })
@@ -1876,7 +1876,7 @@ mod tests {
         let desired = store.load_desired_graph().unwrap();
         store
             .materialize_provider(&DesiredProvider {
-                name: "vaultwarden.main".to_owned(),
+                name: "secrets.platform".to_owned(),
                 capability: Capability::Secret,
             })
             .unwrap();
@@ -1904,15 +1904,15 @@ mod tests {
         }));
         let desired = store.load_desired_graph().unwrap();
         assert!(desired.nodes.contains(&DesiredGraphNode::Provider {
-            name: ProviderName::new("vaultwarden.main").unwrap(),
+            name: ProviderName::new("secrets.platform").unwrap(),
             capability: Capability::Secret,
         }));
         let (nodes, edges) = store.load_graph().unwrap();
-        assert!(has_node(&nodes, "provider/vaultwarden.main", "provider"));
+        assert!(has_node(&nodes, "provider/secrets.platform", "provider"));
         assert!(has_edge(
             &edges,
             "gumgumd",
-            "provider/vaultwarden.main",
+            "provider/secrets.platform",
             "owns"
         ));
         let _ = fs::remove_file(store.path);
@@ -2228,13 +2228,13 @@ mod tests {
             "observability",
             "TELEMETRY",
             "visit-counter",
-            "otel.platform",
+            "observability.platform",
             None,
         );
 
         assert!(env.contains(&(
             "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
-            "http://otel.platform:4317".to_owned()
+            "http://observability.platform:4317".to_owned()
         )));
         assert!(env.contains(&("OTEL_SERVICE_NAME".to_owned(), "visit-counter".to_owned())));
     }
