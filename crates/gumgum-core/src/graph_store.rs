@@ -1,7 +1,8 @@
 use crate::{
     BindingName, Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode,
-    GraphActionPlanner, GraphEdge, GraphExecutionStep, GraphNode, GumgumError, HealthPath,
-    ImageName, ObjectName, ObjectRef, Port, ProviderName, Result, RouteHost, Subsystem, WorkerId,
+    GraphActionPlanner, GraphEdge, GraphExecutionStep, GraphMutation, GraphNode, GumgumError,
+    HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName, Result, RouteHost, Subsystem,
+    WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,14 @@ impl DesiredDeploy {
             port: Port::new(self.port)?,
             health: HealthPath::new(&self.health)?,
         })
+    }
+
+    pub fn upsert_mutation(&self) -> Result<GraphMutation> {
+        Ok(GraphMutation::upsert_node(self.graph_node()?))
+    }
+
+    pub fn delete_mutation(&self) -> Result<GraphMutation> {
+        Ok(GraphMutation::remove_node(self.graph_node()?))
     }
 
     pub fn execution_step(&self) -> GraphExecutionStep {
@@ -225,6 +234,16 @@ impl GlobalObject {
         })
     }
 
+    pub fn upsert_mutation(&self) -> Result<GraphMutation> {
+        Ok(GraphMutation::upsert_node(self.graph_node()?))
+    }
+
+    pub fn delete_mutation(&self) -> Result<GraphMutation> {
+        Ok(GraphMutation::remove_object_and_bindings(ObjectRef::new(
+            format!("{}/{}", self.capability, self.name),
+        )?))
+    }
+
     pub async fn delete_reconciliation_steps(
         &self,
         graph_path: PathBuf,
@@ -271,6 +290,14 @@ impl WorkerBinding {
             name: BindingName::new(&self.binding)?,
             object: ObjectRef::new(format!("{}/{}", self.capability, self.object_name))?,
         })
+    }
+
+    pub fn upsert_mutation(&self) -> Result<GraphMutation> {
+        Ok(GraphMutation::upsert_node(self.graph_node()?))
+    }
+
+    pub fn delete_mutation(&self) -> Result<GraphMutation> {
+        Ok(GraphMutation::remove_node(self.graph_node()?))
     }
 
     pub async fn reconciliation_steps(&self, graph_path: PathBuf) -> Vec<GraphExecutionStep> {
@@ -1582,6 +1609,57 @@ mod tests {
         assert_eq!(events[1].id, first);
         assert_eq!(events[1].status, ReconcileEventStatus::Planned);
         let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
+    fn domain_values_project_to_graph_mutations() {
+        let deploy = DesiredDeploy {
+            worker: "api@preview".to_owned(),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api-preview".to_owned(),
+            route: Some("api.example.test".to_owned()),
+            port: 3000,
+            health: "/_/ready".to_owned(),
+        };
+        let object = GlobalObject {
+            capability: Capability::Kv,
+            name: "user-counters".to_owned(),
+            namespace: "preview".to_owned(),
+            root_domain: "example.test".to_owned(),
+        };
+        let binding = WorkerBinding {
+            capability: Capability::Kv,
+            object_name: "user-counters".to_owned(),
+            worker: "api".to_owned(),
+            binding: "USER_COUNTERS".to_owned(),
+            access: "read-write".to_owned(),
+        };
+        let graph = DesiredGraph::default();
+        let mutations = [
+            deploy.upsert_mutation().unwrap(),
+            object.upsert_mutation().unwrap(),
+            binding.upsert_mutation().unwrap(),
+        ];
+        let graph = GraphMutation::apply_all(&graph, &mutations);
+
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.id() == "deployment/api-preview")
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.id() == "kv/user-counters")
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.id() == "binding/api/USER_COUNTERS")
+        );
     }
 
     #[test]

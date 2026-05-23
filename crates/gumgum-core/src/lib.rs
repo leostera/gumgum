@@ -27,8 +27,8 @@ pub use events::GumgumEvent;
 pub use graph::{
     BindingName, ContainerName, DesiredGraph, DesiredGraphNode, GraphActionExecutor,
     GraphActionPlanner, GraphExecutionContext, GraphExecutionStep, GraphExecutionTarget,
-    GraphNodeId, GraphReconcileAction, GraphReconciler, GraphReconciliationPlan, HealthPath,
-    ImageName, ObjectName, ObjectRef, Port, ProviderName, RouteHost, WorkerId,
+    GraphMutation, GraphNodeId, GraphReconcileAction, GraphReconciler, GraphReconciliationPlan,
+    HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName, RouteHost, WorkerId,
 };
 pub use graph_store::{
     ControlPlaneEventKind, DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject,
