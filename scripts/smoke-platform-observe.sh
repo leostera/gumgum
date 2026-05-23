@@ -13,13 +13,15 @@ PROMETHEUS_EXPECT_JOBS=${GUMGUM_PROMETHEUS_EXPECT_JOBS:-gumgum-preview-api,gumgu
 PROMETHEUS_QUERY=${GUMGUM_PROMETHEUS_QUERY:-visit_counter_info}
 CLOUDFLARE_EXPECT_HOSTS=${GUMGUM_CLOUDFLARE_EXPECT_HOSTS:-grafana.${ROOT_DOMAIN}}
 ENV_EXPECT_CONTAINERS=${GUMGUM_ENV_EXPECT_CONTAINERS:-gumgum-preview-dev-leostera-visit-counter-api,gumgum-prod-dev-leostera-visit-counter-api,gumgum-preview-provider-redis,gumgum-prod-provider-redis}
+BUCKET_SMOKE_BUCKET=${GUMGUM_BUCKET_SMOKE_BUCKET:-visit-requests}
+BUCKET_SMOKE_PREFIX=${GUMGUM_BUCKET_SMOKE_PREFIX:-}
 ARTIFACT_DIR=${ARTIFACT_DIR:-}
 
 if [[ -z "$HOST" ]]; then
   cat <<'EOF'
 skip: set GUMGUM_SMOKE_HOST=<host> to run platform observation smoke checks
 optional env:
-  MODE=all|status|grafana|prometheus|cloudflare|backends|env|idempotency
+  MODE=all|status|grafana|prometheus|cloudflare|backends|env|bucket|idempotency
   GUMGUM_ROOT_DOMAIN=leostera.dev
   GUMGUM_GRAFANA_URL=https://grafana.<root-domain>
   GUMGUM_GRAFANA_USER=gumgum
@@ -29,6 +31,8 @@ optional env:
   GUMGUM_PROMETHEUS_QUERY='visit_counter_info'
   GUMGUM_CLOUDFLARE_EXPECT_HOSTS='grafana.<root-domain>,visit-counter.<root-domain>'
   GUMGUM_ENV_EXPECT_CONTAINERS='gumgum-preview-dev-leostera-visit-counter-api,gumgum-prod-dev-leostera-visit-counter-api,gumgum-preview-provider-redis,gumgum-prod-provider-redis'
+  GUMGUM_BUCKET_SMOKE_BUCKET=visit-requests
+  GUMGUM_BUCKET_SMOKE_PREFIX=''
   GUMGUM_ALLOW_MUTATION=1  # required only for MODE=idempotency
   ARTIFACT_DIR=/tmp/gumgum-platform-smoke
 EOF
@@ -302,6 +306,20 @@ PY
   echo "ok: environment isolation smoke passed"
 }
 
+bucket_smoke() {
+  echo "== bucket object smoke: host=$HOST bucket=$BUCKET_SMOKE_BUCKET prefix=$BUCKET_SMOKE_PREFIX =="
+  local bucket_file
+  bucket_file=$(mktemp)
+  local args=(bucket ls "$BUCKET_SMOKE_BUCKET" --host "$HOST")
+  if [[ -n "$BUCKET_SMOKE_PREFIX" ]]; then
+    args=(bucket ls "$BUCKET_SMOKE_BUCKET" "$BUCKET_SMOKE_PREFIX" --host "$HOST")
+  fi
+  "$GUMGUM" "${args[@]}" | tee "$bucket_file"
+  if [[ -n "$ARTIFACT_DIR" ]]; then cp "$bucket_file" "$ARTIFACT_DIR/bucket-ls.txt"; fi
+  require_contains "$bucket_file" "bucket objects listed"
+  echo "ok: bucket object smoke passed"
+}
+
 idempotency_smoke() {
   echo "== platform boot idempotency smoke: host=$HOST =="
   if [[ "${GUMGUM_ALLOW_MUTATION:-0}" != "1" ]]; then
@@ -391,6 +409,7 @@ case "$MODE" in
     cloudflare_smoke
     backends_smoke
     env_smoke
+    bucket_smoke
     ;;
   status) status_smoke ;;
   grafana) grafana_smoke ;;
@@ -398,8 +417,9 @@ case "$MODE" in
   cloudflare) cloudflare_smoke ;;
   backends) backends_smoke ;;
   env) env_smoke ;;
+  bucket) bucket_smoke ;;
   idempotency) idempotency_smoke ;;
-  *) fail "unknown MODE=$MODE (expected all|status|grafana|prometheus|cloudflare|backends|env|idempotency)" ;;
+  *) fail "unknown MODE=$MODE (expected all|status|grafana|prometheus|cloudflare|backends|env|bucket|idempotency)" ;;
 esac
 
 if [[ -n "$ARTIFACT_DIR" ]]; then

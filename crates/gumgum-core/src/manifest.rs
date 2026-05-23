@@ -739,6 +739,24 @@ path = "./grafana/request-latency.json"
     }
 
     #[test]
+    fn observability_metrics_path_defaults_when_missing() {
+        let raw = r#"
+[worker]
+name = "api"
+
+[observability]
+enable = true
+"#;
+        let report = validate_str(raw, "gumgum.toml").expect("manifest validates");
+        assert!(report.ok);
+        let manifest: WorkerManifest = toml::from_str(raw).expect("manifest parses");
+        assert_eq!(
+            manifest.observability.unwrap().prometheus_metrics,
+            "/_/metrics"
+        );
+    }
+
+    #[test]
     fn observability_metrics_path_must_be_absolute() {
         let raw = r#"
 [worker]
@@ -747,6 +765,24 @@ name = "api"
 [observability]
 enable = true
 prometheus_metrics = "metrics"
+"#;
+        let error = validate_str(raw, "gumgum.toml").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("observability.prometheus_metrics must be an absolute path")
+        );
+    }
+
+    #[test]
+    fn observability_metrics_path_must_not_be_empty() {
+        let raw = r#"
+[worker]
+name = "api"
+
+[observability]
+enable = true
+prometheus_metrics = ""
 "#;
         let error = validate_str(raw, "gumgum.toml").unwrap_err();
         assert!(

@@ -31,6 +31,7 @@ MODE=prometheus scripts/smoke-platform-observe.sh
 MODE=cloudflare scripts/smoke-platform-observe.sh
 MODE=backends   scripts/smoke-platform-observe.sh
 MODE=env        scripts/smoke-platform-observe.sh
+MODE=bucket     scripts/smoke-platform-observe.sh
 MODE=all        scripts/smoke-platform-observe.sh
 
 # Mutating/idempotent boot check; must be explicitly enabled.
@@ -57,6 +58,8 @@ Checks performed:
   Vaultwarden has signups disabled with a persistent `/data` mount.
 - Preview/prod fixture app and provider containers carry environment labels and
   are attached to environment-specific Docker networks.
+- Bucket object listing works through the daemon for the configured fixture
+  bucket, defaulting to `visit-requests`.
 - Optional idempotency mode POSTs provider boot twice and verifies stable
   platform container IDs do not change.
 

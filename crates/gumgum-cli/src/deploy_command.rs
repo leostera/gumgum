@@ -768,10 +768,7 @@ mod deploy_hardening_tests {
     }
 
     fn temp_test_path(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gumgum-test-{}-{name}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("gumgum-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_file(&path);
         path
     }
@@ -794,7 +791,10 @@ mod deploy_hardening_tests {
         std::fs::write(&path, "{ not json").unwrap();
         let error = load_grafana_artifact_content(path.to_str().unwrap()).unwrap_err();
         let _ = std::fs::remove_file(&path);
-        assert!(matches!(error.to_report().code, ErrorCode::ManifestParseFailed));
+        assert!(matches!(
+            error.to_report().code,
+            ErrorCode::ManifestParseFailed
+        ));
     }
 
     #[test]
@@ -804,6 +804,65 @@ mod deploy_hardening_tests {
         let value = load_grafana_artifact_content(path.to_str().unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(value["title"], "API Overview");
+    }
+
+    #[test]
+    fn dry_run_deploy_report_includes_grafana_artifacts() {
+        let manifest = WorkerManifest {
+            project: Some(gumgum_core::Project {
+                namespace: "kava-fund".to_owned(),
+            }),
+            worker: Worker {
+                name: "api".to_owned(),
+                image: None,
+                build_context: None,
+                command: None,
+                port: None,
+                checks: Default::default(),
+                health: None,
+            },
+            zone: Vec::new(),
+            ingress: Vec::new(),
+            database: Vec::new(),
+            kv: Vec::new(),
+            bucket: Vec::new(),
+            queue: Default::default(),
+            secrets: Vec::new(),
+            observability: Some(gumgum_core::Observability {
+                enable: true,
+                prometheus_metrics: "/_/metrics".to_owned(),
+                grafana: Some(gumgum_core::GrafanaObservability {
+                    sources: Some("../grafana/sources.json".to_owned()),
+                }),
+            }),
+            dashboards: vec![gumgum_core::Dashboard {
+                name: "API Overview".to_owned(),
+                path: "../grafana/dashboards/api-overview.json".to_owned(),
+            }],
+            limits: None,
+        };
+
+        let report = deploy_report(
+            std::path::PathBuf::from("examples/visit-counter/api/gumgum.toml"),
+            &manifest,
+            None,
+            None,
+            None,
+            true,
+            crate::DeployEnv::Preview,
+        );
+
+        assert!(report.dry_run);
+        assert_eq!(report.grafana.len(), 2);
+        assert!(
+            report
+                .plan
+                .iter()
+                .any(|line| line.contains("provision Grafana dashboard kava-fund / API Overview"))
+        );
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("API Overview"));
+        assert!(json.contains("datasource"));
     }
 
     #[test]

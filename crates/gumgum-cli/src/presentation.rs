@@ -129,6 +129,39 @@ mod tests {
     }
 
     #[test]
+    fn deploy_lines_include_grafana_artifacts() {
+        let report = DeployReport {
+            ok: true,
+            dry_run: true,
+            path: "api/gumgum.toml".to_owned(),
+            worker: "api".to_owned(),
+            host: Some("starbase2".to_owned()),
+            build_context: Some("api".to_owned()),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            port: 3000,
+            routes: Vec::new(),
+            health_url: None,
+            grafana: vec![crate::deploy_command::GrafanaArtifactPlan {
+                kind: "dashboard".to_owned(),
+                name: "kava-fund / API Overview".to_owned(),
+                path: "grafana/dashboards/api-overview.json".to_owned(),
+            }],
+            plan: Vec::new(),
+            plan_graph: PlanGraph::default(),
+            events: Vec::new(),
+            message: String::new(),
+        };
+
+        let lines = deploy_report_lines(&report);
+
+        assert!(lines.contains(&
+            "Grafana dashboard: kava-fund / API Overview (grafana/dashboards/api-overview.json)"
+                .to_owned()
+        ));
+    }
+
+    #[test]
     fn deploy_lines_explain_impact_and_rollback() {
         let mut plan_graph = PlanGraph::default();
         plan_graph.nodes.push(PlanNode::new(
