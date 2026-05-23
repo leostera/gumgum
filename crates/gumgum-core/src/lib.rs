@@ -37,11 +37,11 @@ pub use graph_store::{
     ReconcileEventStatus, WorkerBinding, new_operation_id, object_dns, projected_binding_env,
 };
 pub use manifest::{
-    Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,
-    Project, QueueBinding, QueueBindings, ScaffoldFile, ValidationReport, Worker, WorkerManifest,
-    Workspace, WorkspaceManifest, WorkspaceProject, Zone, init_plan, load_worker_path,
-    load_workspace_path, validate_path, validate_str, worker_manifest_template,
-    worker_scaffold_files, workspace_manifest_template,
+    Dashboard, GrafanaObservability, Ingress, InitManifestKind, InitPlan, Limits, ManifestKind,
+    ObjectBinding, Observability, Project, QueueBinding, QueueBindings, ScaffoldFile,
+    SecretBinding, ValidationReport, Worker, WorkerManifest, Workspace, WorkspaceManifest,
+    WorkspaceProject, Zone, init_plan, load_worker_path, load_workspace_path, validate_path,
+    validate_str, worker_manifest_template, worker_scaffold_files, workspace_manifest_template,
 };
 pub use platform::LocalPlatform;
 pub use process::{run_setup_command, run_setup_command_streaming};
@@ -608,7 +608,9 @@ mod deploy_planner_tests {
                 }],
                 consumer: Vec::new(),
             },
+            secrets: Vec::new(),
             observability: None,
+            dashboards: Vec::new(),
             limits: None,
         };
 

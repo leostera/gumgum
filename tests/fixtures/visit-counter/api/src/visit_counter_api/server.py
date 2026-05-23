@@ -220,6 +220,15 @@ def healthz() -> str:
     return "ok\n"
 
 
+@app.get("/_/metrics", response_class=PlainTextResponse)
+def metrics() -> str:
+    return (
+        "# HELP visit_counter_info Visit counter fixture metadata\n"
+        "# TYPE visit_counter_info gauge\n"
+        'visit_counter_info{service="api"} 1\n'
+    )
+
+
 @app.get("/", response_class=PlainTextResponse)
 def visit(
     request: Request, response: Response, visit_counter_id: str | None = Cookie(default=None)

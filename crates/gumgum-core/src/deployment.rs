@@ -337,7 +337,9 @@ mod tests {
             kv: Vec::new(),
             bucket: Vec::new(),
             queue: Default::default(),
+            secrets: Vec::new(),
             observability: None,
+            dashboards: Vec::new(),
             limits: None,
         }
     }

@@ -6,6 +6,7 @@ name = "api-http"
 protocol = "http"
 port = 3000
 public = true
+record = "@"
 
 [[kv]]
 kv_id = "user-counters"
@@ -22,4 +23,16 @@ queue_id = "visit-events"
 binding = "VISIT_EVENTS_QUEUE"
 
 [observability]
-enabled = true
+enable = true
+prometheus_metrics = "/_/metrics"
+
+[observability.grafana]
+sources = "../grafana/sources.json"
+
+[[secret]]
+name = "kava.fund/visit-counter/api-token"
+binding = "VISIT_COUNTER_API_TOKEN"
+
+[[dashboard]]
+name = "API Overview"
+path = "../grafana/dashboards/api-overview.json"

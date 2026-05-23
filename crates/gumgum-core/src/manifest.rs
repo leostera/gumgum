@@ -110,8 +110,12 @@ pub struct WorkerManifest {
     pub bucket: Vec<ObjectBinding>,
     #[serde(default)]
     pub queue: QueueBindings,
+    #[serde(default, rename = "secret")]
+    pub secrets: Vec<SecretBinding>,
     #[serde(default)]
     pub observability: Option<Observability>,
+    #[serde(default, rename = "dashboard")]
+    pub dashboards: Vec<Dashboard>,
     #[serde(default)]
     pub limits: Option<Limits>,
 }
@@ -247,10 +251,40 @@ impl ObjectBinding {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretBinding {
+    pub name: String,
+    pub binding: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Observability {
-    #[serde(default)]
-    pub enabled: bool,
+    #[serde(default, alias = "enabled")]
+    pub enable: bool,
+    #[serde(default = "default_prometheus_metrics")]
+    pub prometheus_metrics: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grafana: Option<GrafanaObservability>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrafanaObservability {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Dashboard {
+    pub name: String,
+    pub path: String,
+}
+
+fn default_prometheus_metrics() -> String {
+    "/_/metrics".to_owned()
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -501,6 +535,62 @@ fn validate_worker(manifest: &WorkerManifest) -> std::result::Result<(), Manifes
     validate_object_bindings(crate::Capability::Kv, &manifest.kv, "kv")?;
     validate_object_bindings(crate::Capability::Blob, &manifest.bucket, "bucket")?;
     validate_queue_bindings(&manifest.queue)?;
+    validate_secret_bindings(&manifest.secrets)?;
+    validate_observability(manifest.observability.as_ref())?;
+    validate_dashboards(&manifest.dashboards)?;
+    Ok(())
+}
+
+fn validate_secret_bindings(bindings: &[SecretBinding]) -> std::result::Result<(), ManifestError> {
+    for secret in bindings {
+        if secret.name.trim().is_empty() {
+            return Err(ManifestError::Validation(
+                "secret binding must declare name".to_owned(),
+            ));
+        }
+        if secret.binding.trim().is_empty() {
+            return Err(ManifestError::Validation(
+                "secret binding must declare binding".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_observability(
+    observability: Option<&Observability>,
+) -> std::result::Result<(), ManifestError> {
+    let Some(observability) = observability else {
+        return Ok(());
+    };
+    if observability.enable && !observability.prometheus_metrics.starts_with('/') {
+        return Err(ManifestError::Validation(
+            "observability.prometheus_metrics must be an absolute path".to_owned(),
+        ));
+    }
+    if let Some(grafana) = &observability.grafana {
+        if matches!(grafana.sources.as_deref(), Some(path) if path.trim().is_empty()) {
+            return Err(ManifestError::Validation(
+                "observability.grafana.sources must not be empty".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_dashboards(dashboards: &[Dashboard]) -> std::result::Result<(), ManifestError> {
+    for dashboard in dashboards {
+        if dashboard.name.trim().is_empty() {
+            return Err(ManifestError::Validation(
+                "dashboard must declare name".to_owned(),
+            ));
+        }
+        if dashboard.path.trim().is_empty() {
+            return Err(ManifestError::Validation(
+                "dashboard must declare path".to_owned(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -608,6 +698,62 @@ dns = "user-counters.kv.example.dev"
 "#;
         let error = validate_str(raw, "gumgum.toml").unwrap_err().to_string();
         assert!(error.contains("unknown field `dns`"));
+    }
+
+    #[test]
+    fn secret_observability_and_dashboards_parse_and_validate() {
+        let raw = r#"
+[project]
+namespace = "visit-counter"
+
+[worker]
+name = "api"
+
+[observability]
+enable = true
+prometheus_metrics = "/_/metrics"
+
+[observability.grafana]
+sources = "./grafana/sources.json"
+
+[[secret]]
+name = "kava.fund/path/to/secret"
+binding = "ENV_VAR_FOR_SECRET"
+
+[[dashboard]]
+name = "Request Latency"
+path = "./grafana/request-latency.json"
+"#;
+        let report = validate_str(raw, "gumgum.toml").expect("manifest validates");
+        assert!(report.ok);
+        let manifest: WorkerManifest = toml::from_str(raw).expect("manifest parses");
+        assert_eq!(manifest.secrets[0].binding, "ENV_VAR_FOR_SECRET");
+        let observability = manifest.observability.unwrap();
+        assert!(observability.enable);
+        assert_eq!(observability.prometheus_metrics, "/_/metrics");
+        assert_eq!(
+            observability.grafana.unwrap().sources.as_deref(),
+            Some("./grafana/sources.json")
+        );
+        assert_eq!(manifest.dashboards[0].name, "Request Latency");
+    }
+
+    #[test]
+    fn observability_metrics_path_must_be_absolute() {
+        let raw = r#"
+[worker]
+name = "api"
+
+[observability]
+enable = true
+prometheus_metrics = "metrics"
+"#;
+        let error = validate_str(raw, "gumgum.toml").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("observability.prometheus_metrics must be an absolute path")
+        );
     }
 
     #[test]

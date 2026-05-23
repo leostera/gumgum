@@ -1,0 +1,16 @@
+{
+  "title": "API Overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "title": "Visits Total",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "visit_counter_requests_total"
+        }
+      ]
+    }
+  ]
+}

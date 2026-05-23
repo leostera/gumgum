@@ -1,6 +1,6 @@
 use crate::{progress, server_client::ServerClient};
 use gumgum_api::{BindingReport, BindingRequest, ObjectReport, ObjectRequest, ServerRecord};
-use gumgum_core::{Capability, ObjectBinding, QueueBinding, WorkerManifest};
+use gumgum_core::{Capability, ObjectBinding, QueueBinding, SecretBinding, WorkerManifest};
 
 pub(crate) struct DeployExecutor<'a> {
     server: &'a ServerRecord,
@@ -162,7 +162,65 @@ fn manifest_binding_intents(
         env,
     );
     extend_queue_binding_intents(&mut intents, manifest, &namespace, server, env);
+    extend_secret_binding_intents(&mut intents, manifest, &namespace, server, env);
+    extend_observability_binding_intents(&mut intents, manifest, &namespace, server, env);
     intents
+}
+
+fn extend_secret_binding_intents(
+    intents: &mut Vec<ManifestBindingIntent>,
+    manifest: &WorkerManifest,
+    namespace: &str,
+    server: &ServerRecord,
+    env: crate::DeployEnv,
+) {
+    for secret in &manifest.secrets {
+        intents.push(secret_binding_intent(
+            secret, manifest, namespace, server, env,
+        ));
+    }
+}
+
+fn secret_binding_intent(
+    secret: &SecretBinding,
+    manifest: &WorkerManifest,
+    namespace: &str,
+    server: &ServerRecord,
+    env: crate::DeployEnv,
+) -> ManifestBindingIntent {
+    ManifestBindingIntent {
+        capability: Capability::Secret,
+        object_name: secret.name.clone(),
+        namespace: namespace.to_owned(),
+        root_domain: server.root_domain.clone(),
+        worker: env_scoped_worker_name(&manifest.worker.name, env),
+        env: Some(secret.binding.clone()),
+        access: "read".to_owned(),
+    }
+}
+
+fn extend_observability_binding_intents(
+    intents: &mut Vec<ManifestBindingIntent>,
+    manifest: &WorkerManifest,
+    namespace: &str,
+    server: &ServerRecord,
+    env: crate::DeployEnv,
+) {
+    if manifest
+        .observability
+        .as_ref()
+        .is_some_and(|observability| observability.enable)
+    {
+        intents.push(ManifestBindingIntent {
+            capability: Capability::Observability,
+            object_name: "observability-platform".to_owned(),
+            namespace: namespace.to_owned(),
+            root_domain: server.root_domain.clone(),
+            worker: env_scoped_worker_name(&manifest.worker.name, env),
+            env: Some("OTEL".to_owned()),
+            access: "write".to_owned(),
+        });
+    }
 }
 
 fn extend_queue_binding_intents(
@@ -308,7 +366,9 @@ mod tests {
                 }],
                 consumer: Vec::new(),
             },
+            secrets: Vec::new(),
             observability: None,
+            dashboards: Vec::new(),
             limits: None,
         };
 
@@ -395,7 +455,9 @@ mod tests {
             }],
             bucket: Vec::new(),
             queue: Default::default(),
+            secrets: Vec::new(),
             observability: None,
+            dashboards: Vec::new(),
             limits: None,
         };
 
@@ -409,6 +471,58 @@ mod tests {
         assert_eq!(intents[0].access, "read-write");
         assert!(intents[0].binding_request().is_none());
         assert_eq!(intents[0].object_request().name, "cache-prod");
+    }
+
+    #[test]
+    fn manifest_binding_intents_include_platform_secrets_and_observability() {
+        let manifest = WorkerManifest {
+            project: Some(Project {
+                namespace: "visit-counter".to_owned(),
+            }),
+            worker: Worker {
+                name: "api".to_owned(),
+                image: None,
+                build_context: None,
+                command: None,
+                port: Some(3000),
+                checks: Default::default(),
+                health: None,
+            },
+            zone: Vec::new(),
+            ingress: Vec::new(),
+            database: Vec::new(),
+            kv: Vec::new(),
+            bucket: Vec::new(),
+            queue: Default::default(),
+            secrets: vec![SecretBinding {
+                name: "kava.fund/stripe/api-key".to_owned(),
+                binding: "STRIPE_API_KEY".to_owned(),
+            }],
+            observability: Some(gumgum_core::Observability {
+                enable: true,
+                prometheus_metrics: "/_/metrics".to_owned(),
+                grafana: None,
+            }),
+            dashboards: Vec::new(),
+            limits: None,
+        };
+
+        let intents = manifest_binding_intents(&manifest, &server(), None, crate::DeployEnv::Prod);
+
+        assert!(intents.iter().any(|intent| {
+            intent.capability == Capability::Secret
+                && intent.object_name == "kava.fund/stripe/api-key"
+                && intent.worker == "api-prod"
+                && intent.env.as_deref() == Some("STRIPE_API_KEY")
+                && intent.access == "read"
+        }));
+        assert!(intents.iter().any(|intent| {
+            intent.capability == Capability::Observability
+                && intent.object_name == "observability-platform"
+                && intent.worker == "api-prod"
+                && intent.env.as_deref() == Some("OTEL")
+                && intent.access == "write"
+        }));
     }
 
     #[test]
@@ -435,7 +549,9 @@ mod tests {
             kv: Vec::new(),
             bucket: Vec::new(),
             queue: Default::default(),
+            secrets: Vec::new(),
             observability: None,
+            dashboards: Vec::new(),
             limits: None,
         };
 
