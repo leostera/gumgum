@@ -59,6 +59,80 @@ pub struct GraphExecutionStep {
     pub description: String,
 }
 
+pub type GumgumAction = GraphExecutionStep;
+
+impl GraphExecutionStep {
+    pub fn planned_event(&self, operation_id: Option<String>) -> crate::GumgumEvent {
+        self.reconcile_event(
+            crate::ReconcileEventStatus::Planned,
+            operation_id,
+            self.description.clone(),
+        )
+    }
+
+    pub fn executed_event(
+        &self,
+        operation_id: Option<String>,
+        message: impl Into<String>,
+    ) -> crate::GumgumEvent {
+        self.reconcile_event(
+            crate::ReconcileEventStatus::Executed,
+            operation_id,
+            message.into(),
+        )
+    }
+
+    pub fn failed_event(
+        &self,
+        operation_id: Option<String>,
+        message: impl Into<String>,
+    ) -> crate::GumgumEvent {
+        self.reconcile_event(
+            crate::ReconcileEventStatus::Failed,
+            operation_id,
+            message.into(),
+        )
+    }
+
+    fn reconcile_event(
+        &self,
+        status: crate::ReconcileEventStatus,
+        operation_id: Option<String>,
+        message: String,
+    ) -> crate::GumgumEvent {
+        let id = None;
+        let target = self.target.event_target();
+        let action = self.action.event_action();
+        let at = None;
+        match status {
+            crate::ReconcileEventStatus::Planned => crate::GumgumEvent::ReconcileStepPlanned {
+                id,
+                operation_id,
+                target,
+                action,
+                message,
+                at,
+            },
+            crate::ReconcileEventStatus::Executed => crate::GumgumEvent::ReconcileStepExecuted {
+                id,
+                operation_id,
+                target,
+                action,
+                message,
+                at,
+            },
+            crate::ReconcileEventStatus::Failed => crate::GumgumEvent::ReconcileStepFailed {
+                id,
+                operation_id,
+                target,
+                action,
+                message,
+                at,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GraphReconciliationPlan {
     pub actions: Vec<GraphReconcileAction>,
@@ -651,6 +725,28 @@ mod tests {
             step.description,
             "ensure provider vaultwarden.main exists and is running"
         );
+    }
+
+    #[test]
+    fn execution_steps_project_to_typed_events() {
+        let step = GraphActionPlanner::ensure_provider_step(
+            ProviderName::new("manual.main").unwrap(),
+            Capability::Manual,
+        );
+
+        let event = step.planned_event(Some("reconcile-123".to_owned()));
+
+        assert!(matches!(
+            event,
+            crate::GumgumEvent::ReconcileStepPlanned {
+                operation_id: Some(ref operation_id),
+                ref target,
+                ref action,
+                ..
+            } if operation_id == "reconcile-123"
+                && target == "provider/manual.main"
+                && action == "ensure_provider"
+        ));
     }
 
     #[tokio::test]
