@@ -59,37 +59,29 @@ impl DesiredDeploy {
     }
 
     pub async fn reconciliation_steps(&self, graph_path: PathBuf) -> Vec<GraphExecutionStep> {
-        let deploy = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let store = GraphStore::new(graph_path);
-            let old_graph = store.load_desired_graph()?;
-            let mut new_graph = old_graph.clone();
-            new_graph.nodes.insert(deploy.graph_node()?);
-            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-        })
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default()
+        plan_graph_mutation(graph_path, self.upsert_mutation()).await
     }
 
     pub async fn delete_reconciliation_steps(
         &self,
         graph_path: PathBuf,
     ) -> Vec<GraphExecutionStep> {
-        let deploy = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let store = GraphStore::new(graph_path);
-            let old_graph = store.load_desired_graph()?;
-            let mut new_graph = old_graph.clone();
-            new_graph.nodes.remove(&deploy.graph_node()?);
-            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-        })
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default()
+        plan_graph_mutation(graph_path, self.delete_mutation()).await
     }
+}
+
+async fn plan_graph_mutation(
+    graph_path: PathBuf,
+    mutation: Result<GraphMutation>,
+) -> Vec<GraphExecutionStep> {
+    tokio::task::spawn_blocking(move || {
+        let store = GraphStore::new(graph_path);
+        Ok::<_, GumgumError>(store.plan_mutation(&mutation?)?.steps)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default()
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -244,26 +236,15 @@ impl GlobalObject {
         )?))
     }
 
+    pub async fn reconciliation_steps(&self, graph_path: PathBuf) -> Vec<GraphExecutionStep> {
+        plan_graph_mutation(graph_path, self.upsert_mutation()).await
+    }
+
     pub async fn delete_reconciliation_steps(
         &self,
         graph_path: PathBuf,
     ) -> Vec<GraphExecutionStep> {
-        let object = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let store = GraphStore::new(graph_path);
-            let old_graph = store.load_desired_graph()?;
-            let mut new_graph = old_graph.clone();
-            let object_ref = ObjectRef::new(format!("{}/{}", object.capability, object.name))?;
-            new_graph.nodes.remove(&object.graph_node()?);
-            new_graph.nodes.retain(|node| {
-                !matches!(node, DesiredGraphNode::Binding { object, .. } if object == &object_ref)
-            });
-            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-        })
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default()
+        plan_graph_mutation(graph_path, self.delete_mutation()).await
     }
 }
 
@@ -301,36 +282,14 @@ impl WorkerBinding {
     }
 
     pub async fn reconciliation_steps(&self, graph_path: PathBuf) -> Vec<GraphExecutionStep> {
-        let binding = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let store = GraphStore::new(graph_path);
-            let old_graph = store.load_desired_graph()?;
-            let mut new_graph = old_graph.clone();
-            new_graph.nodes.insert(binding.graph_node()?);
-            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-        })
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default()
+        plan_graph_mutation(graph_path, self.upsert_mutation()).await
     }
 
     pub async fn delete_reconciliation_steps(
         &self,
         graph_path: PathBuf,
     ) -> Vec<GraphExecutionStep> {
-        let binding = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let store = GraphStore::new(graph_path);
-            let old_graph = store.load_desired_graph()?;
-            let mut new_graph = old_graph.clone();
-            new_graph.nodes.remove(&binding.graph_node()?);
-            Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-        })
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default()
+        plan_graph_mutation(graph_path, self.delete_mutation()).await
     }
 }
 

@@ -445,13 +445,9 @@ async fn daemon_create_object(
     };
     provider_plan.object_password = db_password.clone();
     let provider = provider_plan.provider.provider.clone();
-    let reconciliation_steps = object_reconciliation_plan(
-        (*state.graph_path).clone(),
-        capability,
-        request.name.clone(),
-        provider.clone(),
-    )
-    .await;
+    let reconciliation_steps = request_for_db
+        .reconciliation_steps((*state.graph_path).clone())
+        .await;
     let provider_credentials = match required_provider_credentials(capability) {
         Ok(credentials) => credentials,
         Err(()) => {
@@ -547,29 +543,6 @@ async fn daemon_create_object(
             "global object materialized and provider reconciled".to_owned()
         },
     })
-}
-
-async fn object_reconciliation_plan(
-    graph_path: PathBuf,
-    capability: gumgum_core::Capability,
-    name: String,
-    provider: String,
-) -> Vec<gumgum_core::GraphExecutionStep> {
-    tokio::task::spawn_blocking(move || {
-        let store = GraphStore::new(graph_path);
-        let old_graph = store.load_desired_graph()?;
-        let mut new_graph = old_graph.clone();
-        new_graph.nodes.insert(DesiredGraphNode::Object {
-            capability,
-            name: gumgum_core::ObjectName::new(&name)?,
-            provider: gumgum_core::ProviderName::new(&provider)?,
-        });
-        Ok::<_, GumgumError>(GraphActionPlanner::plan_transition(&old_graph, &new_graph).steps)
-    })
-    .await
-    .ok()
-    .and_then(Result::ok)
-    .unwrap_or_default()
 }
 
 fn required_provider_credentials(
