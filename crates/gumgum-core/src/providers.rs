@@ -63,7 +63,7 @@ mod tests {
     async fn provider_statuses_cover_inspectable_backends() {
         let statuses = ProviderReconciler::statuses().await;
 
-        assert_eq!(statuses.len(), 12);
+        assert_eq!(statuses.len(), 10);
         assert!(
             statuses
                 .iter()

@@ -114,8 +114,6 @@ impl ProviderReconciler {
             Capability::Kv,
             Capability::Blob,
             Capability::Queue,
-            Capability::Secret,
-            Capability::Observability,
         ] {
             let spec = super::specs::provider_spec(capability);
             let running = super::docker::running(&spec.container).await;
