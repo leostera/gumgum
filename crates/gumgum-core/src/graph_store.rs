@@ -1985,6 +1985,31 @@ mod tests {
             "visit-events".to_owned()
         )));
 
+        store
+            .materialize_object(&GlobalObject {
+                capability: Capability::Db,
+                name: "main-release".to_owned(),
+                namespace: "peekaboo".to_owned(),
+                root_domain: "leostera.dev".to_owned(),
+            })
+            .unwrap();
+        store
+            .materialize_binding(&WorkerBinding {
+                capability: Capability::Db,
+                object_name: "main-release".to_owned(),
+                worker: "api@release".to_owned(),
+                binding: "DATABASE_URL".to_owned(),
+                access: "read-write".to_owned(),
+            })
+            .unwrap();
+        let preview_env = store.binding_env("api@preview").unwrap();
+        let release_env = store.binding_env("api@release").unwrap();
+        assert!(preview_env.is_empty());
+        assert!(release_env.contains(&(
+            "DATABASE_URL".to_owned(),
+            "postgres://gumgum:gumgum-local-dev@gumgum-provider-postgres-main:5432/main-release".to_owned()
+        )));
+
         let first = DesiredDeploy {
             worker: "api".to_owned(),
             image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),

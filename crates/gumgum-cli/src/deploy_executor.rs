@@ -58,7 +58,7 @@ impl<'a> DeployExecutor<'a> {
         namespace: Option<&str>,
         env: crate::DeployEnv,
     ) -> gumgum_core::Result<()> {
-        for intent in manifest_binding_intents(manifest, self.server, namespace) {
+        for intent in manifest_binding_intents(manifest, self.server, namespace, env) {
             let label = format!("{}/{}", env.label(), intent.object_name);
             let report = self.client.create_object(&intent.object_request()).await?;
             progress(
@@ -122,6 +122,7 @@ fn manifest_binding_intents(
     manifest: &WorkerManifest,
     server: &ServerRecord,
     namespace: Option<&str>,
+    env: crate::DeployEnv,
 ) -> Vec<ManifestBindingIntent> {
     let namespace = namespace
         .map(ToOwned::to_owned)
@@ -140,6 +141,7 @@ fn manifest_binding_intents(
         manifest,
         &namespace,
         server,
+        env,
     );
     extend_binding_intents(
         &mut intents,
@@ -148,6 +150,7 @@ fn manifest_binding_intents(
         manifest,
         &namespace,
         server,
+        env,
     );
     extend_binding_intents(
         &mut intents,
@@ -156,8 +159,9 @@ fn manifest_binding_intents(
         manifest,
         &namespace,
         server,
+        env,
     );
-    extend_queue_binding_intents(&mut intents, manifest, &namespace, server);
+    extend_queue_binding_intents(&mut intents, manifest, &namespace, server, env);
     intents
 }
 
@@ -166,10 +170,11 @@ fn extend_queue_binding_intents(
     manifest: &WorkerManifest,
     namespace: &str,
     server: &ServerRecord,
+    env: crate::DeployEnv,
 ) {
     for (binding, access) in manifest.queue.iter_with_access() {
         intents.push(queue_binding_intent(
-            binding, access, manifest, namespace, server,
+            binding, access, manifest, namespace, server, env,
         ));
     }
 }
@@ -180,13 +185,14 @@ fn queue_binding_intent(
     manifest: &WorkerManifest,
     namespace: &str,
     server: &ServerRecord,
+    env: crate::DeployEnv,
 ) -> ManifestBindingIntent {
     ManifestBindingIntent {
         capability: Capability::Queue,
-        object_name: binding.queue_id.clone(),
+        object_name: env_scoped_object_name(&binding.queue_id, env),
         namespace: namespace.to_owned(),
         root_domain: server.root_domain.clone(),
-        worker: manifest.worker.name.clone(),
+        worker: env_scoped_worker_name(&manifest.worker.name, env),
         env: Some(binding.binding.clone()),
         access: access.to_owned(),
     }
@@ -199,14 +205,18 @@ fn extend_binding_intents(
     manifest: &WorkerManifest,
     namespace: &str,
     server: &ServerRecord,
+    env: crate::DeployEnv,
 ) {
     for binding in bindings {
         intents.push(ManifestBindingIntent {
             capability,
-            object_name: binding.object_id(capability).unwrap_or_default().to_owned(),
+            object_name: env_scoped_object_name(
+                binding.object_id(capability).unwrap_or_default(),
+                env,
+            ),
             namespace: namespace.to_owned(),
             root_domain: server.root_domain.clone(),
-            worker: manifest.worker.name.clone(),
+            worker: env_scoped_worker_name(&manifest.worker.name, env),
             env: binding.binding.clone(),
             access: binding
                 .access
@@ -214,6 +224,14 @@ fn extend_binding_intents(
                 .unwrap_or_else(|| "read-write".to_owned()),
         });
     }
+}
+
+fn env_scoped_object_name(name: &str, env: crate::DeployEnv) -> String {
+    format!("{}-{}", name, env.label())
+}
+
+fn env_scoped_worker_name(worker: &str, env: crate::DeployEnv) -> String {
+    format!("{}@{}", worker, env.label())
 }
 
 #[cfg(test)]
@@ -294,18 +312,39 @@ mod tests {
             limits: None,
         };
 
-        let intents = manifest_binding_intents(&manifest, &server(), None);
+        let intents =
+            manifest_binding_intents(&manifest, &server(), None, crate::DeployEnv::Preview);
         assert_eq!(intents.len(), 4);
         assert_eq!(
             intents
                 .iter()
-                .map(|intent| (intent.capability, intent.object_name.as_str()))
+                .map(|intent| (
+                    intent.capability,
+                    intent.object_name.as_str(),
+                    intent.worker.as_str()
+                ))
                 .collect::<Vec<_>>(),
             vec![
-                (Capability::Db, "visits"),
-                (Capability::Kv, "user-counters"),
-                (Capability::Blob, "visit-requests"),
-                (Capability::Queue, "visit-events"),
+                (
+                    Capability::Db,
+                    "visits-preview",
+                    "visit-counter-api@preview"
+                ),
+                (
+                    Capability::Kv,
+                    "user-counters-preview",
+                    "visit-counter-api@preview"
+                ),
+                (
+                    Capability::Blob,
+                    "visit-requests-preview",
+                    "visit-counter-api@preview"
+                ),
+                (
+                    Capability::Queue,
+                    "visit-events-preview",
+                    "visit-counter-api@preview"
+                ),
             ]
         );
         assert!(
@@ -360,10 +399,58 @@ mod tests {
             limits: None,
         };
 
-        let intents = manifest_binding_intents(&manifest, &server(), Some("workspace-ns"));
+        let intents = manifest_binding_intents(
+            &manifest,
+            &server(),
+            Some("workspace-ns"),
+            crate::DeployEnv::Release,
+        );
         assert_eq!(intents[0].namespace, "workspace-ns");
         assert_eq!(intents[0].access, "read-write");
         assert!(intents[0].binding_request().is_none());
-        assert_eq!(intents[0].object_request().name, "cache");
+        assert_eq!(intents[0].object_request().name, "cache-release");
+    }
+
+    #[test]
+    fn manifest_binding_intents_isolate_preview_and_release_resources() {
+        let manifest = WorkerManifest {
+            project: None,
+            worker: Worker {
+                name: "api".to_owned(),
+                image: Some("example/api:latest".to_owned()),
+                build_context: None,
+                command: None,
+                port: Some(3000),
+                checks: Default::default(),
+                health: None,
+            },
+            zone: Vec::new(),
+            ingress: Vec::new(),
+            database: vec![binding(
+                Capability::Db,
+                "visits",
+                "DATABASE_URL",
+                "read-write",
+            )],
+            kv: Vec::new(),
+            bucket: Vec::new(),
+            queue: Default::default(),
+            observability: None,
+            limits: None,
+        };
+
+        let preview =
+            manifest_binding_intents(&manifest, &server(), None, crate::DeployEnv::Preview);
+        let release =
+            manifest_binding_intents(&manifest, &server(), None, crate::DeployEnv::Release);
+
+        assert_eq!(preview[0].object_name, "visits-preview");
+        assert_eq!(preview[0].worker, "api@preview");
+        assert_eq!(release[0].object_name, "visits-release");
+        assert_eq!(release[0].worker, "api@release");
+        let preview_request = preview[0].binding_request().unwrap();
+        let release_request = release[0].binding_request().unwrap();
+        assert_ne!(preview_request.object_name, release_request.object_name);
+        assert_ne!(preview_request.worker, release_request.worker);
     }
 }
