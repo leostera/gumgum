@@ -25,9 +25,10 @@ scripts/smoke-platform-observe.sh
 Modes:
 
 ```bash
-MODE=status  scripts/smoke-platform-observe.sh
-MODE=grafana scripts/smoke-platform-observe.sh
-MODE=all     scripts/smoke-platform-observe.sh
+MODE=status     scripts/smoke-platform-observe.sh
+MODE=grafana    scripts/smoke-platform-observe.sh
+MODE=prometheus scripts/smoke-platform-observe.sh
+MODE=all        scripts/smoke-platform-observe.sh
 ```
 
 Checks performed:
@@ -41,6 +42,9 @@ Checks performed:
 - Grafana API exposes Prometheus, Loki, and Tempo datasources.
 - Grafana API can find and fetch the configured dashboard, defaulting to
   `API Overview`, and verifies the fixture metric panel.
+- Prometheus active target API reports expected app scrape jobs as `up`.
+- Prometheus query API returns samples for the configured fixture metric,
+  defaulting to `visit_counter_info`.
 
 This script is observation-only. It does not deploy, mutate desired state, or stop
 containers. It may be run against starbase2 explicitly:

@@ -9,18 +9,22 @@ GRAFANA_URL=${GUMGUM_GRAFANA_URL:-https://grafana.${ROOT_DOMAIN}}
 GRAFANA_USER=${GUMGUM_GRAFANA_USER:-gumgum}
 GRAFANA_PASSWORD=${GUMGUM_GRAFANA_PASSWORD:-gumgum-local-dev}
 DASHBOARD_QUERY=${GUMGUM_GRAFANA_DASHBOARD_QUERY:-API Overview}
+PROMETHEUS_EXPECT_JOBS=${GUMGUM_PROMETHEUS_EXPECT_JOBS:-gumgum-preview-api,gumgum-prod-api}
+PROMETHEUS_QUERY=${GUMGUM_PROMETHEUS_QUERY:-visit_counter_info}
 ARTIFACT_DIR=${ARTIFACT_DIR:-}
 
 if [[ -z "$HOST" ]]; then
   cat <<'EOF'
 skip: set GUMGUM_SMOKE_HOST=<host> to run platform observation smoke checks
 optional env:
-  MODE=all|status|grafana
+  MODE=all|status|grafana|prometheus
   GUMGUM_ROOT_DOMAIN=leostera.dev
   GUMGUM_GRAFANA_URL=https://grafana.<root-domain>
   GUMGUM_GRAFANA_USER=gumgum
   GUMGUM_GRAFANA_PASSWORD=...
   GUMGUM_GRAFANA_DASHBOARD_QUERY='API Overview'
+  GUMGUM_PROMETHEUS_EXPECT_JOBS='gumgum-preview-api,gumgum-prod-api'
+  GUMGUM_PROMETHEUS_QUERY='visit_counter_info'
   ARTIFACT_DIR=/tmp/gumgum-platform-smoke
 EOF
   exit 0
@@ -89,6 +93,58 @@ status_smoke() {
   echo "ok: platform status smoke passed"
 }
 
+prometheus_smoke() {
+  echo "== prometheus API smoke: host=$HOST jobs=$PROMETHEUS_EXPECT_JOBS query=$PROMETHEUS_QUERY =="
+  local targets_file
+  targets_file=$(mktemp)
+  ssh "$HOST" 'ip=$(docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" gumgum-prometheus); curl -fsS "http://$ip:9090/api/v1/targets?state=active"' \
+    | python3 -m json.tool | tee "$targets_file"
+  if [[ -n "$ARTIFACT_DIR" ]]; then cp "$targets_file" "$ARTIFACT_DIR/prometheus-targets.json"; fi
+
+  python3 - "$targets_file" "$PROMETHEUS_EXPECT_JOBS" <<'PY'
+import json, sys
+path, jobs = sys.argv[1], [job for job in sys.argv[2].split(',') if job]
+data = json.load(open(path))
+active = data.get('data', {}).get('activeTargets', [])
+by_job = {}
+for target in active:
+    job = target.get('labels', {}).get('job') or target.get('discoveredLabels', {}).get('job')
+    if job:
+        by_job.setdefault(job, []).append(target)
+missing = []
+unhealthy = []
+for job in jobs:
+    targets = by_job.get(job, [])
+    if not targets:
+        missing.append(job)
+    elif not any(target.get('health') == 'up' for target in targets):
+        unhealthy.append(job)
+if missing or unhealthy:
+    raise SystemExit(f"missing_jobs={missing} unhealthy_jobs={unhealthy}")
+PY
+
+  local query_file
+  query_file=$(mktemp)
+  local encoded_query
+  encoded_query=$(python3 - "$PROMETHEUS_QUERY" <<'PY'
+import sys, urllib.parse
+print(urllib.parse.quote(sys.argv[1]))
+PY
+)
+  ssh "$HOST" "ip=\$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' gumgum-prometheus); curl -fsS \"http://\$ip:9090/api/v1/query?query=$encoded_query\"" \
+    | python3 -m json.tool | tee "$query_file"
+  if [[ -n "$ARTIFACT_DIR" ]]; then cp "$query_file" "$ARTIFACT_DIR/prometheus-query.json"; fi
+  python3 - "$query_file" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1]))
+if data.get('status') != 'success':
+    raise SystemExit('query did not succeed')
+if not data.get('data', {}).get('result'):
+    raise SystemExit('query returned no samples')
+PY
+  echo "ok: prometheus API smoke passed"
+}
+
 grafana_smoke() {
   echo "== grafana public/API smoke: url=$GRAFANA_URL dashboard=$DASHBOARD_QUERY =="
   local login_file
@@ -147,10 +203,12 @@ case "$MODE" in
   all)
     status_smoke
     grafana_smoke
+    prometheus_smoke
     ;;
   status) status_smoke ;;
   grafana) grafana_smoke ;;
-  *) fail "unknown MODE=$MODE (expected all|status|grafana)" ;;
+  prometheus) prometheus_smoke ;;
+  *) fail "unknown MODE=$MODE (expected all|status|grafana|prometheus)" ;;
 esac
 
 if [[ -n "$ARTIFACT_DIR" ]]; then
