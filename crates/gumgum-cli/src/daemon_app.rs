@@ -1392,6 +1392,7 @@ async fn daemon_delete_deploy(
     .and_then(Result::ok)
     .flatten();
     let Some(deploy) = desired else {
+        let worker = request.worker.clone();
         return Json(DeployApplyReport {
             ok: request.preview,
             worker: request.worker,
@@ -1399,6 +1400,11 @@ async fn daemon_delete_deploy(
             changed: false,
             actions: vec!["deployment was not present".to_owned()],
             reconciliation_steps: Vec::new(),
+            typed_events: vec![gumgum_core::GumgumEvent::DeploymentFailed {
+                worker: logical_deployment_worker(&worker).to_owned(),
+                environment: deployment_env(&worker),
+                error: "deployment was not present".to_owned(),
+            }],
             message: "deployment was not present".to_owned(),
         });
     };
@@ -1432,13 +1438,30 @@ async fn daemon_delete_deploy(
             )]
         })
     };
+    let ok = request.preview || deleted;
+    let message = if request.preview {
+        "deployment delete preview".to_owned()
+    } else if deleted {
+        "deployment deleted from graph".to_owned()
+    } else {
+        "deployment was not present".to_owned()
+    };
+    let typed_events = deploy_apply_typed_events(
+        &request.worker,
+        None,
+        &reconciliation_steps,
+        &actions,
+        ok,
+        &message,
+    );
     Json(DeployApplyReport {
-        ok: request.preview || deleted,
+        ok,
         worker: request.worker,
         materialized: !deleted,
         changed: deleted,
         actions,
         reconciliation_steps,
+        typed_events,
         message: if request.preview {
             "deployment delete preview".to_owned()
         } else if deleted {
@@ -1473,6 +1496,7 @@ async fn daemon_deploy(
         if let Some(route) = &request.route {
             match ConfigStore::from_home_env().and_then(|store| store.load_domains()) {
                 Ok(domains) if !managed_domain_matches(&domains, route) => {
+                    let worker = request.worker.clone();
                     return Json(DeployApplyReport {
                         ok: false,
                         worker: request.worker,
@@ -1482,10 +1506,16 @@ async fn daemon_deploy(
                             "publish DNS failed: no managed domain matches published route {route} (add the domain to this server before deploying a published route)"
                         )],
                         reconciliation_steps: Vec::new(),
+                        typed_events: vec![gumgum_core::GumgumEvent::DeploymentFailed {
+                            worker: logical_deployment_worker(&worker).to_owned(),
+                            environment: deployment_env(&worker),
+                            error: "published route domain is not registered on this server".to_owned(),
+                        }],
                         message: "deployment blocked before reconciliation; published route domain is not registered on this server".to_owned(),
                     });
                 }
                 Err(error) => {
+                    let worker = request.worker.clone();
                     return Json(DeployApplyReport {
                         ok: false,
                         worker: request.worker,
@@ -1496,6 +1526,11 @@ async fn daemon_deploy(
                             error.to_report().message
                         )],
                         reconciliation_steps: Vec::new(),
+                        typed_events: vec![gumgum_core::GumgumEvent::DeploymentFailed {
+                            worker: logical_deployment_worker(&worker).to_owned(),
+                            environment: deployment_env(&worker),
+                            error: "domain configuration could not be loaded".to_owned(),
+                        }],
                         message: "deployment blocked before reconciliation; domain configuration could not be loaded".to_owned(),
                     });
                 }
@@ -1603,13 +1638,30 @@ async fn daemon_deploy(
                 || action.starts_with("project ")
                 || action.starts_with("ensure Cloudflare")
         });
+    let ok = materialized && reconcile_ok && publish_ok;
+    let message = if !reconcile_ok {
+        "deployment reconcile failed; desired deployment was not changed".to_owned()
+    } else if !publish_ok {
+        "deployment materialized but published route convergence failed".to_owned()
+    } else {
+        "desired deployment materialized and reconciled".to_owned()
+    };
+    let typed_events = deploy_apply_typed_events(
+        &request.worker,
+        Some((&request.image, request.route.as_deref())),
+        &reconciliation_steps,
+        &actions,
+        ok,
+        &message,
+    );
     Json(DeployApplyReport {
-        ok: materialized && reconcile_ok && publish_ok,
+        ok,
         worker: request.worker,
         materialized,
         changed,
         actions,
         reconciliation_steps,
+        typed_events,
         message: if !reconcile_ok {
             "deployment reconcile failed; desired deployment was not changed".to_owned()
         } else if !publish_ok {
@@ -1618,6 +1670,64 @@ async fn daemon_deploy(
             "desired deployment materialized and reconciled".to_owned()
         },
     })
+}
+
+fn deploy_apply_typed_events(
+    worker: &str,
+    image_and_route: Option<(&str, Option<&str>)>,
+    reconciliation_steps: &[gumgum_core::GraphExecutionStep],
+    actions: &[String],
+    ok: bool,
+    message: &str,
+) -> Vec<gumgum_core::GumgumEvent> {
+    let mut events = Vec::new();
+    if let Some((image, _)) = image_and_route {
+        events.push(gumgum_core::GumgumEvent::DeploymentStarted {
+            worker: logical_deployment_worker(worker).to_owned(),
+            environment: deployment_env(worker),
+            image: image.to_owned(),
+        });
+    }
+    for step in reconciliation_steps {
+        events.push(step.planned_event(None));
+    }
+    let action_message = if actions.is_empty() {
+        message.to_owned()
+    } else {
+        actions.join("; ")
+    };
+    for step in reconciliation_steps {
+        if ok {
+            events.push(step.executed_event(None, action_message.clone()));
+        } else {
+            events.push(step.failed_event(None, action_message.clone()));
+        }
+    }
+    if let Some((image, route)) = image_and_route {
+        if ok {
+            events.push(gumgum_core::GumgumEvent::DeploymentSucceeded {
+                worker: logical_deployment_worker(worker).to_owned(),
+                environment: deployment_env(worker),
+                revision: image.rsplit(':').next().map(ToOwned::to_owned),
+                route: route.map(ToOwned::to_owned),
+            });
+        } else {
+            events.push(gumgum_core::GumgumEvent::DeploymentFailed {
+                worker: logical_deployment_worker(worker).to_owned(),
+                environment: deployment_env(worker),
+                error: message.to_owned(),
+            });
+        }
+    }
+    events
+}
+
+fn logical_deployment_worker(worker: &str) -> &str {
+    worker.split_once('@').map_or(worker, |(name, _)| name)
+}
+
+fn deployment_env(worker: &str) -> Option<String> {
+    worker.split_once('@').map(|(_, env)| env.to_owned())
 }
 
 fn managed_domain_matches(domains: &[DomainRecord], hostname: &str) -> bool {
@@ -1693,6 +1803,42 @@ mod tests {
         third.route = Some("api-v3.example.test".to_owned());
         store.materialize_deploy(&third).unwrap();
         store.deployment_revisions("api", 10).unwrap()
+    }
+
+    #[test]
+    fn deploy_apply_reports_include_typed_reconcile_events() {
+        let step = gumgum_core::GraphActionPlanner::ensure_provider_step(
+            gumgum_core::ProviderName::new("manual.main").unwrap(),
+            gumgum_core::Capability::Manual,
+        );
+
+        let events = deploy_apply_typed_events(
+            "api@preview",
+            Some(("registry/api:rev1", Some("api.example.test"))),
+            &[step],
+            &["configured manual provider manual.main".to_owned()],
+            true,
+            "desired deployment materialized and reconciled",
+        );
+
+        assert!(matches!(
+            events.first(),
+            Some(gumgum_core::GumgumEvent::DeploymentStarted {
+                worker,
+                environment: Some(environment),
+                ..
+            }) if worker == "api" && environment == "preview"
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            gumgum_core::GumgumEvent::ReconcileStepPlanned { target, .. }
+                if target == "provider/manual.main"
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(gumgum_core::GumgumEvent::DeploymentSucceeded { route: Some(route), .. })
+                if route == "api.example.test"
+        ));
     }
 
     #[tokio::test]
