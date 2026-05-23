@@ -30,7 +30,11 @@ MODE=grafana    scripts/smoke-platform-observe.sh
 MODE=prometheus scripts/smoke-platform-observe.sh
 MODE=cloudflare scripts/smoke-platform-observe.sh
 MODE=backends   scripts/smoke-platform-observe.sh
+MODE=env        scripts/smoke-platform-observe.sh
 MODE=all        scripts/smoke-platform-observe.sh
+
+# Mutating/idempotent boot check; must be explicitly enabled.
+GUMGUM_ALLOW_MUTATION=1 MODE=idempotency scripts/smoke-platform-observe.sh
 ```
 
 Checks performed:
@@ -51,6 +55,10 @@ Checks performed:
   and public DNS resolves them.
 - Loki and Tempo readiness APIs respond, OTEL ports are reachable, and
   Vaultwarden has signups disabled with a persistent `/data` mount.
+- Preview/prod fixture app and provider containers carry environment labels and
+  are attached to environment-specific Docker networks.
+- Optional idempotency mode POSTs provider boot twice and verifies stable
+  platform container IDs do not change.
 
 This script is observation-only. It does not deploy, mutate desired state, or stop
 containers. It may be run against starbase2 explicitly:

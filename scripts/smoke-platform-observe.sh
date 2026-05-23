@@ -12,13 +12,14 @@ DASHBOARD_QUERY=${GUMGUM_GRAFANA_DASHBOARD_QUERY:-API Overview}
 PROMETHEUS_EXPECT_JOBS=${GUMGUM_PROMETHEUS_EXPECT_JOBS:-gumgum-preview-api,gumgum-prod-api}
 PROMETHEUS_QUERY=${GUMGUM_PROMETHEUS_QUERY:-visit_counter_info}
 CLOUDFLARE_EXPECT_HOSTS=${GUMGUM_CLOUDFLARE_EXPECT_HOSTS:-grafana.${ROOT_DOMAIN}}
+ENV_EXPECT_CONTAINERS=${GUMGUM_ENV_EXPECT_CONTAINERS:-gumgum-preview-dev-leostera-visit-counter-api,gumgum-prod-dev-leostera-visit-counter-api,gumgum-preview-provider-redis,gumgum-prod-provider-redis}
 ARTIFACT_DIR=${ARTIFACT_DIR:-}
 
 if [[ -z "$HOST" ]]; then
   cat <<'EOF'
 skip: set GUMGUM_SMOKE_HOST=<host> to run platform observation smoke checks
 optional env:
-  MODE=all|status|grafana|prometheus|cloudflare|backends
+  MODE=all|status|grafana|prometheus|cloudflare|backends|env|idempotency
   GUMGUM_ROOT_DOMAIN=leostera.dev
   GUMGUM_GRAFANA_URL=https://grafana.<root-domain>
   GUMGUM_GRAFANA_USER=gumgum
@@ -27,6 +28,8 @@ optional env:
   GUMGUM_PROMETHEUS_EXPECT_JOBS='gumgum-preview-api,gumgum-prod-api'
   GUMGUM_PROMETHEUS_QUERY='visit_counter_info'
   GUMGUM_CLOUDFLARE_EXPECT_HOSTS='grafana.<root-domain>,visit-counter.<root-domain>'
+  GUMGUM_ENV_EXPECT_CONTAINERS='gumgum-preview-dev-leostera-visit-counter-api,gumgum-prod-dev-leostera-visit-counter-api,gumgum-preview-provider-redis,gumgum-prod-provider-redis'
+  GUMGUM_ALLOW_MUTATION=1  # required only for MODE=idempotency
   ARTIFACT_DIR=/tmp/gumgum-platform-smoke
 EOF
   exit 0
@@ -267,6 +270,65 @@ PY' | python3 -m json.tool | tee "$backends_file"
   echo "ok: observability backend smoke passed"
 }
 
+env_smoke() {
+  echo "== environment isolation smoke: host=$HOST containers=$ENV_EXPECT_CONTAINERS =="
+  local env_file
+  env_file=$(mktemp)
+  ssh "$HOST" "GUMGUM_ENV_EXPECT_CONTAINERS='$ENV_EXPECT_CONTAINERS' python3 -" <<'PY' | python3 -m json.tool | tee "$env_file"
+import json, os, subprocess
+containers = [value for value in os.environ['GUMGUM_ENV_EXPECT_CONTAINERS'].split(',') if value]
+results = {}
+for name in containers:
+    raw = subprocess.check_output(['docker', 'inspect', name], text=True)
+    value = json.loads(raw)[0]
+    labels = value.get('Config', {}).get('Labels') or {}
+    networks = sorted((value.get('NetworkSettings', {}).get('Networks') or {}).keys())
+    status = value.get('State', {}).get('Status')
+    if status != 'running':
+        raise SystemExit(f'{name} is not running: {status}')
+    expected_env = None
+    if 'gumgum-preview-' in name or '-preview-' in name:
+        expected_env = 'preview'
+    elif 'gumgum-prod-' in name or '-prod-' in name:
+        expected_env = 'prod'
+    if expected_env and labels.get('gumgum.environment') != expected_env:
+        raise SystemExit(f'{name} missing gumgum.environment={expected_env}: {labels}')
+    if expected_env and '-provider-' not in name and not any(expected_env in network for network in networks):
+        raise SystemExit(f'{name} is not attached to an {expected_env} network: {networks}')
+    results[name] = {'environment': labels.get('gumgum.environment'), 'networks': networks, 'managed': labels.get('gumgum.managed')}
+print(json.dumps(results, indent=2))
+PY
+  if [[ -n "$ARTIFACT_DIR" ]]; then cp "$env_file" "$ARTIFACT_DIR/env-isolation.json"; fi
+  echo "ok: environment isolation smoke passed"
+}
+
+idempotency_smoke() {
+  echo "== platform boot idempotency smoke: host=$HOST =="
+  if [[ "${GUMGUM_ALLOW_MUTATION:-0}" != "1" ]]; then
+    echo "skip: MODE=idempotency requires GUMGUM_ALLOW_MUTATION=1 because it POSTs /v0/providers/defaults/boot"
+    return 0
+  fi
+  local before_file boot1_file boot2_file after_file
+  before_file=$(mktemp)
+  boot1_file=$(mktemp)
+  boot2_file=$(mktemp)
+  after_file=$(mktemp)
+  ssh "$HOST" 'docker inspect -f "{{.Name}} {{.Id}}" gumgum-vaultwarden gumgum-otel gumgum-prometheus gumgum-grafana gumgum-loki gumgum-tempo gumgum-caddy gumgum-cloudflared 2>/dev/null | sort' | tee "$before_file"
+  curl -fsS -X POST "http://$HOST:7777/v0/providers/defaults/boot" | python3 -m json.tool | tee "$boot1_file"
+  curl -fsS -X POST "http://$HOST:7777/v0/providers/defaults/boot" | python3 -m json.tool | tee "$boot2_file"
+  ssh "$HOST" 'docker inspect -f "{{.Name}} {{.Id}}" gumgum-vaultwarden gumgum-otel gumgum-prometheus gumgum-grafana gumgum-loki gumgum-tempo gumgum-caddy gumgum-cloudflared 2>/dev/null | sort' | tee "$after_file"
+  if [[ -n "$ARTIFACT_DIR" ]]; then
+    cp "$before_file" "$ARTIFACT_DIR/idempotency-before.txt"
+    cp "$boot1_file" "$ARTIFACT_DIR/idempotency-boot-1.json"
+    cp "$boot2_file" "$ARTIFACT_DIR/idempotency-boot-2.json"
+    cp "$after_file" "$ARTIFACT_DIR/idempotency-after.txt"
+  fi
+  if ! diff -u "$before_file" "$after_file"; then
+    fail "platform boot changed stable platform container ids"
+  fi
+  echo "ok: platform boot idempotency smoke passed"
+}
+
 grafana_smoke() {
   echo "== grafana public/API smoke: url=$GRAFANA_URL dashboard=$DASHBOARD_QUERY =="
   local login_file
@@ -328,13 +390,16 @@ case "$MODE" in
     prometheus_smoke
     cloudflare_smoke
     backends_smoke
+    env_smoke
     ;;
   status) status_smoke ;;
   grafana) grafana_smoke ;;
   prometheus) prometheus_smoke ;;
   cloudflare) cloudflare_smoke ;;
   backends) backends_smoke ;;
-  *) fail "unknown MODE=$MODE (expected all|status|grafana|prometheus|cloudflare|backends)" ;;
+  env) env_smoke ;;
+  idempotency) idempotency_smoke ;;
+  *) fail "unknown MODE=$MODE (expected all|status|grafana|prometheus|cloudflare|backends|env|idempotency)" ;;
 esac
 
 if [[ -n "$ARTIFACT_DIR" ]]; then
