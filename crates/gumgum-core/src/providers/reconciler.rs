@@ -73,10 +73,11 @@ impl ProviderReconciler {
 
     pub async fn boot_defaults(
         _credentials: &[(String, ProviderCredentials)],
+        root_domain: &str,
     ) -> crate::Result<Vec<String>> {
         let mut actions = Vec::new();
         actions.extend(super::vaultwarden::ensure().await?);
-        actions.extend(super::observability::ensure_platform_stack("localhost").await?);
+        actions.extend(super::observability::ensure_platform_stack(root_domain).await?);
         Ok(actions)
     }
 

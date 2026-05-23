@@ -751,26 +751,44 @@ async fn daemon_apply_grafana_artifact(
 }
 
 async fn daemon_boot_default_providers() -> Json<ProviderBootReport> {
-    let credentials = ConfigStore::from_home_env()
-        .and_then(|store| store.load_or_init_default_provider_credentials());
-    match credentials {
-        Ok(credentials) => match ProviderReconciler::boot_defaults(&credentials).await {
-            Ok(actions) => {
-                let providers = ProviderReconciler::statuses().await;
-                Json(ProviderBootReport {
-                    ok: true,
-                    message: "default providers booted".to_owned(),
-                    actions,
-                    providers,
-                })
-            }
-            Err(error) => Json(ProviderBootReport {
+    let store = match ConfigStore::from_home_env() {
+        Ok(store) => store,
+        Err(error) => {
+            return Json(ProviderBootReport {
                 ok: false,
                 actions: Vec::new(),
                 providers: Vec::new(),
                 message: error.to_report().message,
-            }),
-        },
+            });
+        }
+    };
+    let credentials = store.load_or_init_default_provider_credentials();
+    let root_domain = store
+        .load_default_server()
+        .ok()
+        .flatten()
+        .map(|server| server.root_domain)
+        .unwrap_or_else(|| "localhost".to_owned());
+    match credentials {
+        Ok(credentials) => {
+            match ProviderReconciler::boot_defaults(&credentials, &root_domain).await {
+                Ok(actions) => {
+                    let providers = ProviderReconciler::statuses().await;
+                    Json(ProviderBootReport {
+                        ok: true,
+                        message: "default providers booted".to_owned(),
+                        actions,
+                        providers,
+                    })
+                }
+                Err(error) => Json(ProviderBootReport {
+                    ok: false,
+                    actions: Vec::new(),
+                    providers: Vec::new(),
+                    message: error.to_report().message,
+                }),
+            }
+        }
         Err(error) => Json(ProviderBootReport {
             ok: false,
             actions: Vec::new(),
