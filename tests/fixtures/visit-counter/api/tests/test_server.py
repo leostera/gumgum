@@ -9,6 +9,7 @@ def configure_fallback_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "QUEUE_DIR", tmp_path / "queue")
     monkeypatch.setattr(server, "KV_PATH", tmp_path / "kv.json")
     monkeypatch.setattr(server, "KV_URL", None)
+    monkeypatch.setattr(server, "KV_KEY_PREFIX", "")
     monkeypatch.setattr(server, "S3_ENDPOINT", None)
     monkeypatch.setattr(server, "S3_ACCESS_KEY_ID", None)
     monkeypatch.setattr(server, "S3_SECRET_ACCESS_KEY", None)

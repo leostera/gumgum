@@ -32,6 +32,7 @@ BUCKET_DIR = Path(os.environ.get("VISIT_COUNTER_BUCKET_DIR", STATE_DIR / "bucket
 QUEUE_DIR = Path(os.environ.get("VISIT_COUNTER_QUEUE_DIR", STATE_DIR / "queue"))
 KV_PATH = Path(os.environ.get("VISIT_COUNTER_KV_PATH", STATE_DIR / "kv.json"))
 KV_URL = os.environ.get("USER_COUNTERS")
+KV_KEY_PREFIX = os.environ.get("USER_COUNTERS_KEY_PREFIX", "")
 BUCKET_NAME = os.environ.get("VISIT_REQUESTS_BUCKET_BUCKET") or os.environ.get(
     "VISIT_REQUESTS_BUCKET", "visit-requests"
 )
@@ -78,13 +79,17 @@ class JsonFileCounterStore:
 
 
 class RedisCounterStore:
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, key_prefix: str = "") -> None:
         if redis is None:
             raise RuntimeError("redis is required for USER_COUNTERS-backed counters")
         self.client = redis.Redis.from_url(url, decode_responses=True)
+        self.key_prefix = key_prefix
+
+    def key(self, value: str) -> str:
+        return f"{self.key_prefix}{value}"
 
     def increment(self, visitor_id: str) -> int:
-        return int(self.client.incr(f"visitor:{visitor_id}:count"))
+        return int(self.client.incr(self.key(f"visitor:{visitor_id}:count")))
 
 
 class FileRequestBucket:
@@ -157,7 +162,7 @@ def s3_config():
 
 def counter_store() -> CounterStore:
     if KV_URL and KV_URL.startswith("redis://"):
-        return RedisCounterStore(KV_URL)
+        return RedisCounterStore(KV_URL, KV_KEY_PREFIX)
     return JsonFileCounterStore(KV_PATH)
 
 

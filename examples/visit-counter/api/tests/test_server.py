@@ -9,6 +9,7 @@ def configure_fallback_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "QUEUE_DIR", tmp_path / "queue")
     monkeypatch.setattr(server, "KV_PATH", tmp_path / "kv.json")
     monkeypatch.setattr(server, "KV_URL", None)
+    monkeypatch.setattr(server, "KV_KEY_PREFIX", "")
     monkeypatch.setattr(server, "S3_ENDPOINT", None)
     monkeypatch.setattr(server, "S3_ACCESS_KEY_ID", None)
     monkeypatch.setattr(server, "S3_SECRET_ACCESS_KEY", None)
@@ -42,12 +43,12 @@ def test_visit_increments_counter_and_writes_bucket_and_queue(monkeypatch, tmp_p
     assert len(request_objects) == 3
     assert len(queue_messages) == 3
 
-    request = json.loads(request_objects[0].read_text())
-    message = json.loads(queue_messages[0].read_text())
-    assert request["visitor_id"] == "visitor-1"
-    assert request["user_agent"] == "pytest"
-    assert request["bucket_key"].startswith("requests/")
-    assert request["visitor_count"] in {"1", "2"}
-    assert request["total_count"] in {"1", "2", "3"}
-    assert message["bucket"] == "visit-requests"
-    assert message["key"].startswith("requests/")
+    requests = [json.loads(path.read_text()) for path in request_objects]
+    messages = [json.loads(path.read_text()) for path in queue_messages]
+    assert {request["visitor_id"] for request in requests} == {"visitor-1", "visitor-2"}
+    assert all(request["user_agent"] == "pytest" for request in requests)
+    assert all(request["bucket_key"].startswith("requests/") for request in requests)
+    assert {request["visitor_count"] for request in requests} == {"1", "2"}
+    assert {request["total_count"] for request in requests} == {"1", "2", "3"}
+    assert all(message["bucket"] == "visit-requests" for message in messages)
+    assert all(message["key"].startswith("requests/") for message in messages)

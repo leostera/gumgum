@@ -1465,13 +1465,19 @@ fn binding_values(
         Capability::Kv => {
             let credentials = provider_credentials("redis.main")
                 .unwrap_or_else(crate::ProviderCredentials::redis_local_dev);
-            vec![(
-                binding.to_owned(),
-                format!(
-                    "redis://:{}@gumgum-provider-redis-main:6379/0",
-                    credentials.password
+            vec![
+                (
+                    binding.to_owned(),
+                    format!(
+                        "redis://:{}@gumgum-provider-redis-main:6379/0",
+                        credentials.password
+                    ),
                 ),
-            )]
+                (
+                    format!("{binding}_KEY_PREFIX"),
+                    format!("{}:", crate::sanitize_name(name)),
+                ),
+            ]
         }
         Capability::Blob => {
             let credentials = provider_credentials("minio.main")
@@ -1929,6 +1935,7 @@ mod tests {
             "SESSIONS".to_owned(),
             "redis://:gumgum-local-dev@gumgum-provider-redis-main:6379/0".to_owned()
         )));
+        assert!(env.contains(&("SESSIONS_KEY_PREFIX".to_owned(), "sessions:".to_owned())));
         store
             .materialize_object(&GlobalObject {
                 capability: Capability::Blob,
