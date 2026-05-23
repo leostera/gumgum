@@ -121,8 +121,6 @@ impl LocalPlatform {
 
     async fn ensure_caddy(quiet: bool) -> crate::Result<()> {
         let docker = DockerEngine::local()?;
-        let expose_host_ports =
-            port_available(Ipv4Addr::UNSPECIFIED, 80) && port_available(Ipv4Addr::UNSPECIFIED, 443);
         if let Some(existing) = docker.inspect_container(CADDY_CONTAINER).await? {
             let has_http = existing
                 .ports
@@ -132,7 +130,7 @@ impl LocalPlatform {
                 .ports
                 .iter()
                 .any(|port| port.host_port == 443 && port.container_port == 443);
-            if !expose_host_ports || (has_http && has_https) {
+            if has_http && has_https {
                 docker.start_container(CADDY_CONTAINER).await?;
                 return Ok(());
             }
@@ -142,41 +140,42 @@ impl LocalPlatform {
             docker.remove_container_force(CADDY_CONTAINER).await?;
         }
 
-        if !expose_host_ports && !quiet {
-            eprintln!(
-                "warning: ports 80/443 are already in use; starting {CADDY_CONTAINER} for tunnel-only ingress without host port bindings"
-            );
-        }
-
         let socket_mount = "/var/run/docker.sock:/var/run/docker.sock:ro";
-        let ports = if expose_host_ports {
-            vec![
-                PortBindingSpec::tcp(None, 80, 80),
-                PortBindingSpec::tcp(None, 443, 443),
-            ]
-        } else {
-            Vec::new()
-        };
+        let ports = vec![
+            PortBindingSpec::tcp(None, 80, 80),
+            PortBindingSpec::tcp(None, 443, 443),
+        ];
         if !quiet {
             eprintln!("  create container {CADDY_CONTAINER}");
         }
         docker
             .pull_image("lucaslorentz/caddy-docker-proxy:2.9-alpine")
             .await?;
-        docker
-            .create_and_start_container(ContainerRunSpec {
-                name: CADDY_CONTAINER.to_owned(),
-                image: "lucaslorentz/caddy-docker-proxy:2.9-alpine".to_owned(),
-                network: GUMGUM_NETWORK.to_owned(),
-                restart_unless_stopped: true,
-                labels: HashMap::new(),
-                env: Vec::new(),
-                binds: vec![socket_mount.to_owned()],
-                ports,
-                command: Vec::new(),
-                entrypoint: Vec::new(),
-            })
-            .await
+        let spec = |ports| ContainerRunSpec {
+            name: CADDY_CONTAINER.to_owned(),
+            image: "lucaslorentz/caddy-docker-proxy:2.9-alpine".to_owned(),
+            network: GUMGUM_NETWORK.to_owned(),
+            restart_unless_stopped: true,
+            labels: HashMap::new(),
+            env: Vec::new(),
+            binds: vec![socket_mount.to_owned()],
+            ports,
+            command: Vec::new(),
+            entrypoint: Vec::new(),
+        };
+        match docker.create_and_start_container(spec(ports)).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = docker.remove_container_force(CADDY_CONTAINER).await;
+                if !quiet {
+                    eprintln!(
+                        "warning: could not publish ports 80/443 for {CADDY_CONTAINER}; starting for tunnel-only ingress: {}",
+                        error.to_report().message
+                    );
+                }
+                docker.create_and_start_container(spec(Vec::new())).await
+            }
+        }
     }
 }
 
