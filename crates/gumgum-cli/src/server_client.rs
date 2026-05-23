@@ -100,6 +100,18 @@ impl ServerClient {
             .await
     }
 
+    pub(crate) async fn configure_prometheus_scrape(
+        &self,
+        request: &gumgum_api::PrometheusScrapeRequest,
+    ) -> gumgum_core::Result<gumgum_api::PrometheusScrapeReport> {
+        self.post_json(
+            "/v0/observability/prometheus/scrapes",
+            request,
+            "Prometheus scrape",
+        )
+        .await
+    }
+
     pub(crate) async fn bind_object(
         &self,
         request: &BindingRequest,

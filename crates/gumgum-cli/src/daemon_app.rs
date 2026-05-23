@@ -106,6 +106,10 @@ impl DaemonApp {
             )
             .route("/v0/grafana/artifacts", post(daemon_apply_grafana_artifact))
             .route(
+                "/v0/observability/prometheus/scrapes",
+                post(daemon_configure_prometheus_scrape),
+            )
+            .route(
                 "/v0/providers/minio/credentials/init",
                 post(daemon_init_minio_credentials),
             )
@@ -696,6 +700,31 @@ async fn daemon_providers() -> Json<ProviderStatusReport> {
         message: format!("{} provider(s)", providers.len()),
         providers,
     })
+}
+
+async fn daemon_configure_prometheus_scrape(
+    Json(request): Json<gumgum_api::PrometheusScrapeRequest>,
+) -> Json<gumgum_api::PrometheusScrapeReport> {
+    match gumgum_core::providers::observability::configure_prometheus_scrape(
+        &request.worker,
+        &request.environment,
+        &request.container,
+        request.port,
+        &request.metrics_path,
+    )
+    .await
+    {
+        Ok(actions) => Json(gumgum_api::PrometheusScrapeReport {
+            ok: true,
+            message: "Prometheus scrape configured".to_owned(),
+            actions,
+        }),
+        Err(error) => Json(gumgum_api::PrometheusScrapeReport {
+            ok: false,
+            actions: Vec::new(),
+            message: error.to_report().message,
+        }),
+    }
 }
 
 async fn daemon_apply_grafana_artifact(

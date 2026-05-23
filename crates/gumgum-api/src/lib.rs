@@ -111,6 +111,22 @@ pub struct GrafanaArtifactReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PrometheusScrapeRequest {
+    pub worker: String,
+    pub environment: String,
+    pub container: String,
+    pub port: u16,
+    pub metrics_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PrometheusScrapeReport {
+    pub ok: bool,
+    pub actions: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LogsReport {
     pub ok: bool,
     pub container: String,

@@ -1,7 +1,9 @@
 use crate::{Capability, ContainerRunSpec, DockerEngine};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 
 use super::types::{ProviderSpec, ProviderStatus};
 
@@ -43,6 +45,10 @@ async fn ensure_platform_container(
 ) -> crate::Result<Vec<String>> {
     let docker = DockerEngine::local()?;
     docker.ensure_network(GUMGUM_NETWORK).await?;
+    if provider.container == "gumgum-prometheus" {
+        let targets = load_prometheus_scrapes()?;
+        ensure_prometheus_config(&targets)?;
+    }
     let desired = platform_run_spec(provider, root_domain);
     if let Some(existing) = docker.inspect_container(&provider.container).await? {
         let desired_fingerprint = platform_fingerprint(&desired);
@@ -117,7 +123,13 @@ fn platform_env(provider: &ProviderSpec, root_domain: &str) -> Vec<(String, Stri
 fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
     match provider.container.as_str() {
         "gumgum-grafana" => vec!["gumgum-grafana-data:/var/lib/grafana".to_owned()],
-        "gumgum-prometheus" => vec!["gumgum-prometheus-data:/prometheus".to_owned()],
+        "gumgum-prometheus" => vec![
+            "gumgum-prometheus-data:/prometheus".to_owned(),
+            format!(
+                "{}:/etc/prometheus/prometheus.yml:ro",
+                prometheus_config_path().display()
+            ),
+        ],
         "gumgum-loki" => vec!["gumgum-loki-data:/loki".to_owned()],
         _ => Vec::new(),
     }
@@ -146,6 +158,11 @@ fn platform_fingerprint_parts(
 
 fn platform_command(provider: &ProviderSpec) -> Vec<String> {
     match provider.container.as_str() {
+        "gumgum-prometheus" => vec![
+            "--config.file=/etc/prometheus/prometheus.yml".to_owned(),
+            "--storage.tsdb.path=/prometheus".to_owned(),
+            "--web.enable-lifecycle".to_owned(),
+        ],
         "gumgum-loki" => vec!["-config.file=/etc/loki/local-config.yaml".to_owned()],
         "gumgum-tempo" => vec![
             "-target=all".to_owned(),
@@ -156,6 +173,156 @@ fn platform_command(provider: &ProviderSpec) -> Vec<String> {
         ],
         _ => Vec::new(),
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct PrometheusScrapeTarget {
+    worker: String,
+    environment: String,
+    container: String,
+    port: u16,
+    metrics_path: String,
+}
+
+pub async fn configure_prometheus_scrape(
+    worker: &str,
+    environment: &str,
+    container: &str,
+    port: u16,
+    metrics_path: &str,
+) -> crate::Result<Vec<String>> {
+    let mut targets = load_prometheus_scrapes()?;
+    let target = PrometheusScrapeTarget {
+        worker: worker.to_owned(),
+        environment: environment.to_owned(),
+        container: container.to_owned(),
+        port,
+        metrics_path: metrics_path.to_owned(),
+    };
+    targets.retain(|existing| {
+        !(existing.worker == target.worker && existing.environment == target.environment)
+    });
+    targets.push(target.clone());
+    targets.sort_by(|left, right| {
+        (&left.environment, &left.worker).cmp(&(&right.environment, &right.worker))
+    });
+    save_prometheus_scrapes(&targets)?;
+    ensure_prometheus_config(&targets)?;
+    reload_prometheus().await?;
+    Ok(vec![format!(
+        "configured Prometheus scrape for {}@{} at {}:{}{}",
+        target.worker, target.environment, target.container, target.port, target.metrics_path
+    )])
+}
+
+fn prometheus_state_dir() -> PathBuf {
+    std::env::var_os("GUMGUM_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".gumgum")))
+        .unwrap_or_else(|| PathBuf::from(".gumgum"))
+        .join("observability")
+}
+
+fn prometheus_config_path() -> PathBuf {
+    prometheus_state_dir().join("prometheus.yml")
+}
+
+fn prometheus_scrapes_path() -> PathBuf {
+    prometheus_state_dir().join("prometheus-scrapes.json")
+}
+
+fn load_prometheus_scrapes() -> crate::Result<Vec<PrometheusScrapeTarget>> {
+    let path = prometheus_scrapes_path();
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let bytes = std::fs::read(&path)
+        .map_err(|error| io_error("could not read Prometheus scrape state", error))?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        crate::GumgumError::structured(
+            crate::Subsystem::Setup,
+            crate::ErrorCode::ManifestParseFailed,
+            "could not parse Prometheus scrape state",
+        )
+        .likely_cause(error.to_string())
+        .build()
+    })
+}
+
+fn save_prometheus_scrapes(targets: &[PrometheusScrapeTarget]) -> crate::Result<()> {
+    let path = prometheus_scrapes_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| io_error("could not create Prometheus state directory", error))?;
+    }
+    let bytes = serde_json::to_vec_pretty(targets).map_err(|error| {
+        crate::GumgumError::structured(
+            crate::Subsystem::Setup,
+            crate::ErrorCode::Io,
+            "could not serialize Prometheus scrape state",
+        )
+        .likely_cause(error.to_string())
+        .build()
+    })?;
+    std::fs::write(path, bytes)
+        .map_err(|error| io_error("could not write Prometheus scrape state", error))
+}
+
+fn ensure_prometheus_config(targets: &[PrometheusScrapeTarget]) -> crate::Result<()> {
+    let path = prometheus_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| io_error("could not create Prometheus config directory", error))?;
+    }
+    let mut config = "global:\n  scrape_interval: 15s\nscrape_configs:\n  - job_name: gumgum-platform\n    static_configs:\n      - targets: ['gumgum-prometheus:9090']\n".to_owned();
+    for target in targets {
+        config.push_str(&format!(
+            "  - job_name: gumgum-{}-{}\n    metrics_path: '{}'\n    static_configs:\n      - targets: ['{}:{}']\n        labels:\n          worker: '{}'\n          environment: '{}'\n",
+            yaml_scalar(&target.environment),
+            yaml_scalar(&target.worker),
+            yaml_scalar(&target.metrics_path),
+            yaml_scalar(&target.container),
+            target.port,
+            yaml_scalar(&target.worker),
+            yaml_scalar(&target.environment)
+        ));
+    }
+    std::fs::write(path, config)
+        .map_err(|error| io_error("could not write Prometheus config", error))
+}
+
+async fn reload_prometheus() -> crate::Result<()> {
+    let docker = DockerEngine::local()?;
+    if !docker.container_running("gumgum-prometheus").await? {
+        return Ok(());
+    }
+    let prometheus = docker
+        .inspect_container("gumgum-prometheus")
+        .await?
+        .and_then(|container| container.networks.get(GUMGUM_NETWORK).cloned());
+    let Some(ip) = prometheus.filter(|ip| !ip.is_empty()) else {
+        return Ok(());
+    };
+    let response = reqwest::Client::new()
+        .post(format!("http://{ip}:9090/-/reload"))
+        .send()
+        .await
+        .map_err(grafana_error)?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(grafana_response_error(response).await)
+    }
+}
+
+fn yaml_scalar(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\'', "''")
+}
+
+fn io_error(message: &str, error: std::io::Error) -> crate::GumgumError {
+    crate::GumgumError::structured(crate::Subsystem::Setup, crate::ErrorCode::Io, message)
+        .likely_cause(error.to_string())
+        .build()
 }
 
 pub async fn apply_grafana_artifact(
@@ -436,5 +603,20 @@ mod tests {
             grafana_path_escape("Project / Prometheus"),
             "Project%20%2F%20Prometheus"
         );
+    }
+
+    #[test]
+    fn prometheus_platform_spec_mounts_config_and_enables_reload() {
+        let prometheus = platform_specs("leostera.dev")
+            .into_iter()
+            .find(|spec| spec.container == "gumgum-prometheus")
+            .unwrap();
+        let spec = platform_run_spec(&prometheus, "leostera.dev");
+        assert!(
+            spec.binds
+                .iter()
+                .any(|bind| bind.ends_with(":/etc/prometheus/prometheus.yml:ro"))
+        );
+        assert!(spec.command.contains(&"--web.enable-lifecycle".to_owned()));
     }
 }

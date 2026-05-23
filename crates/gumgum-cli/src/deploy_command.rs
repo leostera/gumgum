@@ -2,7 +2,8 @@
 
 use crate::{DeployArgs, event_presenter::print_events_json_lines, progress, resolve_server};
 use gumgum_api::{
-    DeployApplyReport, DeployRequest, DeploymentDeleteRequest, GrafanaArtifactRequest, ServerRecord,
+    DeployApplyReport, DeployRequest, DeploymentDeleteRequest, GrafanaArtifactRequest,
+    PrometheusScrapeRequest, ServerRecord,
 };
 use gumgum_core::{
     ConfigStore, DeploymentDescriptor, ErrorCode, GumgumError, GumgumEvent, ManifestKind,
@@ -395,6 +396,9 @@ async fn run_remote_deploy(
         health: manifest.worker.ready_check_path().to_owned(),
     };
     apply_deploy_via_daemon(host, &request).await?;
+    if let Some(metrics_path) = observability_metrics_path(manifest) {
+        configure_prometheus_scrape(host, report, env, metrics_path, quiet).await?;
+    }
     apply_grafana_artifacts(host, &report.grafana, quiet).await?;
     if manifest.ingress.is_empty() {
         progress(
@@ -412,6 +416,36 @@ async fn run_remote_deploy(
             verify_observability_metrics(server, route, metrics_path, quiet).await?;
         }
         Ok(())
+    }
+}
+
+async fn configure_prometheus_scrape(
+    host: &str,
+    report: &DeployReport,
+    env: crate::DeployEnv,
+    metrics_path: &str,
+    quiet: bool,
+) -> gumgum_core::Result<()> {
+    progress(
+        quiet,
+        format!(
+            "configuring Prometheus scrape for {} at {}",
+            report.worker, metrics_path
+        ),
+    );
+    let response = ServerClient::new(host.to_owned())
+        .configure_prometheus_scrape(&PrometheusScrapeRequest {
+            worker: report.worker.clone(),
+            environment: env.label().to_owned(),
+            container: report.container.clone(),
+            port: report.port,
+            metrics_path: metrics_path.to_owned(),
+        })
+        .await?;
+    if response.ok {
+        Ok(())
+    } else {
+        Err(GumgumError::structured(Subsystem::Api, ErrorCode::Io, response.message).build())
     }
 }
 
