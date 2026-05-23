@@ -631,17 +631,24 @@ fn route_verification_attempts(
     let host = format!("http://{}{health}", server.host);
     [
         RouteVerificationAttempt {
-            args: vec!["-fsS".to_owned(), public.clone()],
-            display: format!("curl -fsS {public}"),
+            args: vec![
+                "-fsS".to_owned(),
+                "-o".to_owned(),
+                "/dev/null".to_owned(),
+                public.clone(),
+            ],
+            display: format!("curl -fsS -o /dev/null {public}"),
         },
         RouteVerificationAttempt {
             args: vec![
                 "-fsS".to_owned(),
+                "-o".to_owned(),
+                "/dev/null".to_owned(),
                 "-H".to_owned(),
                 format!("Host: {route}"),
                 host.clone(),
             ],
-            display: format!("curl -fsS -H 'Host: {route}' {host}"),
+            display: format!("curl -fsS -o /dev/null -H 'Host: {route}' {host}"),
         },
     ]
 }
@@ -774,11 +781,11 @@ mod deploy_hardening_tests {
 
         assert_eq!(
             attempts[0].display,
-            "curl -fsS https://visit-counter.leostera.dev/_/ready"
+            "curl -fsS -o /dev/null https://visit-counter.leostera.dev/_/ready"
         );
         assert_eq!(
             attempts[1].display,
-            "curl -fsS -H 'Host: visit-counter.leostera.dev' http://192.168.0.3/_/ready"
+            "curl -fsS -o /dev/null -H 'Host: visit-counter.leostera.dev' http://192.168.0.3/_/ready"
         );
     }
 
