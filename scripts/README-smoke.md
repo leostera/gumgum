@@ -70,6 +70,21 @@ ARTIFACT_DIR=/tmp/gumgum-platform-smoke-starbase2 \
 scripts/smoke-platform-observe.sh
 ```
 
+## Grafana browser smoke
+
+```bash
+GUMGUM_BROWSER_SMOKE=1 \
+GUMGUM_GRAFANA_URL=https://grafana.<root-domain> \
+GUMGUM_GRAFANA_USER=gumgum \
+GUMGUM_GRAFANA_PASSWORD=... \
+node scripts/grafana-browser-smoke.mjs
+```
+
+This optional Playwright-based check skips when `GUMGUM_BROWSER_SMOKE=1` is not
+set or when Playwright is unavailable. It logs in, resolves the configured
+dashboard through the Grafana API, opens the dashboard URL, and checks that the
+fixture panel renders.
+
 ## Visit-counter staged smoke
 
 ```bash

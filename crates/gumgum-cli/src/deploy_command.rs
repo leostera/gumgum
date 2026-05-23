@@ -463,24 +463,7 @@ async fn apply_grafana_artifacts(
             quiet,
             format!("applying Grafana {} {}", artifact.kind, artifact.name),
         );
-        let bytes = std::fs::read(&artifact.path).map_err(|error| {
-            GumgumError::structured(
-                Subsystem::Cli,
-                ErrorCode::Io,
-                format!("could not read Grafana artifact {}", artifact.path),
-            )
-            .likely_cause(error.to_string())
-            .build()
-        })?;
-        let content: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-            GumgumError::structured(
-                Subsystem::Cli,
-                ErrorCode::ManifestParseFailed,
-                format!("could not parse Grafana artifact {}", artifact.path),
-            )
-            .likely_cause(error.to_string())
-            .build()
-        })?;
+        let content = load_grafana_artifact_content(&artifact.path)?;
         let report = client
             .apply_grafana_artifact(&GrafanaArtifactRequest {
                 kind: artifact.kind.clone(),
@@ -495,6 +478,27 @@ async fn apply_grafana_artifacts(
         }
     }
     Ok(())
+}
+
+fn load_grafana_artifact_content(path: &str) -> gumgum_core::Result<serde_json::Value> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        GumgumError::structured(
+            Subsystem::Cli,
+            ErrorCode::Io,
+            format!("could not read Grafana artifact {path}"),
+        )
+        .likely_cause(error.to_string())
+        .build()
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        GumgumError::structured(
+            Subsystem::Cli,
+            ErrorCode::ManifestParseFailed,
+            format!("could not parse Grafana artifact {path}"),
+        )
+        .likely_cause(error.to_string())
+        .build()
+    })
 }
 
 async fn apply_deploy_via_daemon(
@@ -761,6 +765,45 @@ mod deploy_hardening_tests {
             env_prefixed_container_name("gumgum-dev-leostera-api", crate::DeployEnv::Prod),
             "gumgum-prod-dev-leostera-api"
         );
+    }
+
+    fn temp_test_path(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "gumgum-test-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    #[test]
+    fn grafana_artifact_loader_reports_missing_file() {
+        let path = temp_test_path("missing-grafana.json");
+        let error = load_grafana_artifact_content(path.to_str().unwrap()).unwrap_err();
+        assert!(
+            error
+                .to_report()
+                .message
+                .contains("could not read Grafana artifact")
+        );
+    }
+
+    #[test]
+    fn grafana_artifact_loader_reports_invalid_json() {
+        let path = temp_test_path("invalid-grafana.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        let error = load_grafana_artifact_content(path.to_str().unwrap()).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(error.to_report().code, ErrorCode::ManifestParseFailed));
+    }
+
+    #[test]
+    fn grafana_artifact_loader_accepts_valid_json() {
+        let path = temp_test_path("valid-grafana.json");
+        std::fs::write(&path, r#"{"title":"API Overview"}"#).unwrap();
+        let value = load_grafana_artifact_content(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(value["title"], "API Overview");
     }
 
     #[test]
