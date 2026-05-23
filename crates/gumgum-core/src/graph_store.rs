@@ -1,8 +1,8 @@
 use crate::{
-    BindingName, Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode,
-    GraphActionPlanner, GraphEdge, GraphExecutionStep, GraphMutation, GraphNode,
-    GraphReconciliationPlan, GumgumError, HealthPath, ImageName, ObjectName, ObjectRef, Port,
-    ProviderName, Result, RouteHost, Subsystem, WorkerId,
+    ActionGraph, BindingName, Capability, ContainerName, CurrentGraph, DesiredGraph,
+    DesiredGraphNode, ErrorCode, GraphActionPlanner, GraphEdge, GraphExecutionStep, GraphMutation,
+    GraphNode, GumgumError, HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName,
+    Result, RouteHost, Subsystem, WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -321,6 +321,13 @@ pub struct GraphStore {
     path: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+pub struct GraphTransitionPreview {
+    pub current_graph: CurrentGraph,
+    pub desired_graph: DesiredGraph,
+    pub action_graph: ActionGraph,
+}
+
 impl GraphStore {
     pub fn new(path: PathBuf) -> Self {
         Self { path }
@@ -444,28 +451,27 @@ impl GraphStore {
         Ok(DesiredGraph::new(nodes))
     }
 
-    pub fn preview_mutations(
-        &self,
-        mutations: &[GraphMutation],
-    ) -> Result<(DesiredGraph, DesiredGraph, GraphReconciliationPlan)> {
-        let old_graph = self.load_desired_graph()?;
-        let new_graph = GraphMutation::apply_all(&old_graph, mutations);
-        let plan = GraphActionPlanner::plan_transition(&old_graph, &new_graph);
-        Ok((old_graph, new_graph, plan))
+    pub fn preview_mutations(&self, mutations: &[GraphMutation]) -> Result<GraphTransitionPreview> {
+        let current_graph = self.load_desired_graph()?;
+        let desired_graph = GraphMutation::apply_all(&current_graph, mutations);
+        let action_graph = GraphActionPlanner::plan_transition(&current_graph, &desired_graph);
+        Ok(GraphTransitionPreview {
+            current_graph,
+            desired_graph,
+            action_graph,
+        })
     }
 
-    pub fn preview_mutation(
-        &self,
-        mutation: &GraphMutation,
-    ) -> Result<(DesiredGraph, DesiredGraph, GraphReconciliationPlan)> {
+    pub fn preview_mutation(&self, mutation: &GraphMutation) -> Result<GraphTransitionPreview> {
         self.preview_mutations(std::slice::from_ref(mutation))
     }
 
-    pub fn plan_mutations(&self, mutations: &[GraphMutation]) -> Result<GraphReconciliationPlan> {
-        self.preview_mutations(mutations).map(|(_, _, plan)| plan)
+    pub fn plan_mutations(&self, mutations: &[GraphMutation]) -> Result<ActionGraph> {
+        self.preview_mutations(mutations)
+            .map(|preview| preview.action_graph)
     }
 
-    pub fn plan_mutation(&self, mutation: &GraphMutation) -> Result<GraphReconciliationPlan> {
+    pub fn plan_mutation(&self, mutation: &GraphMutation) -> Result<ActionGraph> {
         self.plan_mutations(std::slice::from_ref(mutation))
     }
 
@@ -1625,21 +1631,23 @@ mod tests {
         };
         let mutation = deploy.upsert_mutation().unwrap();
 
-        let (old_graph, new_graph, plan) = store.preview_mutation(&mutation).unwrap();
+        let preview = store.preview_mutation(&mutation).unwrap();
 
         assert!(
-            !old_graph
+            !preview
+                .current_graph
                 .nodes
                 .iter()
                 .any(|node| node.id() == "deployment/api-preview")
         );
         assert!(
-            new_graph
+            preview
+                .desired_graph
                 .nodes
                 .iter()
                 .any(|node| node.id() == "deployment/api-preview")
         );
-        assert!(plan.steps.iter().any(|step| matches!(
+        assert!(preview.action_graph.steps.iter().any(|step| matches!(
             step.target,
             crate::GraphExecutionTarget::DeployRuntime { ref worker, .. }
                 if worker.as_ref().is_some_and(|worker| worker.as_str() == "api-preview")

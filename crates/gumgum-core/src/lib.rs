@@ -33,8 +33,8 @@ pub use graph::{
 };
 pub use graph_store::{
     ControlPlaneEventKind, DeploymentRevision, DesiredDeploy, DesiredProvider, GlobalObject,
-    GraphStore, NewReconcileEvent, ReconcileEvent, ReconcileEventId, ReconcileEventStatus,
-    WorkerBinding, new_operation_id, object_dns, projected_binding_env,
+    GraphStore, GraphTransitionPreview, NewReconcileEvent, ReconcileEvent, ReconcileEventId,
+    ReconcileEventStatus, WorkerBinding, new_operation_id, object_dns, projected_binding_env,
 };
 pub use manifest::{
     Ingress, InitManifestKind, InitPlan, Limits, ManifestKind, ObjectBinding, Observability,

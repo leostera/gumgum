@@ -79,14 +79,35 @@ Implemented in Track 1 and early Track 2:
 - `GumgumEvent` exists in `crates/gumgum-core/src/events.rs`.
 - Stored `ReconcileEvent` rows project to `GumgumEvent`.
 - `GraphMutation` exists in `crates/gumgum-core/src/graph/mutation.rs`.
-- `DesiredDeploy`, `GlobalObject`, and `WorkerBinding` expose mutation helpers.
+- `DesiredDeploy`, `GlobalObject`, `WorkerBinding`, and `DesiredProvider` expose mutation helpers.
+- `CurrentGraph` and `ActionGraph` are exported core aliases to keep `CurrentGraph + DesiredGraph = ActionGraph` visible in APIs.
+- `GraphStore::preview_mutation(s)` returns a `GraphTransitionPreview` with `current_graph`, `desired_graph`, and `action_graph` fields.
 - `GumgumAction` currently aliases `GraphExecutionStep` as the action graph surface.
 - `GraphExecutionStep` can project planned/executed/failed `GumgumEvent`s.
 - `GraphActionExecutor::execute_steps_report` returns action strings plus typed execution events, giving future live streaming a core event source instead of forcing daemon/CLI reconstruction.
-- Daemon deploy/delete reports include `typed_events`.
+- Daemon deploy/delete/object/binding reports include `typed_events`.
 - `gumgum events --json` emits NDJSON typed events.
 - `gumgum --json deploy` emits NDJSON typed events for worker/workspace deploy and delete paths when typed events are available.
 - `crates/gumgum-cli/src/event_presenter.rs` centralizes human and NDJSON event rendering.
+
+## Live event streaming sketch
+
+Live streaming should reuse the same event vocabulary rather than introduce a separate progress protocol. A future endpoint can expose a stream such as:
+
+```text
+POST /v0/deploy/stream
+Content-Type: application/json
+Accept: application/x-ndjson
+```
+
+The daemon would emit newline-delimited `GumgumEvent` records in this order:
+
+1. deployment lifecycle start event,
+2. `ActionGraph` planned events derived from `CurrentGraph + DesiredGraph`,
+3. per-action executed/failed events from executor progress,
+4. deployment lifecycle succeeded/failed event.
+
+The same stream can later be offered as Server-Sent Events if browsers or dashboards need reconnection metadata. CLI `--json` should prefer raw NDJSON. Human mode should continue presenting the same typed events through `event_presenter`.
 
 ## Deferred work
 
