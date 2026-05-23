@@ -1,8 +1,8 @@
 use crate::{
     BindingName, Capability, ContainerName, DesiredGraph, DesiredGraphNode, ErrorCode,
-    GraphActionPlanner, GraphEdge, GraphExecutionStep, GraphMutation, GraphNode, GumgumError,
-    HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName, Result, RouteHost, Subsystem,
-    WorkerId,
+    GraphActionPlanner, GraphEdge, GraphExecutionStep, GraphMutation, GraphNode,
+    GraphReconciliationPlan, GumgumError, HealthPath, ImageName, ObjectName, ObjectRef, Port,
+    ProviderName, Result, RouteHost, Subsystem, WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -466,6 +466,31 @@ impl GraphStore {
         self.load_desired_objects(&conn, &mut nodes)?;
         self.load_desired_bindings(&conn, &mut nodes)?;
         Ok(DesiredGraph::new(nodes))
+    }
+
+    pub fn preview_mutations(
+        &self,
+        mutations: &[GraphMutation],
+    ) -> Result<(DesiredGraph, DesiredGraph, GraphReconciliationPlan)> {
+        let old_graph = self.load_desired_graph()?;
+        let new_graph = GraphMutation::apply_all(&old_graph, mutations);
+        let plan = GraphActionPlanner::plan_transition(&old_graph, &new_graph);
+        Ok((old_graph, new_graph, plan))
+    }
+
+    pub fn preview_mutation(
+        &self,
+        mutation: &GraphMutation,
+    ) -> Result<(DesiredGraph, DesiredGraph, GraphReconciliationPlan)> {
+        self.preview_mutations(std::slice::from_ref(mutation))
+    }
+
+    pub fn plan_mutations(&self, mutations: &[GraphMutation]) -> Result<GraphReconciliationPlan> {
+        self.preview_mutations(mutations).map(|(_, _, plan)| plan)
+    }
+
+    pub fn plan_mutation(&self, mutation: &GraphMutation) -> Result<GraphReconciliationPlan> {
+        self.plan_mutations(std::slice::from_ref(mutation))
     }
 
     pub fn record_reconcile_event(&self, event: &NewReconcileEvent) -> Result<ReconcileEventId> {
@@ -1609,6 +1634,41 @@ mod tests {
         assert_eq!(events[1].id, first);
         assert_eq!(events[1].status, ReconcileEventStatus::Planned);
         let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
+    fn graph_store_previews_mutation_plans_without_materializing() {
+        let store = temp_store("preview-mutations");
+        let deploy = DesiredDeploy {
+            worker: "api@preview".to_owned(),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api-preview".to_owned(),
+            route: Some("api.example.test".to_owned()),
+            port: 3000,
+            health: "/_/ready".to_owned(),
+        };
+        let mutation = deploy.upsert_mutation().unwrap();
+
+        let (old_graph, new_graph, plan) = store.preview_mutation(&mutation).unwrap();
+
+        assert!(
+            !old_graph
+                .nodes
+                .iter()
+                .any(|node| node.id() == "deployment/api-preview")
+        );
+        assert!(
+            new_graph
+                .nodes
+                .iter()
+                .any(|node| node.id() == "deployment/api-preview")
+        );
+        assert!(plan.steps.iter().any(|step| matches!(
+            step.target,
+            crate::GraphExecutionTarget::DeployRuntime { ref worker, .. }
+                if worker.as_ref().is_some_and(|worker| worker.as_str() == "api-preview")
+        )));
+        assert!(store.desired_deploy("api@preview").unwrap().is_none());
     }
 
     #[test]
