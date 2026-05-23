@@ -1,4 +1,6 @@
-use crate::{Capability, ErrorCode, GumgumError, Subsystem};
+use crate::Capability;
+#[cfg(test)]
+use crate::{ErrorCode, GumgumError, Subsystem};
 
 use super::types::{ObjectProviderPlan, ProviderConfig, ProviderCredentials, ProviderStatus};
 
@@ -70,30 +72,11 @@ impl ProviderReconciler {
     }
 
     pub async fn boot_defaults(
-        credentials: &[(String, ProviderCredentials)],
+        _credentials: &[(String, ProviderCredentials)],
     ) -> crate::Result<Vec<String>> {
         let mut actions = Vec::new();
-        actions.extend(
-            super::postgres::ensure(
-                &super::specs::provider_spec(Capability::Db),
-                provider_credentials(credentials, "postgres.main")?,
-            )
-            .await?,
-        );
-        actions.extend(
-            super::redis::ensure_with_credentials(
-                &super::specs::provider_spec(Capability::Kv),
-                provider_credentials(credentials, "redis.main")?,
-            )
-            .await?,
-        );
-        actions.extend(
-            super::minio::ensure_provider(
-                &super::specs::provider_spec(Capability::Blob),
-                provider_credentials(credentials, "minio.main")?,
-            )
-            .await?,
-        );
+        actions.extend(super::vaultwarden::ensure().await?);
+        actions.extend(super::observability::ensure_platform_stack("localhost").await?);
         Ok(actions)
     }
 
@@ -132,6 +115,7 @@ impl ProviderReconciler {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn provider_credentials(
     credentials: &[(String, ProviderCredentials)],
     provider: &str,
