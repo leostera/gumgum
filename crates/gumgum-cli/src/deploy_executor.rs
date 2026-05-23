@@ -231,7 +231,7 @@ fn env_scoped_object_name(name: &str, env: crate::DeployEnv) -> String {
 }
 
 fn env_scoped_worker_name(worker: &str, env: crate::DeployEnv) -> String {
-    format!("{}@{}", worker, env.label())
+    gumgum_core::sanitize_name(&format!("{}-{}", worker, env.label()))
 }
 
 #[cfg(test)]
@@ -328,22 +328,22 @@ mod tests {
                 (
                     Capability::Db,
                     "visits-preview",
-                    "visit-counter-api@preview"
+                    "visit-counter-api-preview"
                 ),
                 (
                     Capability::Kv,
                     "user-counters-preview",
-                    "visit-counter-api@preview"
+                    "visit-counter-api-preview",
                 ),
                 (
                     Capability::Blob,
                     "visit-requests-preview",
-                    "visit-counter-api@preview"
+                    "visit-counter-api-preview",
                 ),
                 (
                     Capability::Queue,
                     "visit-events-preview",
-                    "visit-counter-api@preview"
+                    "visit-counter-api-preview",
                 ),
             ]
         );
@@ -445,9 +445,9 @@ mod tests {
             manifest_binding_intents(&manifest, &server(), None, crate::DeployEnv::Release);
 
         assert_eq!(preview[0].object_name, "visits-preview");
-        assert_eq!(preview[0].worker, "api@preview");
+        assert_eq!(preview[0].worker, "api-preview");
         assert_eq!(release[0].object_name, "visits-release");
-        assert_eq!(release[0].worker, "api@release");
+        assert_eq!(release[0].worker, "api-release");
         let preview_request = preview[0].binding_request().unwrap();
         let release_request = release[0].binding_request().unwrap();
         assert_ne!(preview_request.object_name, release_request.object_name);
