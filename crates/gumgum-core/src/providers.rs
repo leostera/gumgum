@@ -60,15 +60,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provider_statuses_cover_inspectable_backends() {
+    async fn provider_statuses_cover_platform_backends_without_counting_stopped_legacy_defaults() {
         let statuses = ProviderReconciler::statuses().await;
 
-        assert_eq!(statuses.len(), 10);
-        assert!(
-            statuses
-                .iter()
-                .any(|status| status.provider == "redis.main")
-        );
         assert!(
             statuses
                 .iter()
@@ -77,7 +71,12 @@ mod tests {
         assert!(
             statuses
                 .iter()
-                .any(|status| status.container == "gumgum-provider-postgres-main")
+                .any(|status| status.provider == "grafana.platform")
+        );
+        assert!(
+            statuses
+                .iter()
+                .all(|status| { status.running || !status.provider.ends_with(".main") })
         );
     }
 

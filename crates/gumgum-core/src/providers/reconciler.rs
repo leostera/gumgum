@@ -101,14 +101,16 @@ impl ProviderReconciler {
         ] {
             let spec = super::specs::provider_spec(capability);
             let running = super::docker::running(&spec.container).await;
-            statuses.push(ProviderStatus {
-                capability,
-                provider: spec.provider,
-                container: spec.container,
-                image: spec.image,
-                port: spec.port,
-                running,
-            });
+            if running {
+                statuses.push(ProviderStatus {
+                    capability,
+                    provider: spec.provider,
+                    container: spec.container,
+                    image: spec.image,
+                    port: spec.port,
+                    running,
+                });
+            }
         }
         statuses.push(super::vaultwarden::status().await);
         statuses.extend(super::observability::platform_statuses().await);
