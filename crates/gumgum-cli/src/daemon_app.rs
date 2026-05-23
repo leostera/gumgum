@@ -1417,6 +1417,7 @@ async fn daemon_delete_deploy(
         &request.worker,
         None,
         &reconciliation_steps,
+        &[],
         &actions,
         ok,
         &message,
@@ -1515,9 +1516,18 @@ async fn daemon_deploy(
         provider_credentials: None,
         graph_path: Some(reconcile_path),
     };
-    let mut actions = GraphActionExecutor::execute_steps(&reconciliation_steps, deploy_context)
-        .await
-        .unwrap_or_else(|error| vec![format!("reconcile failed: {}", error.to_report().message)]);
+    let (mut actions, execution_typed_events) = match GraphActionExecutor::execute_steps_report(
+        &reconciliation_steps,
+        deploy_context,
+    )
+    .await
+    {
+        Ok(report) => (report.actions, report.typed_events),
+        Err(error) => (
+            vec![format!("reconcile failed: {}", error.to_report().message)],
+            Vec::new(),
+        ),
+    };
     let reconcile_ok = !actions
         .iter()
         .any(|action| action.starts_with("reconcile failed:"));
@@ -1617,6 +1627,7 @@ async fn daemon_deploy(
         &request.worker,
         Some((&request.image, request.route.as_deref())),
         &reconciliation_steps,
+        &execution_typed_events,
         &actions,
         ok,
         &message,
@@ -1643,6 +1654,7 @@ fn deploy_apply_typed_events(
     worker: &str,
     image_and_route: Option<(&str, Option<&str>)>,
     reconciliation_steps: &[gumgum_core::GraphExecutionStep],
+    execution_typed_events: &[gumgum_core::GumgumEvent],
     actions: &[String],
     ok: bool,
     message: &str,
@@ -1655,19 +1667,25 @@ fn deploy_apply_typed_events(
             image: image.to_owned(),
         });
     }
-    for step in reconciliation_steps {
-        events.push(step.planned_event(None));
+    if execution_typed_events.is_empty() {
+        for step in reconciliation_steps {
+            events.push(step.planned_event(None));
+        }
+    } else {
+        events.extend_from_slice(execution_typed_events);
     }
     let action_message = if actions.is_empty() {
         message.to_owned()
     } else {
         actions.join("; ")
     };
-    for step in reconciliation_steps {
-        if ok {
-            events.push(step.executed_event(None, action_message.clone()));
-        } else {
-            events.push(step.failed_event(None, action_message.clone()));
+    if execution_typed_events.is_empty() {
+        for step in reconciliation_steps {
+            if ok {
+                events.push(step.executed_event(None, action_message.clone()));
+            } else {
+                events.push(step.failed_event(None, action_message.clone()));
+            }
         }
     }
     if let Some((image, route)) = image_and_route {
@@ -1774,6 +1792,7 @@ mod tests {
             "api@preview",
             Some(("registry/api:rev1", Some("api.example.test"))),
             &[step],
+            &[],
             &["configured manual provider manual.main".to_owned()],
             true,
             "desired deployment materialized and reconciled",
