@@ -109,6 +109,7 @@ async fn wait_for_postgres(
     credentials: &ProviderCredentials,
 ) -> crate::Result<()> {
     let mut last_error = None;
+    let mut consecutive_successes = 0;
     for _ in 0..30 {
         match DockerEngine::local()?
             .exec_success(
@@ -126,9 +127,20 @@ async fn wait_for_postgres(
             )
             .await
         {
-            Ok(output) if output.trim() == "1" => return Ok(()),
-            Ok(output) => last_error = Some(output),
-            Err(error) => last_error = Some(error.to_report().message),
+            Ok(output) if output.trim() == "1" => {
+                consecutive_successes += 1;
+                if consecutive_successes >= 2 {
+                    return Ok(());
+                }
+            }
+            Ok(output) => {
+                consecutive_successes = 0;
+                last_error = Some(output);
+            }
+            Err(error) => {
+                consecutive_successes = 0;
+                last_error = Some(error.to_report().message);
+            }
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
@@ -293,6 +305,23 @@ fn sql_identifier(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn postgres_readiness_requires_stable_successes() {
+        let successes = [true, false, true, true]
+            .into_iter()
+            .scan(0, |consecutive, success| {
+                if success {
+                    *consecutive += 1;
+                } else {
+                    *consecutive = 0;
+                }
+                Some(*consecutive)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(successes, vec![1, 0, 1, 2]);
+    }
 
     #[test]
     fn postgres_readiness_error_is_provider_specific() {
