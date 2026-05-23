@@ -21,7 +21,13 @@ impl ProviderReconciler {
                 )
                 .await
             }
-            Capability::Kv => super::redis::ensure_object(plan).await,
+            Capability::Kv => {
+                super::redis::ensure_object(
+                    plan,
+                    credentials.unwrap_or_else(ProviderCredentials::redis_local_dev),
+                )
+                .await
+            }
             Capability::Blob => {
                 super::minio::ensure(
                     plan,
