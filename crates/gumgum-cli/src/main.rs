@@ -7,6 +7,7 @@ mod deploy_command;
 mod deploy_executor;
 mod domain_command;
 mod env_command;
+mod event_presenter;
 mod events_command;
 mod graph_command;
 mod graph_presenter;

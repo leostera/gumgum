@@ -1,6 +1,6 @@
 #![allow(clippy::items_after_test_module)]
 
-use crate::{DeployArgs, progress, resolve_server};
+use crate::{DeployArgs, event_presenter::print_events_json_lines, progress, resolve_server};
 use gumgum_api::{DeployApplyReport, DeployRequest, DeploymentDeleteRequest, ServerRecord};
 use gumgum_core::{
     ConfigStore, DeploymentDescriptor, ErrorCode, GumgumError, GumgumEvent, ManifestKind,
@@ -492,6 +492,27 @@ mod deploy_hardening_tests {
     }
 
     #[test]
+    fn delete_deploy_output_uses_report_typed_events() {
+        let event = GumgumEvent::DeploymentFailed {
+            worker: "api".to_owned(),
+            environment: Some("preview".to_owned()),
+            error: "deployment was not present".to_owned(),
+        };
+        let output = DeployOutput::Delete(DeployApplyReport {
+            ok: false,
+            worker: "api@preview".to_owned(),
+            materialized: false,
+            changed: false,
+            actions: vec!["deployment was not present".to_owned()],
+            reconciliation_steps: Vec::new(),
+            typed_events: vec![event.clone()],
+            message: "deployment was not present".to_owned(),
+        });
+
+        assert_eq!(deploy_output_events(&output), vec![event]);
+    }
+
+    #[test]
     fn deploy_route_prefers_manifest_route() {
         let report = DeployReport {
             ok: true,
@@ -531,12 +552,7 @@ pub(crate) fn print_deploy_output(json: bool, output: &DeployOutput) {
         if events.is_empty() {
             crate::print_value(true, output);
         } else {
-            for event in events {
-                println!(
-                    "{}",
-                    serde_json::to_string(&event).expect("serialize deploy event")
-                );
-            }
+            print_events_json_lines(events);
         }
     } else {
         crate::presentation::Presenter::new().deploy_output(output);
@@ -551,6 +567,6 @@ fn deploy_output_events(output: &DeployOutput) -> Vec<GumgumEvent> {
             .iter()
             .flat_map(|worker| worker.events.clone())
             .collect(),
-        DeployOutput::Delete(_) => Vec::new(),
+        DeployOutput::Delete(report) => report.typed_events.clone(),
     }
 }
