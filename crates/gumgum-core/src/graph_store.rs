@@ -1916,6 +1916,62 @@ mod tests {
     }
 
     #[test]
+    fn secret_and_observability_bindings_are_environment_scoped() {
+        let store = temp_store("secret-observability-env");
+        for (capability, name, binding) in [
+            (Capability::Secret, "stripe-key-preview", "STRIPE_KEY"),
+            (Capability::Secret, "stripe-key-release", "STRIPE_KEY"),
+            (Capability::Observability, "otel-preview", "OTEL"),
+            (Capability::Observability, "otel-release", "OTEL"),
+        ] {
+            store
+                .materialize_object(&GlobalObject {
+                    capability,
+                    name: name.to_owned(),
+                    namespace: "peekaboo".to_owned(),
+                    root_domain: "leostera.dev".to_owned(),
+                })
+                .unwrap();
+            let worker = if name.ends_with("-preview") {
+                "api-preview"
+            } else {
+                "api-release"
+            };
+            store
+                .materialize_binding(&WorkerBinding {
+                    capability,
+                    object_name: name.to_owned(),
+                    worker: worker.to_owned(),
+                    binding: binding.to_owned(),
+                    access: "read-write".to_owned(),
+                })
+                .unwrap();
+        }
+
+        let preview = store.binding_env("api-preview").unwrap();
+        let release = store.binding_env("api-release").unwrap();
+        assert!(preview.contains(&(
+            "STRIPE_KEY".to_owned(),
+            "onepassword://gumgum/stripe-key-preview".to_owned(),
+        )));
+        assert!(release.contains(&(
+            "STRIPE_KEY".to_owned(),
+            "onepassword://gumgum/stripe-key-release".to_owned(),
+        )));
+        assert!(preview.contains(&(
+            "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
+            "http://otel-preview.observability.leostera.dev:4317".to_owned(),
+        )));
+        assert!(release.contains(&(
+            "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
+            "http://otel-release.observability.leostera.dev:4317".to_owned(),
+        )));
+        assert_ne!(preview, release);
+        assert!(store.binding_env("api").unwrap().is_empty());
+        let _ = fs::remove_file(store.path);
+    }
+
+    #[test]
     fn binding_env_and_previous_deploy_use_materialized_graph_state() {
         let store = temp_store("env-revisions");
         store
