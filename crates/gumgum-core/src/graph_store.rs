@@ -1538,7 +1538,10 @@ fn provider_container_for_object(capability: Capability, name: &str) -> String {
         Capability::Manual => "gumgum-provider-manual",
     };
     object_environment(&crate::sanitize_name(name))
-        .map(|env| format!("{base}-{env}"))
+        .map(|env| {
+            let suffix = base.strip_prefix("gumgum-").unwrap_or(base);
+            format!("gumgum-{env}-{suffix}")
+        })
         .unwrap_or_else(|| format!("{base}-main"))
 }
 
@@ -1546,7 +1549,7 @@ fn object_environment(safe_name: &str) -> Option<&str> {
     safe_name
         .strip_suffix("-preview")
         .map(|_| "preview")
-        .or_else(|| safe_name.strip_suffix("-release").map(|_| "release"))
+        .or_else(|| safe_name.strip_suffix("-prod").map(|_| "prod"))
 }
 
 fn provider_credentials(provider: &str) -> Option<crate::ProviderCredentials> {
@@ -1656,7 +1659,7 @@ mod tests {
         let deploy = DesiredDeploy {
             worker: "api@preview".to_owned(),
             image: "registry/api:1".to_owned(),
-            container: "gumgum-api-preview".to_owned(),
+            container: "gumgum-preview-api".to_owned(),
             route: Some("api.example.test".to_owned()),
             port: 3000,
             health: "/_/ready".to_owned(),
@@ -1692,7 +1695,7 @@ mod tests {
         let deploy = DesiredDeploy {
             worker: "api@preview".to_owned(),
             image: "registry/api:1".to_owned(),
-            container: "gumgum-api-preview".to_owned(),
+            container: "gumgum-preview-api".to_owned(),
             route: Some("api.example.test".to_owned()),
             port: 3000,
             health: "/_/ready".to_owned(),
@@ -1920,9 +1923,9 @@ mod tests {
         let store = temp_store("secret-observability-env");
         for (capability, name, binding) in [
             (Capability::Secret, "stripe-key-preview", "STRIPE_KEY"),
-            (Capability::Secret, "stripe-key-release", "STRIPE_KEY"),
+            (Capability::Secret, "stripe-key-prod", "STRIPE_KEY"),
             (Capability::Observability, "otel-preview", "OTEL"),
-            (Capability::Observability, "otel-release", "OTEL"),
+            (Capability::Observability, "otel-prod", "OTEL"),
         ] {
             store
                 .materialize_object(&GlobalObject {
@@ -1935,7 +1938,7 @@ mod tests {
             let worker = if name.ends_with("-preview") {
                 "api-preview"
             } else {
-                "api-release"
+                "api-prod"
             };
             store
                 .materialize_binding(&WorkerBinding {
@@ -1949,24 +1952,24 @@ mod tests {
         }
 
         let preview = store.binding_env("api-preview").unwrap();
-        let release = store.binding_env("api-release").unwrap();
+        let prod = store.binding_env("api-prod").unwrap();
         assert!(preview.contains(&(
             "STRIPE_KEY".to_owned(),
             "onepassword://gumgum/stripe-key-preview".to_owned(),
         )));
-        assert!(release.contains(&(
+        assert!(prod.contains(&(
             "STRIPE_KEY".to_owned(),
-            "onepassword://gumgum/stripe-key-release".to_owned(),
+            "onepassword://gumgum/stripe-key-prod".to_owned(),
         )));
         assert!(preview.contains(&(
             "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
             "http://otel-preview.observability.leostera.dev:4317".to_owned(),
         )));
-        assert!(release.contains(&(
+        assert!(prod.contains(&(
             "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
-            "http://otel-release.observability.leostera.dev:4317".to_owned(),
+            "http://otel-prod.observability.leostera.dev:4317".to_owned(),
         )));
-        assert_ne!(preview, release);
+        assert_ne!(preview, prod);
         assert!(store.binding_env("api").unwrap().is_empty());
         let _ = fs::remove_file(store.path);
     }
@@ -2077,7 +2080,7 @@ mod tests {
         store
             .materialize_object(&GlobalObject {
                 capability: Capability::Db,
-                name: "main-release".to_owned(),
+                name: "main-prod".to_owned(),
                 namespace: "peekaboo".to_owned(),
                 root_domain: "leostera.dev".to_owned(),
             })
@@ -2085,19 +2088,22 @@ mod tests {
         store
             .materialize_binding(&WorkerBinding {
                 capability: Capability::Db,
-                object_name: "main-release".to_owned(),
-                worker: "api@release".to_owned(),
+                object_name: "main-prod".to_owned(),
+                worker: "api@prod".to_owned(),
                 binding: "DATABASE_URL".to_owned(),
                 access: "read-write".to_owned(),
             })
             .unwrap();
         let preview_env = store.binding_env("api@preview").unwrap();
-        let release_env = store.binding_env("api@release").unwrap();
+        let prod_env = store.binding_env("api@prod").unwrap();
         assert!(preview_env.is_empty());
-        assert!(release_env.contains(&(
-            "DATABASE_URL".to_owned(),
-            "postgres://gumgum:gumgum-local-dev@gumgum-provider-postgres-release:5432/main-release".to_owned()
-        )));
+        assert!(
+            prod_env.contains(&(
+                "DATABASE_URL".to_owned(),
+                "postgres://gumgum:gumgum-local-dev@gumgum-prod-provider-postgres:5432/main-prod"
+                    .to_owned()
+            ))
+        );
 
         let first = DesiredDeploy {
             worker: "api".to_owned(),
@@ -2134,22 +2140,22 @@ mod tests {
         let preview = DesiredDeploy {
             worker: "api@preview".to_owned(),
             image: "registry/api:preview".to_owned(),
-            container: "gumgum-api-preview".to_owned(),
+            container: "gumgum-preview-api".to_owned(),
             route: Some("api-preview.example.test".to_owned()),
             port: 3000,
             health: "/healthz".to_owned(),
         };
-        let release = DesiredDeploy {
-            worker: "api@release".to_owned(),
-            image: "registry/api:release".to_owned(),
-            container: "gumgum-api-release".to_owned(),
+        let prod = DesiredDeploy {
+            worker: "api@prod".to_owned(),
+            image: "registry/api:prod".to_owned(),
+            container: "gumgum-prod-api".to_owned(),
             route: Some("api.example.test".to_owned()),
             port: 3000,
             health: "/healthz".to_owned(),
         };
 
         store.materialize_deploy(&preview).unwrap();
-        store.materialize_deploy(&release).unwrap();
+        store.materialize_deploy(&prod).unwrap();
 
         assert_eq!(
             store
@@ -2157,15 +2163,11 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .container,
-            "gumgum-api-preview"
+            "gumgum-preview-api"
         );
         assert_eq!(
-            store
-                .desired_deploy("api@release")
-                .unwrap()
-                .unwrap()
-                .container,
-            "gumgum-api-release"
+            store.desired_deploy("api@prod").unwrap().unwrap().container,
+            "gumgum-prod-api"
         );
         assert!(
             store
@@ -2173,25 +2175,20 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(
-            store
-                .latest_previous_deploy("api@release")
-                .unwrap()
-                .is_none()
-        );
+        assert!(store.latest_previous_deploy("api@prod").unwrap().is_none());
         let desired = store.load_desired_graph().unwrap();
         assert!(desired.nodes.contains(&DesiredGraphNode::Deployment {
             worker: WorkerId::new("api-preview").unwrap(),
             image: ImageName::new("registry/api:preview").unwrap(),
-            container: ContainerName::new("gumgum-api-preview").unwrap(),
+            container: ContainerName::new("gumgum-preview-api").unwrap(),
             route: Some(RouteHost::new("api-preview.example.test").unwrap()),
             port: Port::new(3000).unwrap(),
             health: HealthPath::new("/healthz").unwrap(),
         }));
         assert!(desired.nodes.contains(&DesiredGraphNode::Deployment {
-            worker: WorkerId::new("api-release").unwrap(),
-            image: ImageName::new("registry/api:release").unwrap(),
-            container: ContainerName::new("gumgum-api-release").unwrap(),
+            worker: WorkerId::new("api-prod").unwrap(),
+            image: ImageName::new("registry/api:prod").unwrap(),
+            container: ContainerName::new("gumgum-prod-api").unwrap(),
             route: Some(RouteHost::new("api.example.test").unwrap()),
             port: Port::new(3000).unwrap(),
             health: HealthPath::new("/healthz").unwrap(),

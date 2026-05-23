@@ -138,8 +138,8 @@ mod tests {
         );
         let kv = object_provider_plan(
             Capability::Kv,
-            "sessions-release",
-            "sessions-release.kv.example.test",
+            "sessions-prod",
+            "sessions-prod.kv.example.test",
         );
         let bucket = object_provider_plan(
             Capability::Blob,
@@ -148,18 +148,18 @@ mod tests {
         );
         let queue = object_provider_plan(
             Capability::Queue,
-            "events-release",
-            "events-release.queue.example.test",
+            "events-prod",
+            "events-prod.queue.example.test",
         );
 
         assert_eq!(db.provider.provider, "postgres.preview");
-        assert_eq!(db.provider.container, "gumgum-provider-postgres-preview");
-        assert_eq!(kv.provider.provider, "redis.release");
-        assert_eq!(kv.provider.container, "gumgum-provider-redis-release");
+        assert_eq!(db.provider.container, "gumgum-preview-provider-postgres");
+        assert_eq!(kv.provider.provider, "redis.prod");
+        assert_eq!(kv.provider.container, "gumgum-prod-provider-redis");
         assert_eq!(bucket.provider.provider, "minio.preview");
-        assert_eq!(bucket.provider.container, "gumgum-provider-minio-preview");
-        assert_eq!(queue.provider.provider, "redpanda.release");
-        assert_eq!(queue.provider.container, "gumgum-provider-redpanda-release");
+        assert_eq!(bucket.provider.container, "gumgum-preview-provider-minio");
+        assert_eq!(queue.provider.provider, "redpanda.prod");
+        assert_eq!(queue.provider.container, "gumgum-prod-provider-redpanda");
     }
 
     #[test]

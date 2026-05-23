@@ -211,7 +211,7 @@ fn deployment_environment(worker: &str) -> Option<&str> {
     worker
         .strip_suffix("-preview")
         .map(|_| "preview")
-        .or_else(|| worker.strip_suffix("-release").map(|_| "release"))
+        .or_else(|| worker.strip_suffix("-prod").map(|_| "prod"))
         .or_else(|| worker.split_once('@').map(|(_, env)| env))
 }
 
@@ -243,8 +243,8 @@ mod tests {
             Some("gumgum-preview")
         );
         assert_eq!(
-            deployment_network_name("api-release").as_deref(),
-            Some("gumgum-release")
+            deployment_network_name("api-prod").as_deref(),
+            Some("gumgum-prod")
         );
         assert_eq!(
             deployment_network_name("api@preview").as_deref(),

@@ -52,6 +52,15 @@ pub(crate) async fn start_existing(
     )])
 }
 
+fn provider_environment_label(provider: &ProviderSpec) -> Option<String> {
+    provider
+        .provider
+        .rsplit_once('.')
+        .map(|(_, env)| env)
+        .filter(|env| *env != "main" && *env != "platform")
+        .map(str::to_owned)
+}
+
 pub(crate) async fn create_provider_container(
     provider: &ProviderSpec,
     env: Vec<(String, String)>,
@@ -59,13 +68,17 @@ pub(crate) async fn create_provider_container(
 ) -> crate::Result<Vec<String>> {
     let docker = DockerEngine::local()?;
     docker.pull_image(&provider.image).await?;
+    let mut labels = HashMap::from([("gumgum.managed".to_owned(), "provider".to_owned())]);
+    if let Some(env) = provider_environment_label(provider) {
+        labels.insert("gumgum.environment".to_owned(), env);
+    }
     docker
         .create_and_start_container(ContainerRunSpec {
             name: provider.container.clone(),
             image: provider.image.clone(),
             network: GUMGUM_NETWORK.to_owned(),
             restart_unless_stopped: true,
-            labels: HashMap::from([("gumgum.managed".to_owned(), "provider".to_owned())]),
+            labels,
             env,
             binds: Vec::new(),
             ports: Vec::new(),
@@ -74,4 +87,29 @@ pub(crate) async fn create_provider_container(
         })
         .await?;
     Ok(created_provider_actions(provider))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Capability;
+
+    #[test]
+    fn provider_environment_label_skips_main_and_keeps_envs() {
+        let mut provider = ProviderSpec {
+            capability: Capability::Kv,
+            provider: "redis.main".to_owned(),
+            container: "gumgum-provider-redis-main".to_owned(),
+            image: "redis:7-alpine".to_owned(),
+            port: 6379,
+            protocol: "redis".to_owned(),
+        };
+        assert_eq!(provider_environment_label(&provider), None);
+
+        provider.provider = "redis.prod".to_owned();
+        assert_eq!(
+            provider_environment_label(&provider).as_deref(),
+            Some("prod")
+        );
+    }
 }

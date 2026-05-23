@@ -131,7 +131,7 @@ mod tests {
         let provider = ProviderSpec {
             capability: Capability::Kv,
             provider: "redis.preview".to_owned(),
-            container: "gumgum-provider-redis-preview".to_owned(),
+            container: "gumgum-preview-provider-redis".to_owned(),
             image: "redis:7-alpine".to_owned(),
             port: 6379,
             protocol: "redis".to_owned(),

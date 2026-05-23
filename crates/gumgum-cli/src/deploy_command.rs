@@ -247,9 +247,9 @@ fn deploy_report(
         project_name,
         project_domain,
         server,
-        env.is_release(),
+        env.is_prod(),
     );
-    descriptor.container = format!("{}-{}", descriptor.container, env.label());
+    descriptor.container = env_prefixed_container_name(&descriptor.container, env);
     let events = vec![GumgumEvent::DeploymentPlanned {
         worker: descriptor.worker.clone(),
         environment: Some(env.label().to_owned()),
@@ -478,6 +478,11 @@ fn deployment_key(worker: &str, env: crate::DeployEnv) -> String {
     format!("{worker}@{}", env.label())
 }
 
+fn env_prefixed_container_name(container: &str, env: crate::DeployEnv) -> String {
+    let suffix = container.strip_prefix("gumgum-").unwrap_or(container);
+    format!("gumgum-{}-{suffix}", env.label())
+}
+
 fn deploy_route(report: &DeployReport, _server: &ServerRecord) -> Option<String> {
     report.routes.first().cloned()
 }
@@ -536,15 +541,24 @@ mod deploy_hardening_tests {
     }
 
     #[test]
+    fn env_prefixed_container_names_keep_gumgum_namespace_first() {
+        assert_eq!(
+            env_prefixed_container_name("gumgum-dev-leostera-api", crate::DeployEnv::Preview),
+            "gumgum-preview-dev-leostera-api"
+        );
+        assert_eq!(
+            env_prefixed_container_name("gumgum-dev-leostera-api", crate::DeployEnv::Prod),
+            "gumgum-prod-dev-leostera-api"
+        );
+    }
+
+    #[test]
     fn deployment_key_includes_env_without_changing_display_worker() {
         assert_eq!(
             deployment_key("api", crate::DeployEnv::Preview),
             "api@preview"
         );
-        assert_eq!(
-            deployment_key("api", crate::DeployEnv::Release),
-            "api@release"
-        );
+        assert_eq!(deployment_key("api", crate::DeployEnv::Prod), "api@prod");
     }
 
     #[test]

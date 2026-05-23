@@ -77,19 +77,19 @@ pub(crate) enum ConfigSubcommand {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum DeployEnv {
     Preview,
-    Release,
+    Prod,
 }
 
 #[allow(dead_code)]
 impl DeployEnv {
-    pub(crate) fn is_release(self) -> bool {
-        self == Self::Release
+    pub(crate) fn is_prod(self) -> bool {
+        self == Self::Prod
     }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Preview => "preview",
-            Self::Release => "release",
+            Self::Prod => "prod",
         }
     }
 }

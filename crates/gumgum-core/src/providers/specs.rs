@@ -58,11 +58,18 @@ fn object_provider_spec(capability: Capability, safe_name: &str) -> ProviderSpec
         .rsplit_once('.')
         .map(|(prefix, _)| format!("{prefix}.{env}"))
         .unwrap_or_else(|| format!("{}.{}", provider.provider, env));
-    let container = provider
+    let container_suffix = provider
         .container
+        .strip_prefix("gumgum-")
+        .unwrap_or(&provider.container)
         .strip_suffix("-main")
-        .map(|prefix| format!("{prefix}-{env}"))
-        .unwrap_or_else(|| format!("{}-{env}", provider.container));
+        .unwrap_or_else(|| {
+            provider
+                .container
+                .strip_prefix("gumgum-")
+                .unwrap_or(&provider.container)
+        });
+    let container = format!("gumgum-{env}-{container_suffix}");
     ProviderSpec {
         provider: provider_name,
         container,
@@ -74,7 +81,7 @@ fn object_environment(safe_name: &str) -> Option<&str> {
     safe_name
         .strip_suffix("-preview")
         .map(|_| "preview")
-        .or_else(|| safe_name.strip_suffix("-release").map(|_| "release"))
+        .or_else(|| safe_name.strip_suffix("-prod").map(|_| "prod"))
 }
 
 fn provider_actions(capability: Capability, safe_name: &str, dns: &str) -> Vec<String> {

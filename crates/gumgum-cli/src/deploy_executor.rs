@@ -403,16 +403,16 @@ mod tests {
             &manifest,
             &server(),
             Some("workspace-ns"),
-            crate::DeployEnv::Release,
+            crate::DeployEnv::Prod,
         );
         assert_eq!(intents[0].namespace, "workspace-ns");
         assert_eq!(intents[0].access, "read-write");
         assert!(intents[0].binding_request().is_none());
-        assert_eq!(intents[0].object_request().name, "cache-release");
+        assert_eq!(intents[0].object_request().name, "cache-prod");
     }
 
     #[test]
-    fn manifest_binding_intents_isolate_preview_and_release_resources() {
+    fn manifest_binding_intents_isolate_preview_and_prod_resources() {
         let manifest = WorkerManifest {
             project: None,
             worker: Worker {
@@ -441,16 +441,15 @@ mod tests {
 
         let preview =
             manifest_binding_intents(&manifest, &server(), None, crate::DeployEnv::Preview);
-        let release =
-            manifest_binding_intents(&manifest, &server(), None, crate::DeployEnv::Release);
+        let prod = manifest_binding_intents(&manifest, &server(), None, crate::DeployEnv::Prod);
 
         assert_eq!(preview[0].object_name, "visits-preview");
         assert_eq!(preview[0].worker, "api-preview");
-        assert_eq!(release[0].object_name, "visits-release");
-        assert_eq!(release[0].worker, "api-release");
+        assert_eq!(prod[0].object_name, "visits-prod");
+        assert_eq!(prod[0].worker, "api-prod");
         let preview_request = preview[0].binding_request().unwrap();
-        let release_request = release[0].binding_request().unwrap();
-        assert_ne!(preview_request.object_name, release_request.object_name);
-        assert_ne!(preview_request.worker, release_request.worker);
+        let prod_request = prod[0].binding_request().unwrap();
+        assert_ne!(preview_request.object_name, prod_request.object_name);
+        assert_ne!(preview_request.worker, prod_request.worker);
     }
 }
