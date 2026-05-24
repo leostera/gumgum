@@ -53,10 +53,16 @@ pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
     ]
 }
 
-pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<crate::ConnectionExample> {
     vec![
-        format!("aws --endpoint-url http://{dns}:9000 s3 mb s3://{name}"),
-        format!("S3_ENDPOINT=http://{dns}:9000 S3_BUCKET={name}"),
+        crate::ConnectionExample::AwsS3MakeBucket {
+            name: name.to_owned(),
+            dns: dns.to_owned(),
+        },
+        crate::ConnectionExample::S3Environment {
+            name: name.to_owned(),
+            dns: dns.to_owned(),
+        },
     ]
 }
 

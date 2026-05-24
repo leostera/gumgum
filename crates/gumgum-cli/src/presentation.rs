@@ -2,7 +2,7 @@
 
 use crate::deploy_command::{DeployOutput, DeployReport, WorkspaceDeployReport};
 use gumgum_api::ObjectReport;
-use gumgum_core::{ActionScope, CoreAction, SetupStep};
+use gumgum_core::{ActionScope, ConnectionExample, CoreAction, SetupStep};
 
 pub(crate) struct Presenter;
 
@@ -27,7 +27,11 @@ impl Presenter {
         let examples = if report.connection_examples.is_empty() {
             connection_examples(&report.kind, &report.name, &report.dns)
         } else {
-            report.connection_examples.clone()
+            report
+                .connection_examples
+                .iter()
+                .map(connection_example_text)
+                .collect()
         };
 
         if !examples.is_empty() {
@@ -452,5 +456,35 @@ fn scope_noun(scope: ActionScope) -> &'static str {
         ActionScope::Deployment => "deployments",
         ActionScope::Provider => "provider",
         ActionScope::Reconcile => "reconcile",
+    }
+}
+
+pub(crate) fn connection_example_text(example: &ConnectionExample) -> String {
+    match example {
+        ConnectionExample::PostgresPsql { name, dns } => {
+            format!("psql postgres://{name}:<password>@{dns}:5432/{name}")
+        }
+        ConnectionExample::PgAdmin { name, dns } => {
+            format!("pgAdmin host={dns} port=5432 database={name} username={name}")
+        }
+        ConnectionExample::RedisCli { dns } => format!("redis-cli -u redis://{dns}:6379/0"),
+        ConnectionExample::RedisInsight { dns } => {
+            format!("RedisInsight host={dns} port=6379 database=0")
+        }
+        ConnectionExample::AwsS3MakeBucket { name, dns } => {
+            format!("aws --endpoint-url http://{dns}:9000 s3 mb s3://{name}")
+        }
+        ConnectionExample::S3Environment { name, dns } => {
+            format!("S3_ENDPOINT=http://{dns}:9000 S3_BUCKET={name}")
+        }
+        ConnectionExample::KafkaCat { name, dns } => format!("kcat -b {dns}:9092 -t {name}"),
+        ConnectionExample::KafkaEnvironment { name, dns } => {
+            format!("KAFKA_BROKERS={dns}:9092 KAFKA_TOPIC={name}")
+        }
+        ConnectionExample::BitwardenCli { name } => format!("bw get item {name}"),
+        ConnectionExample::BitwardenUri { name } => format!("bitwarden://gumgum/{name}"),
+        ConnectionExample::OtelEndpoint { dns } => {
+            format!("OTEL_EXPORTER_OTLP_ENDPOINT=http://{dns}:4317")
+        }
     }
 }

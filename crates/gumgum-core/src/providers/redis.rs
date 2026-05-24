@@ -32,10 +32,10 @@ pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
     ]
 }
 
-pub(crate) fn connection_examples(_name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn connection_examples(_name: &str, dns: &str) -> Vec<crate::ConnectionExample> {
     vec![
-        format!("redis-cli -u redis://{dns}:6379/0"),
-        format!("RedisInsight host={dns} port=6379 database=0"),
+        crate::ConnectionExample::RedisCli { dns: dns.to_owned() },
+        crate::ConnectionExample::RedisInsight { dns: dns.to_owned() },
     ]
 }
 

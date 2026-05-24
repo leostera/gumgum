@@ -1,4 +1,4 @@
-use crate::{Capability, CoreAction};
+use crate::{Capability, ConnectionExample, CoreAction};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -18,7 +18,7 @@ pub struct ObjectProviderPlan {
     pub dns: String,
     pub provider: ProviderSpec,
     pub actions: Vec<CoreAction>,
-    pub connection_examples: Vec<String>,
+    pub connection_examples: Vec<ConnectionExample>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_password: Option<String>,
 }

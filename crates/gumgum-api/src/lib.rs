@@ -1,4 +1,4 @@
-use gumgum_core::{Capability, CloudflareGrant, CoreAction, DomainProvider, IngressMode};
+use gumgum_core::{Capability, CloudflareGrant, ConnectionExample, CoreAction, DomainProvider, IngressMode};
 pub use gumgum_core::{
     DeploymentRevision, GraphEdge, GraphExecutionStep, GraphNode, GumgumEvent, ProviderConfig,
     ProviderStatus, ReconcileEvent, ServerRecord,
@@ -208,7 +208,7 @@ pub struct ObjectReport {
     pub dns: String,
     pub provider: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub connection_examples: Vec<String>,
+    pub connection_examples: Vec<ConnectionExample>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_actions: Vec<CoreAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

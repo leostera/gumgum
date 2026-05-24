@@ -235,4 +235,20 @@ pub enum ActionScope {
     Reconcile,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConnectionExample {
+    PostgresPsql { name: String, dns: String },
+    PgAdmin { name: String, dns: String },
+    RedisCli { dns: String },
+    RedisInsight { dns: String },
+    AwsS3MakeBucket { name: String, dns: String },
+    S3Environment { name: String, dns: String },
+    KafkaCat { name: String, dns: String },
+    KafkaEnvironment { name: String, dns: String },
+    BitwardenCli { name: String },
+    BitwardenUri { name: String },
+    OtelEndpoint { dns: String },
+}
+
 pub type CoreActions = Vec<CoreAction>;

@@ -17,7 +17,7 @@ pub mod providers;
 pub mod setup;
 pub mod setup_installer;
 
-pub use actions::{ActionScope, CoreAction, CoreActions, SetupStep};
+pub use actions::{ActionScope, ConnectionExample, CoreAction, CoreActions, SetupStep};
 pub use cloudflare::{CloudflareGrant, IngressMode};
 pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};

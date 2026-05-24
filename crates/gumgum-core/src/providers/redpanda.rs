@@ -33,10 +33,16 @@ pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
     ]
 }
 
-pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<crate::ConnectionExample> {
     vec![
-        format!("kcat -b {dns}:9092 -t {name}"),
-        format!("KAFKA_BROKERS={dns}:9092 KAFKA_TOPIC={name}"),
+        crate::ConnectionExample::KafkaCat {
+            name: name.to_owned(),
+            dns: dns.to_owned(),
+        },
+        crate::ConnectionExample::KafkaEnvironment {
+            name: name.to_owned(),
+            dns: dns.to_owned(),
+        },
     ]
 }
 

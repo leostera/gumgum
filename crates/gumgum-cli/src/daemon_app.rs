@@ -658,7 +658,7 @@ fn missing_provider_credentials_report(
     name: String,
     dns: String,
     provider: String,
-    connection_examples: Vec<String>,
+    connection_examples: Vec<gumgum_core::ConnectionExample>,
 ) -> ObjectReport {
     ObjectReport {
         ok: false,

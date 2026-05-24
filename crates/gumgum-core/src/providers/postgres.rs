@@ -32,10 +32,16 @@ pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
     ]
 }
 
-pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<crate::ConnectionExample> {
     vec![
-        format!("psql postgres://{name}:<password>@{dns}:5432/{name}"),
-        format!("pgAdmin host={dns} port=5432 database={name} username={name}"),
+        crate::ConnectionExample::PostgresPsql {
+            name: name.to_owned(),
+            dns: dns.to_owned(),
+        },
+        crate::ConnectionExample::PgAdmin {
+            name: name.to_owned(),
+            dns: dns.to_owned(),
+        },
     ]
 }
 

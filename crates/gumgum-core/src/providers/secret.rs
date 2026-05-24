@@ -26,10 +26,10 @@ pub(crate) fn actions(safe_name: &str, _dns: &str) -> CoreActions {
     ]
 }
 
-pub(crate) fn connection_examples(name: &str, _dns: &str) -> Vec<String> {
+pub(crate) fn connection_examples(name: &str, _dns: &str) -> Vec<crate::ConnectionExample> {
     vec![
-        format!("bw get item {name}"),
-        format!("bitwarden://gumgum/{name}"),
+        crate::ConnectionExample::BitwardenCli { name: name.to_owned() },
+        crate::ConnectionExample::BitwardenUri { name: name.to_owned() },
     ]
 }
 

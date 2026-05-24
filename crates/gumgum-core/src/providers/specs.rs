@@ -35,7 +35,7 @@ pub fn object_provider_plan(capability: Capability, name: &str, dns: &str) -> Ob
     }
 }
 
-pub fn connection_examples(capability: Capability, name: &str, dns: &str) -> Vec<String> {
+pub fn connection_examples(capability: Capability, name: &str, dns: &str) -> Vec<crate::ConnectionExample> {
     match capability {
         Capability::Db => super::postgres::connection_examples(name, dns),
         Capability::Kv => super::redis::connection_examples(name, dns),

@@ -1421,16 +1421,10 @@ pub fn object_dns(kind: &str, name: &str, root_domain: &str) -> String {
     format!("{}.{kind}.{root_domain}", crate::sanitize_name(name))
 }
 
-pub fn connection_examples(kind: &str, name: &str, dns: &str) -> Vec<String> {
+pub fn connection_examples(kind: &str, name: &str, dns: &str) -> Vec<crate::ConnectionExample> {
     match kind {
-        "db" | "database" => vec![
-            format!("psql postgres://{name}:<password>@{dns}:5432/{name}"),
-            format!("pgAdmin host={dns} port=5432 database={name} username={name}"),
-        ],
-        "kv" => vec![
-            format!("redis-cli -u redis://{dns}:6379/0"),
-            format!("RedisInsight host={dns} port=6379 database=0"),
-        ],
+        "db" | "database" => crate::providers::connection_examples(Capability::Db, name, dns),
+        "kv" => crate::providers::connection_examples(Capability::Kv, name, dns),
         _ => Vec::new(),
     }
 }
