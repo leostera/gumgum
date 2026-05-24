@@ -8,7 +8,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = "0"
 serde_json = "1"
 gumgum-api = { path = "../crates/gumgum-api" }
 gumgum-cli = { path = "../crates/gumgum-cli" }
