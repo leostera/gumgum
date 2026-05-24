@@ -49,6 +49,9 @@ async fn ensure_platform_container(
         let targets = load_prometheus_scrapes()?;
         ensure_prometheus_config(&targets)?;
     }
+    if provider.container == "gumgum-alloy" {
+        ensure_alloy_config()?;
+    }
     let desired = platform_run_spec(provider, root_domain);
     if let Some(existing) = docker.inspect_container(&provider.container).await? {
         let desired_fingerprint = platform_fingerprint(&desired);
@@ -145,6 +148,14 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
                 prometheus_config_path().display()
             ),
         ],
+        "gumgum-alloy" => vec![
+            "/var/run/docker.sock:/var/run/docker.sock:ro".to_owned(),
+            "/gumgum/volumes/platform/alloy:/var/lib/alloy".to_owned(),
+            format!(
+                "{}:/etc/alloy/config.alloy:ro",
+                alloy_config_path().display()
+            ),
+        ],
         "gumgum-docker-proxy" => vec!["/var/run/docker.sock:/var/run/docker.sock:ro".to_owned()],
         "gumgum-node-exporter" => vec!["/:/host:ro,rslave".to_owned()],
         "gumgum-cadvisor" => vec![
@@ -195,6 +206,12 @@ fn platform_command(provider: &ProviderSpec) -> Vec<String> {
             "-storage.trace.backend=local".to_owned(),
             "-storage.trace.local.path=/tmp/tempo/traces".to_owned(),
             "-auth.enabled=false".to_owned(),
+        ],
+        "gumgum-alloy" => vec![
+            "run".to_owned(),
+            "--storage.path=/var/lib/alloy".to_owned(),
+            "--server.http.listen-addr=0.0.0.0:12345".to_owned(),
+            "/etc/alloy/config.alloy".to_owned(),
         ],
         "gumgum-node-exporter" => vec!["--path.rootfs=/host".to_owned()],
         _ => Vec::new(),
@@ -253,6 +270,10 @@ fn prometheus_config_path() -> PathBuf {
     prometheus_state_dir().join("prometheus.yml")
 }
 
+fn alloy_config_path() -> PathBuf {
+    prometheus_state_dir().join("alloy.river")
+}
+
 fn prometheus_scrapes_path() -> PathBuf {
     prometheus_state_dir().join("prometheus-scrapes.json")
 }
@@ -292,6 +313,81 @@ fn save_prometheus_scrapes(targets: &[PrometheusScrapeTarget]) -> crate::Result<
     })?;
     std::fs::write(path, bytes)
         .map_err(|error| io_error("could not write Prometheus scrape state", error))
+}
+
+fn ensure_alloy_config() -> crate::Result<()> {
+    let path = alloy_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| io_error("could not create Alloy config directory", error))?;
+    }
+    std::fs::write(path, alloy_config())
+        .map_err(|error| io_error("could not write Alloy config", error))
+}
+
+fn alloy_config() -> String {
+    r#"discovery.docker "gumgum" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+discovery.relabel "gumgum_logs" {
+  targets = discovery.docker.gumgum.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_gumgum_managed"]
+    regex         = ".+"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_gumgum_managed"]
+    target_label  = "gumgum_managed"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_gumgum_environment"]
+    target_label  = "environment"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_gumgum_worker"]
+    target_label  = "worker"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_gumgum_platform_service"]
+    target_label  = "platform_service"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "gumgum-docker-logs"
+  }
+}
+
+loki.source.docker "gumgum" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.gumgum_logs.output
+  relabel_rules    = discovery.relabel.gumgum_logs.rules
+  refresh_interval = "15s"
+  labels           = { source = "docker" }
+  forward_to       = [loki.write.gumgum.receiver]
+}
+
+loki.write "gumgum" {
+  endpoint {
+    url = "http://gumgum-loki:3100/loki/api/v1/push"
+  }
+}
+"#
+    .to_owned()
 }
 
 fn ensure_prometheus_config(targets: &[PrometheusScrapeTarget]) -> crate::Result<()> {
@@ -691,6 +787,14 @@ fn platform_specs(_root_domain: &str) -> Vec<ProviderSpec> {
         },
         ProviderSpec {
             capability: Capability::Observability,
+            provider: "alloy.platform".to_owned(),
+            container: "gumgum-alloy".to_owned(),
+            image: "grafana/alloy:latest".to_owned(),
+            port: 12345,
+            protocol: "http".to_owned(),
+        },
+        ProviderSpec {
+            capability: Capability::Observability,
             provider: "node-exporter.platform".to_owned(),
             container: "gumgum-node-exporter".to_owned(),
             image: "prom/node-exporter:latest".to_owned(),
@@ -731,6 +835,7 @@ mod tests {
         assert!(specs.iter().any(|spec| spec.container == "gumgum-grafana"));
         assert!(specs.iter().any(|spec| spec.container == "gumgum-loki"));
         assert!(specs.iter().any(|spec| spec.container == "gumgum-tempo"));
+        assert!(specs.iter().any(|spec| spec.container == "gumgum-alloy"));
         assert!(
             specs
                 .iter()
@@ -754,6 +859,17 @@ mod tests {
         assert!(config.contains("job_name: gumgum-docker"));
         assert!(config.contains("tcp://gumgum-docker-proxy:2375"));
         assert!(config.contains("__meta_docker_container_label_prometheus_scrape"));
+    }
+
+    #[test]
+    fn alloy_config_ships_gumgum_docker_logs_to_loki() {
+        let config = alloy_config();
+        assert!(config.contains("loki.source.docker"));
+        assert!(config.contains("loki.write"));
+        assert!(config.contains("http://gumgum-loki:3100/loki/api/v1/push"));
+        assert!(config.contains("__meta_docker_container_label_gumgum_managed"));
+        assert!(config.contains("target_label  = \"environment\""));
+        assert!(config.contains("target_label  = \"worker\""));
     }
 
     #[test]
@@ -860,6 +976,10 @@ mod tests {
             ),
             ("gumgum-loki", "/gumgum/volumes/platform/loki:/loki"),
             ("gumgum-tempo", "/gumgum/volumes/platform/tempo:/tmp/tempo"),
+            (
+                "gumgum-alloy",
+                "/gumgum/volumes/platform/alloy:/var/lib/alloy",
+            ),
         ] {
             let provider = specs
                 .iter()
