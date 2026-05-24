@@ -124,6 +124,12 @@ fn platform_env(provider: &ProviderSpec, root_domain: &str) -> Vec<(String, Stri
                 format!("https://grafana.{root_domain}/"),
             ),
         ]
+    } else if provider.container == "gumgum-docker-proxy" {
+        vec![
+            ("CONTAINERS".to_owned(), "1".to_owned()),
+            ("NETWORKS".to_owned(), "1".to_owned()),
+            ("INFO".to_owned(), "1".to_owned()),
+        ]
     } else {
         Vec::new()
     }
@@ -134,12 +140,12 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
         "gumgum-grafana" => vec!["gumgum-grafana-data:/var/lib/grafana".to_owned()],
         "gumgum-prometheus" => vec![
             "gumgum-prometheus-data:/prometheus".to_owned(),
-            "/var/run/docker.sock:/var/run/docker.sock:ro".to_owned(),
             format!(
                 "{}:/etc/prometheus/prometheus.yml:ro",
                 prometheus_config_path().display()
             ),
         ],
+        "gumgum-docker-proxy" => vec!["/var/run/docker.sock:/var/run/docker.sock:ro".to_owned()],
         "gumgum-node-exporter" => vec!["/:/host:ro,rslave".to_owned()],
         "gumgum-cadvisor" => vec![
             "/:/rootfs:ro".to_owned(),
@@ -353,7 +359,7 @@ scrape_configs:
 
   - job_name: gumgum-docker
     docker_sd_configs:
-      - host: unix:///var/run/docker.sock
+      - host: tcp://gumgum-docker-proxy:2375
         refresh_interval: 30s
     relabel_configs:
       - source_labels: [__meta_docker_container_label_prometheus_scrape]
@@ -690,6 +696,14 @@ fn platform_specs(_root_domain: &str) -> Vec<ProviderSpec> {
             port: 8080,
             protocol: "http".to_owned(),
         },
+        ProviderSpec {
+            capability: Capability::Observability,
+            provider: "docker-proxy.platform".to_owned(),
+            container: "gumgum-docker-proxy".to_owned(),
+            image: "tecnativa/docker-socket-proxy:latest".to_owned(),
+            port: 2375,
+            protocol: "http".to_owned(),
+        },
     ]
 }
 
@@ -714,6 +728,11 @@ mod tests {
                 .any(|spec| spec.container == "gumgum-node-exporter")
         );
         assert!(specs.iter().any(|spec| spec.container == "gumgum-cadvisor"));
+        assert!(
+            specs
+                .iter()
+                .any(|spec| spec.container == "gumgum-docker-proxy")
+        );
         assert!(specs.iter().all(|spec| !spec.container.contains("preview")));
         assert!(specs.iter().all(|spec| !spec.container.contains("prod")));
     }
@@ -724,7 +743,7 @@ mod tests {
         assert!(config.contains("job_name: gumgum-host"));
         assert!(config.contains("job_name: gumgum-containers"));
         assert!(config.contains("job_name: gumgum-docker"));
-        assert!(config.contains("unix:///var/run/docker.sock"));
+        assert!(config.contains("tcp://gumgum-docker-proxy:2375"));
         assert!(config.contains("__meta_docker_container_label_prometheus_scrape"));
     }
 
@@ -804,7 +823,8 @@ mod tests {
                 .any(|bind| bind.ends_with(":/etc/prometheus/prometheus.yml:ro"))
         );
         assert!(
-            spec.binds
+            !spec
+                .binds
                 .contains(&"/var/run/docker.sock:/var/run/docker.sock:ro".to_owned())
         );
         assert!(spec.command.contains(&"--web.enable-lifecycle".to_owned()));
