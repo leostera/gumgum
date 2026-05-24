@@ -95,7 +95,7 @@ impl DaemonHealthClient {
             ErrorCode::Io,
             ErrorKind::DaemonReachFailed,
         )
-        .likely_cause(last_error.unwrap_or_else(|| "health check timed out".to_owned()))
+        .likely_cause(last_error.unwrap_or_else(|| "health_check_timeout".to_owned()))
         .next_command(format!("gumgum setup {host} --domain <domain>"))
         .build())
     }

@@ -193,7 +193,7 @@ async fn wait_for_postgres(
         ErrorCode::Io,
         ErrorKind::PostgresProviderReadinessFailed,
     )
-    .likely_cause(last_error.unwrap_or_else(|| "readiness check timed out".to_owned()))
+    .likely_cause(last_error.unwrap_or_else(|| "readiness_check_timeout".to_owned()))
     .build())
 }
 

@@ -116,9 +116,11 @@ pub async fn ensure_authorized_for_zone(
             ErrorKind::CloudflareTokenRequired,
         )
         .likely_cause(format!(
-            "zone={zone_name}; cloudflare ingress needs an interactive token prompt"
+            "zone={zone_name}; token_prompt=interactive_required"
         ))
-        .next_command("rerun without --json or --dry-run in an interactive terminal")
+        .next_command(format!(
+            "gumgum domain add {zone_name} --provider cloudflare --ingress cloudflare"
+        ))
         .build());
     }
     Err(GumgumError::structured_kind(
@@ -126,10 +128,10 @@ pub async fn ensure_authorized_for_zone(
         ErrorCode::InvalidArgs,
         ErrorKind::CloudflareTokenRequired,
     )
-    .likely_cause(format!(
-        "zone={zone_name}; cloudflare ingress needs a token supplied by the caller"
+    .likely_cause(format!("zone={zone_name}; token_prompt=caller_required"))
+    .next_command(format!(
+        "gumgum domain add {zone_name} --provider cloudflare --ingress cloudflare"
     ))
-    .next_command("collect a token using the typed Cloudflare token prompt")
     .build())
 }
 

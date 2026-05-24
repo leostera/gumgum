@@ -65,9 +65,7 @@ impl CloudflareClient {
                     ErrorCode::InvalidArgs,
                     ErrorKind::CloudflareZoneNotFound,
                 )
-                .likely_cause(format!(
-                    "zone={name}; check that the API token is scoped to this zone"
-                ))
+                .likely_cause(format!("zone={name}; token_scope=missing_zone"))
                 .build()
             })
     }

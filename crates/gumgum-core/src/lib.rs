@@ -978,6 +978,11 @@ mod presentation_boundary_tests {
             concat!("graph ", "TD"),
             concat!("All zones ", "GumGum should manage"),
             concat!("Account used ", "for Cloudflare Tunnel ingress"),
+            concat!("check that ", "the API token"),
+            concat!("interactive ", "token prompt"),
+            concat!("collect a ", "token"),
+            concat!("health check ", "timed out"),
+            concat!("readiness check ", "timed out"),
             concat!("provider", " reconciled"),
             concat!("applied", " deployment"),
         ];
