@@ -66,6 +66,16 @@ fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
         gumgum_core::ErrorKind::ProviderCredentialsWriteFailed => {
             "could not write provider credentials"
         }
+        gumgum_core::ErrorKind::GraphDirectoryCreateFailed => "could not create graph directory",
+        gumgum_core::ErrorKind::GraphDatabaseUrlBuildFailed => "could not build graph database URL",
+        gumgum_core::ErrorKind::GraphDatabaseOpenFailed => {
+            "could not open graph database for migrations"
+        }
+        gumgum_core::ErrorKind::GraphDatabaseMigrationFailed => {
+            "could not run graph database migrations"
+        }
+        gumgum_core::ErrorKind::SetupCommandSpawnFailed => "failed to run setup command",
+        gumgum_core::ErrorKind::SetupCommandFailed => "setup command failed",
     }
 }
 

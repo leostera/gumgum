@@ -264,6 +264,12 @@ pub enum ErrorKind {
     ProviderCredentialsReadFailed,
     ProviderCredentialsParseFailed,
     ProviderCredentialsWriteFailed,
+    GraphDirectoryCreateFailed,
+    GraphDatabaseUrlBuildFailed,
+    GraphDatabaseOpenFailed,
+    GraphDatabaseMigrationFailed,
+    SetupCommandSpawnFailed,
+    SetupCommandFailed,
 }
 
 impl ErrorKind {
@@ -289,6 +295,12 @@ impl ErrorKind {
             ErrorKind::ProviderCredentialsReadFailed => "config.provider_credentials.read_failed",
             ErrorKind::ProviderCredentialsParseFailed => "config.provider_credentials.parse_failed",
             ErrorKind::ProviderCredentialsWriteFailed => "config.provider_credentials.write_failed",
+            ErrorKind::GraphDirectoryCreateFailed => "config.graph_directory.create_failed",
+            ErrorKind::GraphDatabaseUrlBuildFailed => "config.graph_database.url_build_failed",
+            ErrorKind::GraphDatabaseOpenFailed => "config.graph_database.open_failed",
+            ErrorKind::GraphDatabaseMigrationFailed => "config.graph_database.migration_failed",
+            ErrorKind::SetupCommandSpawnFailed => "setup.command.spawn_failed",
+            ErrorKind::SetupCommandFailed => "setup.command.failed",
         }
     }
 }
