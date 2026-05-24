@@ -74,7 +74,7 @@ status_smoke() {
   if [[ -n "$ARTIFACT_DIR" ]]; then cp "$status_file" "$ARTIFACT_DIR/status.txt"; fi
 
   require_contains "$status_file" "gumgumd: healthy"
-  require_contains "$status_file" "Providers: 12/12 running"
+  require_contains "$status_file" "Providers: 9/9 running"
   if grep -Fq "provider warning" "$status_file"; then
     fail "status emitted provider warning"
   fi
