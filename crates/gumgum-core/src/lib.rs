@@ -677,6 +677,19 @@ mod presentation_boundary_tests {
         );
     }
 
+    #[test]
+    fn status_report_uses_symbolic_status_not_rendered_message() {
+        let lib = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
+            .expect("read lib.rs");
+        let status_block = lib
+            .split("pub struct StatusReport")
+            .nth(1)
+            .and_then(|tail| tail.split("#[derive").next())
+            .expect("StatusReport block exists");
+        assert!(status_block.contains("pub status: StatusMessage"));
+        assert!(!status_block.contains("message: String"));
+    }
+
     fn collect_print_violations(path: &Path, forbidden: &[&str], violations: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(path) else {
             return;
