@@ -838,7 +838,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(actions.as_slice(), [crate::CoreAction::ProviderConfigured { provider, .. }] if provider == "manual.main"));
+        assert!(
+            matches!(actions.as_slice(), [crate::CoreAction::ProviderConfigured { provider, .. }] if provider == "manual.main")
+        );
     }
 
     #[tokio::test]
@@ -971,7 +973,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(matches!(actions.as_slice(), [crate::CoreAction::ProviderConfigured { provider, .. }] if provider == "manual.main"));
+        assert!(
+            matches!(actions.as_slice(), [crate::CoreAction::ProviderConfigured { provider, .. }] if provider == "manual.main")
+        );
         let events = crate::GraphStore::new(graph_path.clone())
             .list_reconcile_events(10)
             .unwrap();
@@ -1053,7 +1057,10 @@ mod tests {
 
         assert!(actions.iter().any(|action| matches!(
             action,
-            crate::CoreAction::ProviderObjectDesiredRemoved { capability: Capability::Secret, .. }
+            crate::CoreAction::ProviderObjectDesiredRemoved {
+                capability: Capability::Secret,
+                ..
+            }
         )));
     }
 
@@ -1167,7 +1174,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(matches!(actions.first(), Some(crate::CoreAction::Planned { target, .. }) if target == "deployment/api"));
+        assert!(
+            matches!(actions.first(), Some(crate::CoreAction::Planned { target, .. }) if target == "deployment/api")
+        );
     }
 
     #[tokio::test]

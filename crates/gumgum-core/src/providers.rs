@@ -265,7 +265,7 @@ mod tests {
         assert!(
             vaultwarden::connection_examples("stripe-api-key", "stripe.secret.example.test")
                 .iter()
-                .any(|example| example.contains("bw get item"))
+                .any(|example| matches!(example, crate::ConnectionExample::BitwardenCli { name } if name == "stripe-api-key"))
         );
     }
 
@@ -281,7 +281,10 @@ mod tests {
         assert_eq!(plan.provider.provider, "secrets.platform");
         assert!(actions.iter().any(|action| matches!(
             action,
-            crate::CoreAction::ProviderObjectDesiredRemoved { capability: Capability::Secret, .. }
+            crate::CoreAction::ProviderObjectDesiredRemoved {
+                capability: Capability::Secret,
+                ..
+            }
         )));
     }
 
@@ -307,7 +310,7 @@ mod tests {
         assert!(
             plan.connection_examples
                 .iter()
-                .any(|example| example.contains("S3_BUCKET=User Uploads"))
+                .any(|example| matches!(example, crate::ConnectionExample::S3Environment { name, .. } if name == "User Uploads"))
         );
     }
 }
