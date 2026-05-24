@@ -21,7 +21,7 @@ pub async fn run_setup_command_streaming(cmd: &mut TokioCommand, quiet: bool) ->
             ErrorCode::Io,
             ErrorKind::SetupCommandFailed,
         )
-        .likely_cause(format!("exit status {status}"))
+        .likely_cause(exit_status_cause(status))
         .next_command("gumgum setup <host> --domain <domain> --dry-run")
         .build())
     }
@@ -42,12 +42,19 @@ pub async fn run_setup_command(cmd: &mut TokioCommand) -> crate::Result<()> {
         ErrorKind::SetupCommandFailed,
     )
     .likely_cause(if stderr.is_empty() {
-        format!("exit status {}", output.status)
+        exit_status_cause(output.status)
     } else {
         stderr
     })
     .next_command("gumgum setup <host> --domain <domain> --dry-run")
     .build())
+}
+
+fn exit_status_cause(status: std::process::ExitStatus) -> String {
+    status
+        .code()
+        .map(|code| format!("exit_status={code}"))
+        .unwrap_or_else(|| "exit_status=unknown".to_owned())
 }
 
 fn setup_error(kind: ErrorKind, source: impl std::fmt::Display) -> GumgumError {

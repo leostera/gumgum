@@ -81,7 +81,7 @@ impl DaemonHealthClient {
             match Self::ping(host).await {
                 Ok(report) if report.ok => return Ok(report),
                 Ok(report) => {
-                    last_error = Some(format!("gumgumd health returned ok={}", report.ok));
+                    last_error = Some(format!("health_ok={}", report.ok));
                 }
                 Err(err) => {
                     let report = err.to_report();

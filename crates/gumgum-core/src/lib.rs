@@ -987,6 +987,8 @@ mod presentation_boundary_tests {
             concat!("readiness check ", "timed out"),
             concat!("remove stale ", "deployment container"),
             concat!("add the domain ", "to this server"),
+            concat!("exit ", "status "),
+            concat!("health returned ", "ok"),
             concat!("provider", " reconciled"),
             concat!("applied", " deployment"),
         ];
