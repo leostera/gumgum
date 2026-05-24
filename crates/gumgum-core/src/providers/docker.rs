@@ -62,13 +62,40 @@ fn provider_environment_label(provider: &ProviderSpec) -> Option<String> {
 }
 
 pub(crate) fn provider_binds(provider: &ProviderSpec) -> Vec<String> {
-    let volume = provider.container.replace('.', "-");
-    match provider.capability {
-        crate::Capability::Db => vec![format!("{volume}-data:/var/lib/postgresql/data")],
-        crate::Capability::Kv => vec![format!("{volume}-data:/data")],
-        crate::Capability::Blob => vec![format!("{volume}-data:/data")],
-        crate::Capability::Queue => vec![format!("{volume}-data:/var/lib/redpanda/data")],
-        _ => Vec::new(),
+    let env = provider
+        .provider
+        .rsplit_once('.')
+        .map(|(_, env)| env)
+        .unwrap_or("main");
+    let kind = match provider.capability {
+        crate::Capability::Db => Some(("postgres", "/var/lib/postgresql/data")),
+        crate::Capability::Kv => Some(("redis", "/data")),
+        crate::Capability::Blob => Some(("minio", "/data")),
+        crate::Capability::Queue => Some(("redpanda", "/var/lib/redpanda/data")),
+        _ => None,
+    };
+    kind.map(|(kind, mount)| format!("/gumgum/volumes/providers/{env}/{kind}:{mount}"))
+        .into_iter()
+        .collect()
+}
+
+fn provider_bind_fingerprint(provider: &ProviderSpec) -> String {
+    provider_binds(provider).join("|")
+}
+
+pub(crate) async fn provider_needs_recreate(provider: &ProviderSpec) -> bool {
+    let Ok(docker) = DockerEngine::local() else {
+        return false;
+    };
+    match docker.inspect_container(&provider.container).await {
+        Ok(Some(snapshot)) => {
+            snapshot
+                .labels
+                .get("gumgum.provider.binds")
+                .map(String::as_str)
+                != Some(provider_bind_fingerprint(provider).as_str())
+        }
+        _ => false,
     }
 }
 
@@ -79,7 +106,13 @@ pub(crate) async fn create_provider_container(
 ) -> crate::Result<Vec<String>> {
     let docker = DockerEngine::local()?;
     docker.pull_image(&provider.image).await?;
-    let mut labels = HashMap::from([("gumgum.managed".to_owned(), "provider".to_owned())]);
+    let mut labels = HashMap::from([
+        ("gumgum.managed".to_owned(), "provider".to_owned()),
+        (
+            "gumgum.provider.binds".to_owned(),
+            provider_bind_fingerprint(provider),
+        ),
+    ]);
     if let Some(env) = provider_environment_label(provider) {
         labels.insert("gumgum.environment".to_owned(), env);
     }
@@ -130,18 +163,30 @@ mod tests {
             (
                 Capability::Db,
                 "gumgum-prod-provider-postgres",
+                "postgres",
                 "/var/lib/postgresql/data",
             ),
-            (Capability::Kv, "gumgum-prod-provider-redis", "/data"),
-            (Capability::Blob, "gumgum-prod-provider-minio", "/data"),
+            (
+                Capability::Kv,
+                "gumgum-prod-provider-redis",
+                "redis",
+                "/data",
+            ),
+            (
+                Capability::Blob,
+                "gumgum-prod-provider-minio",
+                "minio",
+                "/data",
+            ),
             (
                 Capability::Queue,
                 "gumgum-prod-provider-redpanda",
+                "redpanda",
                 "/var/lib/redpanda/data",
             ),
         ];
 
-        for (capability, container, mount) in cases {
+        for (capability, container, kind, mount) in cases {
             let provider = ProviderSpec {
                 capability,
                 provider: format!("{}.prod", capability.provider()),
@@ -152,7 +197,7 @@ mod tests {
             };
             assert_eq!(
                 provider_binds(&provider),
-                vec![format!("{container}-data:{mount}")]
+                vec![format!("/gumgum/volumes/providers/prod/{kind}:{mount}")]
             );
         }
     }

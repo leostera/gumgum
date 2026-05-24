@@ -130,7 +130,12 @@ impl LocalPlatform {
                 .ports
                 .iter()
                 .any(|port| port.host_port == 443 && port.container_port == 443);
-            if has_http && has_https {
+            let has_volume_fingerprint = existing
+                .labels
+                .get("gumgum.platform.fingerprint")
+                .map(String::as_str)
+                == Some("caddy-v2");
+            if has_http && has_https && has_volume_fingerprint {
                 docker.start_container(CADDY_CONTAINER).await?;
                 return Ok(());
             }
@@ -156,9 +161,16 @@ impl LocalPlatform {
             image: "lucaslorentz/caddy-docker-proxy:2.9-alpine".to_owned(),
             network: GUMGUM_NETWORK.to_owned(),
             restart_unless_stopped: true,
-            labels: HashMap::new(),
+            labels: HashMap::from([(
+                "gumgum.platform.fingerprint".to_owned(),
+                "caddy-v2".to_owned(),
+            )]),
             env: Vec::new(),
-            binds: vec![socket_mount.to_owned()],
+            binds: vec![
+                socket_mount.to_owned(),
+                "/gumgum/volumes/platform/caddy-data:/data".to_owned(),
+                "/gumgum/volumes/platform/caddy-config:/config".to_owned(),
+            ],
             ports,
             command: Vec::new(),
             entrypoint: Vec::new(),

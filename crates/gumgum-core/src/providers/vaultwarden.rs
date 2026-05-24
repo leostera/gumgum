@@ -46,7 +46,7 @@ pub(crate) async fn ensure() -> crate::Result<Vec<String>> {
             .labels
             .get("gumgum.platform.fingerprint")
             .map(String::as_str)
-            == Some("v2")
+            == Some("v3")
         {
             return start_existing(&provider, "could not start vaultwarden provider").await;
         }
@@ -69,13 +69,13 @@ pub(crate) async fn ensure() -> crate::Result<Vec<String>> {
                     "vaultwarden".to_owned(),
                 ),
                 ("gumgum.capability".to_owned(), "secret".to_owned()),
-                ("gumgum.platform.fingerprint".to_owned(), "v2".to_owned()),
+                ("gumgum.platform.fingerprint".to_owned(), "v3".to_owned()),
             ]),
             env: vec![
                 ("SIGNUPS_ALLOWED".to_owned(), "false".to_owned()),
                 ("WEBSOCKET_ENABLED".to_owned(), "true".to_owned()),
             ],
-            binds: vec!["gumgum-vaultwarden-data:/data".to_owned()],
+            binds: vec!["/gumgum/volumes/platform/vaultwarden:/data".to_owned()],
             ports: Vec::new(),
             command: Vec::new(),
             entrypoint: Vec::new(),

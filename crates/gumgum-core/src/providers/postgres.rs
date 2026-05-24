@@ -1,4 +1,6 @@
-use super::docker::{create_provider_container, ensure_network, inspect, start_existing};
+use super::docker::{
+    create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
+};
 use crate::{Capability, DockerEngine, sanitize_name};
 
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
@@ -81,9 +83,15 @@ pub(crate) async fn ensure(
     credentials: ProviderCredentials,
 ) -> crate::Result<Vec<String>> {
     ensure_network().await?;
-    let actions = if inspect(&provider.container).await {
+    let actions = if inspect(&provider.container).await && !provider_needs_recreate(provider).await
+    {
         start_existing(provider, "could not start postgres provider").await?
     } else {
+        if inspect(&provider.container).await {
+            DockerEngine::local()?
+                .remove_container_force(&provider.container)
+                .await?;
+        }
         create_provider_container(
             provider,
             vec![

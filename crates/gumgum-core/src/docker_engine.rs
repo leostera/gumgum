@@ -194,6 +194,7 @@ impl DockerEngine {
         };
         use bollard::query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions};
 
+        ensure_host_bind_dirs(&spec.binds)?;
         let exposed_ports = if spec.ports.is_empty() {
             None
         } else {
@@ -426,6 +427,26 @@ fn unique_suffix() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos().to_string())
         .unwrap_or_else(|_| "0".to_owned())
+}
+
+fn ensure_host_bind_dirs(binds: &[String]) -> Result<()> {
+    for bind in binds {
+        let Some((host, _container)) = bind.split_once(':') else {
+            continue;
+        };
+        if host.starts_with("/gumgum/volumes/") {
+            std::fs::create_dir_all(host).map_err(|source| {
+                GumgumError::structured(
+                    Subsystem::Setup,
+                    ErrorCode::Io,
+                    format!("could not create host volume directory {host}"),
+                )
+                .likely_cause(source.to_string())
+                .build()
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn docker_error(source: DockerError) -> GumgumError {

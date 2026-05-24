@@ -1,4 +1,6 @@
-use super::docker::{create_provider_container, ensure_network, inspect, start_existing};
+use super::docker::{
+    create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
+};
 use crate::{Capability, DockerEngine, sanitize_name};
 
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
@@ -50,8 +52,13 @@ pub(crate) async fn delete_object(plan: &ObjectProviderPlan) -> crate::Result<Ve
 
 pub(crate) async fn ensure(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
     ensure_network().await?;
-    if inspect(&provider.container).await {
+    if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
         return start_existing(provider, "could not start redis provider").await;
+    }
+    if inspect(&provider.container).await {
+        DockerEngine::local()?
+            .remove_container_force(&provider.container)
+            .await?;
     }
     create_provider_container(provider, Vec::new(), Vec::new()).await
 }
@@ -61,7 +68,7 @@ pub(crate) async fn ensure_with_credentials(
     credentials: ProviderCredentials,
 ) -> crate::Result<Vec<String>> {
     ensure_network().await?;
-    if inspect(&provider.container).await {
+    if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
         let mut actions = start_existing(provider, "could not start redis provider").await?;
         if !redis_accepts_password(provider, &credentials).await? {
             DockerEngine::local()?
@@ -74,6 +81,11 @@ pub(crate) async fn ensure_with_credentials(
             actions.extend(create_redis_provider_container(provider, credentials).await?);
         }
         return Ok(actions);
+    }
+    if inspect(&provider.container).await {
+        DockerEngine::local()?
+            .remove_container_force(&provider.container)
+            .await?;
     }
     create_redis_provider_container(provider, credentials).await
 }

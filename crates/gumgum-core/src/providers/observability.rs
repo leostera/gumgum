@@ -137,9 +137,9 @@ fn platform_env(provider: &ProviderSpec, root_domain: &str) -> Vec<(String, Stri
 
 fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
     match provider.container.as_str() {
-        "gumgum-grafana" => vec!["gumgum-grafana-data:/var/lib/grafana".to_owned()],
+        "gumgum-grafana" => vec!["/gumgum/volumes/platform/grafana:/var/lib/grafana".to_owned()],
         "gumgum-prometheus" => vec![
-            "gumgum-prometheus-data:/prometheus".to_owned(),
+            "/gumgum/volumes/platform/prometheus:/prometheus".to_owned(),
             format!(
                 "{}:/etc/prometheus/prometheus.yml:ro",
                 prometheus_config_path().display()
@@ -154,8 +154,8 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
             "/var/lib/docker:/var/lib/docker:ro".to_owned(),
             "/dev/disk:/dev/disk:ro".to_owned(),
         ],
-        "gumgum-loki" => vec!["gumgum-loki-data:/loki".to_owned()],
-        "gumgum-tempo" => vec!["gumgum-tempo-data:/tmp/tempo".to_owned()],
+        "gumgum-loki" => vec!["/gumgum/volumes/platform/loki:/loki".to_owned()],
+        "gumgum-tempo" => vec!["/gumgum/volumes/platform/tempo:/tmp/tempo".to_owned()],
         _ => Vec::new(),
     }
 }
@@ -832,13 +832,19 @@ mod tests {
     }
 
     #[test]
-    fn platform_stateful_services_use_named_volumes() {
+    fn platform_stateful_services_use_host_volume_paths() {
         let specs = platform_specs("leostera.dev");
         for (container, bind) in [
-            ("gumgum-grafana", "gumgum-grafana-data:/var/lib/grafana"),
-            ("gumgum-prometheus", "gumgum-prometheus-data:/prometheus"),
-            ("gumgum-loki", "gumgum-loki-data:/loki"),
-            ("gumgum-tempo", "gumgum-tempo-data:/tmp/tempo"),
+            (
+                "gumgum-grafana",
+                "/gumgum/volumes/platform/grafana:/var/lib/grafana",
+            ),
+            (
+                "gumgum-prometheus",
+                "/gumgum/volumes/platform/prometheus:/prometheus",
+            ),
+            ("gumgum-loki", "/gumgum/volumes/platform/loki:/loki"),
+            ("gumgum-tempo", "/gumgum/volumes/platform/tempo:/tmp/tempo"),
         ] {
             let provider = specs
                 .iter()

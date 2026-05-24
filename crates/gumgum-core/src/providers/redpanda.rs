@@ -1,6 +1,8 @@
 use crate::{Capability, DockerEngine, sanitize_name};
 
-use super::docker::{create_provider_container, ensure_network, inspect, start_existing};
+use super::docker::{
+    create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
+};
 use super::types::{ObjectProviderPlan, ProviderSpec};
 
 pub fn spec() -> ProviderSpec {
@@ -51,8 +53,13 @@ pub(crate) async fn delete(plan: &ObjectProviderPlan) -> crate::Result<Vec<Strin
 
 pub(crate) async fn ensure_provider(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
     ensure_network().await?;
-    if inspect(&provider.container).await {
+    if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
         return start_existing(provider, "could not start redpanda provider").await;
+    }
+    if inspect(&provider.container).await {
+        DockerEngine::local()?
+            .remove_container_force(&provider.container)
+            .await?;
     }
     create_provider_container(
         provider,

@@ -16,7 +16,9 @@ const PATH_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'{')
     .add(b'}');
 
-use super::docker::{create_provider_container, ensure_network, inspect, start_existing};
+use super::docker::{
+    create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
+};
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
 use crate::{ContainerRunSpec, DockerEngine};
 use std::collections::HashMap;
@@ -81,8 +83,13 @@ pub(crate) async fn ensure_provider(
     credentials: ProviderCredentials,
 ) -> crate::Result<Vec<String>> {
     ensure_network().await?;
-    if inspect(&provider.container).await {
+    if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
         return start_existing(provider, "could not start minio provider").await;
+    }
+    if inspect(&provider.container).await {
+        DockerEngine::local()?
+            .remove_container_force(&provider.container)
+            .await?;
     }
     create_provider_container(
         provider,
