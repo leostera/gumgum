@@ -297,6 +297,17 @@ pub enum ErrorKind {
     CloudflareTokenRequired,
     CloudflareTokenEmpty,
     PublishedRouteDomainNotManaged,
+    ProviderCredentialsMissing,
+    PostgresProviderReadinessFailed,
+    PostgresDatabaseCreateFailed,
+    MinioObjectInvalidUtf8,
+    MinioProviderContainerInspectFailed,
+    MinioProviderContainerNetworkAddressMissing,
+    MinioS3ApiRequestFailed,
+    MinioS3ListResponseReadFailed,
+    MinioBucketObjectReadFailed,
+    MinioS3ApiReturnedError,
+    BucketObjectPathInvalid,
 }
 
 impl ErrorKind {
@@ -367,6 +378,23 @@ impl ErrorKind {
             ErrorKind::PublishedRouteDomainNotManaged => {
                 "cloudflare.published_route_domain.not_managed"
             }
+            ErrorKind::ProviderCredentialsMissing => "provider.credentials.missing",
+            ErrorKind::PostgresProviderReadinessFailed => "provider.postgres.readiness_failed",
+            ErrorKind::PostgresDatabaseCreateFailed => "provider.postgres.database_create_failed",
+            ErrorKind::MinioObjectInvalidUtf8 => "provider.minio.object.invalid_utf8",
+            ErrorKind::MinioProviderContainerInspectFailed => {
+                "provider.minio.container.inspect_failed"
+            }
+            ErrorKind::MinioProviderContainerNetworkAddressMissing => {
+                "provider.minio.container.network_address_missing"
+            }
+            ErrorKind::MinioS3ApiRequestFailed => "provider.minio.s3_api.request_failed",
+            ErrorKind::MinioS3ListResponseReadFailed => {
+                "provider.minio.s3_api.list_response_read_failed"
+            }
+            ErrorKind::MinioBucketObjectReadFailed => "provider.minio.bucket_object.read_failed",
+            ErrorKind::MinioS3ApiReturnedError => "provider.minio.s3_api.returned_error",
+            ErrorKind::BucketObjectPathInvalid => "provider.bucket_object_path.invalid",
         }
     }
 }
@@ -862,6 +890,9 @@ mod presentation_boundary_tests {
             "cloudflare/api.rs",
             "cloudflare/dns.rs",
             "cloudflare/oauth.rs",
+            "providers/reconciler.rs",
+            "providers/postgres.rs",
+            "providers/minio.rs",
         ];
         let mut violations = Vec::new();
         for file in files {

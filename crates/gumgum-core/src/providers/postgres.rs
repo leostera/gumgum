@@ -1,7 +1,10 @@
 use super::docker::{
     create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
 };
-use crate::{Capability, CoreAction, CoreActions, DockerEngine, sanitize_name};
+use crate::{
+    Capability, CoreAction, CoreActions, DockerEngine, ErrorCode, ErrorKind, GumgumError,
+    Subsystem, sanitize_name,
+};
 
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
 
@@ -185,10 +188,10 @@ async fn wait_for_postgres(
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    Err(crate::GumgumError::structured(
-        crate::Subsystem::Setup,
-        crate::ErrorCode::Io,
-        "postgres provider did not become ready",
+    Err(GumgumError::structured_kind(
+        Subsystem::Setup,
+        ErrorCode::Io,
+        ErrorKind::PostgresProviderReadinessFailed,
     )
     .likely_cause(last_error.unwrap_or_else(|| "readiness check timed out".to_owned()))
     .build())
@@ -308,9 +311,13 @@ async fn run_psql(
         .await
         .map(|_| ())
         .map_err(|error_value| {
-            crate::GumgumError::structured(crate::Subsystem::Setup, crate::ErrorCode::Io, error)
-                .likely_cause(error_value.to_report().message)
-                .build()
+            GumgumError::structured_kind(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                ErrorKind::PostgresDatabaseCreateFailed,
+            )
+            .likely_cause(format!("{error}; {}", error_value.to_report().message))
+            .build()
         })
 }
 
@@ -366,16 +373,16 @@ mod tests {
 
     #[test]
     fn postgres_readiness_error_is_provider_specific() {
-        let error = crate::GumgumError::structured(
-            crate::Subsystem::Setup,
-            crate::ErrorCode::Io,
-            "postgres provider did not become ready",
+        let error = GumgumError::structured_kind(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            ErrorKind::PostgresProviderReadinessFailed,
         )
         .likely_cause("connection refused")
         .build()
         .to_report();
 
-        assert_eq!(error.message, "postgres provider did not become ready");
+        assert_eq!(error.kind, Some(ErrorKind::PostgresProviderReadinessFailed));
         assert_eq!(error.likely_cause.as_deref(), Some("connection refused"));
     }
 

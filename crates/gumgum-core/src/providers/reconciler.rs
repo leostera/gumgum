@@ -1,6 +1,6 @@
 use crate::{Capability, CoreAction, CoreActions};
 #[cfg(test)]
-use crate::{ErrorCode, GumgumError, Subsystem};
+use crate::{ErrorCode, ErrorKind, GumgumError, Subsystem};
 
 use super::types::{ObjectProviderPlan, ProviderConfig, ProviderCredentials, ProviderStatus};
 
@@ -109,11 +109,12 @@ pub(crate) fn provider_credentials(
         .find(|(name, _)| name == provider)
         .map(|(_, credentials)| credentials.clone())
         .ok_or_else(|| {
-            GumgumError::structured(
+            GumgumError::structured_kind(
                 Subsystem::Config,
                 ErrorCode::InvalidArgs,
-                format!("missing credentials for {provider}"),
+                ErrorKind::ProviderCredentialsMissing,
             )
+            .likely_cause(format!("provider={provider}"))
             .build()
         })
 }

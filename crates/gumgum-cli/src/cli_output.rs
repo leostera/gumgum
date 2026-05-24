@@ -121,6 +121,27 @@ fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
         gumgum_core::ErrorKind::PublishedRouteDomainNotManaged => {
             "no managed domain matches published route"
         }
+        gumgum_core::ErrorKind::ProviderCredentialsMissing => "missing provider credentials",
+        gumgum_core::ErrorKind::PostgresProviderReadinessFailed => {
+            "postgres provider did not become ready"
+        }
+        gumgum_core::ErrorKind::PostgresDatabaseCreateFailed => {
+            "could not create postgres database"
+        }
+        gumgum_core::ErrorKind::MinioObjectInvalidUtf8 => "minio object is not valid UTF-8",
+        gumgum_core::ErrorKind::MinioProviderContainerInspectFailed => {
+            "could not inspect minio provider container"
+        }
+        gumgum_core::ErrorKind::MinioProviderContainerNetworkAddressMissing => {
+            "minio provider container has no Docker network address"
+        }
+        gumgum_core::ErrorKind::MinioS3ApiRequestFailed => "could not call minio S3 API",
+        gumgum_core::ErrorKind::MinioS3ListResponseReadFailed => {
+            "could not read minio list response"
+        }
+        gumgum_core::ErrorKind::MinioBucketObjectReadFailed => "could not read minio bucket object",
+        gumgum_core::ErrorKind::MinioS3ApiReturnedError => "minio S3 API returned an error",
+        gumgum_core::ErrorKind::BucketObjectPathInvalid => "bucket object path must be bucket/key",
     }
 }
 

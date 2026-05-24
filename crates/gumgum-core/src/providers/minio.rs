@@ -1,5 +1,6 @@
 use crate::{
-    Capability, CoreAction, CoreActions, ErrorCode, GumgumError, Subsystem, sanitize_name,
+    Capability, CoreAction, CoreActions, ErrorCode, ErrorKind, GumgumError, Subsystem,
+    sanitize_name,
 };
 use hmac::{Hmac, KeyInit, Mac};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
@@ -207,7 +208,7 @@ pub async fn list_objects(
     let body = response
         .text()
         .await
-        .map_err(|source| s3_error("could not read minio list response", source))?;
+        .map_err(|source| s3_error(ErrorKind::MinioS3ListResponseReadFailed, source))?;
     Ok(body
         .split("<Key>")
         .skip(1)
@@ -236,7 +237,7 @@ pub async fn get_object_bytes(
     Ok(response
         .bytes()
         .await
-        .map_err(|source| s3_error("could not read minio bucket object", source))?
+        .map_err(|source| s3_error(ErrorKind::MinioBucketObjectReadFailed, source))?
         .to_vec())
 }
 
@@ -247,10 +248,10 @@ pub async fn get_object(
 ) -> crate::Result<String> {
     let bytes = get_object_bytes(bucket, path, credentials).await?;
     String::from_utf8(bytes).map_err(|source| {
-        GumgumError::structured(
+        GumgumError::structured_kind(
             Subsystem::Setup,
             ErrorCode::InvalidArgs,
-            "minio object is not valid UTF-8",
+            ErrorKind::MinioObjectInvalidUtf8,
         )
         .likely_cause(source.to_string())
         .build()
@@ -367,10 +368,10 @@ async fn minio_endpoint() -> crate::Result<String> {
         .inspect_container("gumgum-provider-minio-main")
         .await?
         .ok_or_else(|| {
-            GumgumError::structured(
+            GumgumError::structured_kind(
                 Subsystem::Setup,
                 ErrorCode::Io,
-                "could not inspect minio provider container",
+                ErrorKind::MinioProviderContainerInspectFailed,
             )
             .build()
         })?;
@@ -381,10 +382,10 @@ async fn minio_endpoint() -> crate::Result<String> {
         .cloned()
         .unwrap_or_default();
     if ip.is_empty() {
-        return Err(GumgumError::structured(
+        return Err(GumgumError::structured_kind(
             Subsystem::Setup,
             ErrorCode::Io,
-            "minio provider container has no Docker network address",
+            ErrorKind::MinioProviderContainerNetworkAddressMissing,
         )
         .build());
     }
@@ -477,16 +478,16 @@ async fn s3_request(request: S3Request<'_>) -> crate::Result<reqwest::Response> 
         .header("authorization", authorization)
         .send()
         .await
-        .map_err(|source| s3_error("could not call minio S3 API", source))?;
+        .map_err(|source| s3_error(ErrorKind::MinioS3ApiRequestFailed, source))?;
     if response.status().is_success() {
         Ok(response)
     } else {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        Err(GumgumError::structured(
+        Err(GumgumError::structured_kind(
             Subsystem::Setup,
             ErrorCode::Io,
-            "minio S3 API returned an error",
+            ErrorKind::MinioS3ApiReturnedError,
         )
         .likely_cause(format!("{status}: {text}"))
         .build())
@@ -519,26 +520,28 @@ fn split_remote_object(value: &str) -> crate::Result<(String, String)> {
         .trim_start_matches('/')
         .split_once('/')
         .ok_or_else(|| {
-            GumgumError::structured(
+            GumgumError::structured_kind(
                 Subsystem::Cli,
                 ErrorCode::InvalidArgs,
-                format!("bucket object path must be bucket/key: {value}"),
+                ErrorKind::BucketObjectPathInvalid,
             )
+            .likely_cause(format!("path={value}"))
             .build()
         })?;
     if bucket.is_empty() || key.is_empty() {
-        return Err(GumgumError::structured(
+        return Err(GumgumError::structured_kind(
             Subsystem::Cli,
             ErrorCode::InvalidArgs,
-            format!("bucket object path must be bucket/key: {value}"),
+            ErrorKind::BucketObjectPathInvalid,
         )
+        .likely_cause(format!("path={value}"))
         .build());
     }
     Ok((bucket.to_owned(), key.to_owned()))
 }
 
-fn s3_error(message: &str, source: impl ToString) -> GumgumError {
-    GumgumError::structured(Subsystem::Setup, ErrorCode::Io, message)
+fn s3_error(kind: ErrorKind, source: impl ToString) -> GumgumError {
+    GumgumError::structured_kind(Subsystem::Setup, ErrorCode::Io, kind)
         .likely_cause(source.to_string())
         .build()
 }
