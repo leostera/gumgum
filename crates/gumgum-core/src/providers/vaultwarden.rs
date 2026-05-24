@@ -57,7 +57,7 @@ pub(crate) async fn ensure() -> crate::Result<CoreActions> {
             .map(String::as_str)
             == Some("v3")
         {
-            return start_existing(&provider, "could not start vaultwarden provider").await;
+            return start_existing(&provider).await;
         }
         DockerEngine::local()?
             .remove_container_force(&provider.container)

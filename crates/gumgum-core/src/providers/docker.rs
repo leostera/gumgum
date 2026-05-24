@@ -39,10 +39,7 @@ pub(crate) fn created_provider_actions(provider: &ProviderSpec) -> CoreActions {
     }]
 }
 
-pub(crate) async fn start_existing(
-    provider: &ProviderSpec,
-    _message: &str,
-) -> crate::Result<CoreActions> {
+pub(crate) async fn start_existing(provider: &ProviderSpec) -> crate::Result<CoreActions> {
     DockerEngine::local()?
         .start_container(&provider.container)
         .await?;

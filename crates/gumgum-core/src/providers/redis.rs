@@ -75,7 +75,7 @@ pub(crate) async fn delete_object(plan: &ObjectProviderPlan) -> crate::Result<Co
 pub(crate) async fn ensure(provider: &ProviderSpec) -> crate::Result<CoreActions> {
     ensure_network().await?;
     if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
-        return start_existing(provider, "could not start redis provider").await;
+        return start_existing(provider).await;
     }
     if inspect(&provider.container).await {
         DockerEngine::local()?
@@ -91,7 +91,7 @@ pub(crate) async fn ensure_with_credentials(
 ) -> crate::Result<CoreActions> {
     ensure_network().await?;
     if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
-        let mut actions = start_existing(provider, "could not start redis provider").await?;
+        let mut actions = start_existing(provider).await?;
         if !redis_accepts_password(provider, &credentials).await? {
             DockerEngine::local()?
                 .remove_container_force(&provider.container)

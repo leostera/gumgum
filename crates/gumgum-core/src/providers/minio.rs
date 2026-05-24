@@ -111,7 +111,7 @@ pub(crate) async fn ensure_provider(
 ) -> crate::Result<CoreActions> {
     ensure_network().await?;
     if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
-        return start_existing(provider, "could not start minio provider").await;
+        return start_existing(provider).await;
     }
     if inspect(&provider.container).await {
         DockerEngine::local()?

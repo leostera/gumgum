@@ -81,7 +81,7 @@ pub(crate) async fn delete(plan: &ObjectProviderPlan) -> crate::Result<CoreActio
 pub(crate) async fn ensure_provider(provider: &ProviderSpec) -> crate::Result<CoreActions> {
     ensure_network().await?;
     if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
-        return start_existing(provider, "could not start redpanda provider").await;
+        return start_existing(provider).await;
     }
     if inspect(&provider.container).await {
         DockerEngine::local()?

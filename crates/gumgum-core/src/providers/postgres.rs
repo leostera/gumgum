@@ -121,7 +121,7 @@ pub(crate) async fn ensure(
     ensure_network().await?;
     let actions = if inspect(&provider.container).await && !provider_needs_recreate(provider).await
     {
-        start_existing(provider, "could not start postgres provider").await?
+        start_existing(provider).await?
     } else {
         if inspect(&provider.container).await {
             DockerEngine::local()?
