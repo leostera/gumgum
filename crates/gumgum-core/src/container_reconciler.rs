@@ -127,7 +127,7 @@ impl ContainerReconciler {
             labels.insert("caddy.tracing".to_owned(), String::new());
             labels.insert(
                 "caddy.tracing.span".to_owned(),
-                format!("{} ingress", request.worker),
+                format!("{}-ingress", request.worker),
             );
             labels.insert(
                 "caddy.tracing.span_attributes.gumgum_worker".to_owned(),
