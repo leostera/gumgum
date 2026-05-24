@@ -19,6 +19,10 @@ pub struct DesiredDeploy {
     pub image: String,
     pub container: String,
     pub route: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
     pub port: u16,
     pub health: String,
 }
@@ -44,7 +48,7 @@ impl DesiredDeploy {
     }
 
     pub fn execution_step(&self) -> GraphExecutionStep {
-        GraphActionPlanner::ensure_deploy_step(
+        let mut step = GraphActionPlanner::ensure_deploy_step(
             WorkerId::new(&self.worker).unwrap_or_else(|_| WorkerId::new("worker").unwrap()),
             ContainerName::new(&self.container)
                 .unwrap_or_else(|_| ContainerName::new("container").unwrap()),
@@ -55,7 +59,15 @@ impl DesiredDeploy {
                 .and_then(|route| RouteHost::new(route).ok()),
             Port::new(self.port).unwrap_or_else(|_| Port::new(80).unwrap()),
             HealthPath::new(&self.health).unwrap_or_else(|_| HealthPath::new("/healthz").unwrap()),
-        )
+        );
+        if let crate::GraphExecutionTarget::DeployRuntime {
+            project, domain, ..
+        } = &mut step.target
+        {
+            *project = self.project.clone();
+            *domain = self.domain.clone();
+        }
+        step
     }
 
     pub async fn reconciliation_steps(&self, graph_path: PathBuf) -> Vec<GraphExecutionStep> {
@@ -848,6 +860,8 @@ impl GraphStore {
                 route: row
                     .get(3)
                     .map_err(|source| self.error("could not decode desired deployment", source))?,
+                project: None,
+                domain: None,
                 port: row
                     .get(4)
                     .map_err(|source| self.error("could not decode desired deployment", source))?,
@@ -977,6 +991,8 @@ impl GraphStore {
                     route: row.get(3).map_err(|source| {
                         self.error("could not decode deployment revision", source)
                     })?,
+                    project: None,
+                    domain: None,
                     port: row.get::<_, i64>(4).map_err(|source| {
                         self.error("could not decode deployment revision", source)
                     })? as u16,
@@ -1032,6 +1048,8 @@ impl GraphStore {
                         image: row.get(1)?,
                         container: row.get(2)?,
                         route: row.get(3)?,
+                        project: None,
+                        domain: None,
                         port: row.get::<_, i64>(4)? as u16,
                         health: row.get(5)?,
                     },
@@ -1661,6 +1679,8 @@ mod tests {
             image: "registry/api:1".to_owned(),
             container: "gumgum-preview-api".to_owned(),
             route: Some("api.example.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/_/ready".to_owned(),
         };
@@ -1697,6 +1717,8 @@ mod tests {
             image: "registry/api:1".to_owned(),
             container: "gumgum-preview-api".to_owned(),
             route: Some("api.example.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/_/ready".to_owned(),
         };
@@ -1840,6 +1862,8 @@ mod tests {
                 image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
                 container: "gumgum-dev-leostera-peekaboo-api".to_owned(),
                 route: Some("api.peekaboo.leostera.test".to_owned()),
+                project: None,
+                domain: None,
                 port: 3000,
                 health: "/healthz".to_owned(),
             })
@@ -2110,6 +2134,8 @@ mod tests {
             image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
             route: Some("api.peekaboo.leostera.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -2142,6 +2168,8 @@ mod tests {
             image: "registry/api:preview".to_owned(),
             container: "gumgum-preview-api".to_owned(),
             route: Some("api-preview.example.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -2150,6 +2178,8 @@ mod tests {
             image: "registry/api:prod".to_owned(),
             container: "gumgum-prod-api".to_owned(),
             route: Some("api.example.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -2204,6 +2234,8 @@ mod tests {
             image: "127.0.0.1:55000/dev.leostera/peekaboo/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
             route: Some("api.peekaboo.leostera.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -2247,6 +2279,8 @@ mod tests {
             image: "registry/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
             route: Some("api.example.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/healthz".to_owned(),
         };

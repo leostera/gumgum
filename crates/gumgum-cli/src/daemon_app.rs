@@ -1708,6 +1708,15 @@ async fn daemon_deploy_report(
         }
     }
     let mut reconciliation_steps = deploy_reconciliation_plan(path.clone(), &request).await;
+    for step in &mut reconciliation_steps {
+        if let gumgum_core::GraphExecutionTarget::DeployRuntime {
+            project, domain, ..
+        } = &mut step.target
+        {
+            *project = request.project.clone();
+            *domain = request.domain.clone();
+        }
+    }
     let request_for_db = request.clone().into_desired_deploy();
     if reconciliation_steps.is_empty() {
         reconciliation_steps.push(request_for_db.execution_step());
@@ -1941,6 +1950,8 @@ impl DeployRequestExt for DeployRequest {
             image: self.image,
             container: self.container,
             route: self.route,
+            project: self.project,
+            domain: self.domain,
             port: self.port,
             health: self.health,
         }
@@ -1977,6 +1988,8 @@ mod tests {
             image: "registry/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
             route: Some("api.example.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -2476,6 +2489,8 @@ mod tests {
                 image: "registry/api:1".to_owned(),
                 container: "gumgum-api".to_owned(),
                 route: Some("api.example.test".to_owned()),
+                project: None,
+                domain: None,
                 port: 3000,
                 health: "/healthz".to_owned(),
             },
@@ -2489,6 +2504,8 @@ mod tests {
             image: "registry/api:1".to_owned(),
             container: "gumgum-api".to_owned(),
             route: Some("api.example.test".to_owned()),
+            project: None,
+            domain: None,
             port: 3000,
             health: "/healthz".to_owned(),
         };
@@ -2504,6 +2521,7 @@ mod tests {
                 route: Some(ref route),
                 port: Some(port),
                 health: Some(ref health),
+                ..
             } if worker.as_str() == "api"
                 && container.as_str() == "gumgum-api"
                 && image.as_str() == "registry/api:1"

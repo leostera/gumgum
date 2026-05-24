@@ -134,7 +134,7 @@ impl LocalPlatform {
                 .labels
                 .get("gumgum.platform.fingerprint")
                 .map(String::as_str)
-                == Some("caddy-v2");
+                == Some("caddy-v3");
             if has_http && has_https && has_volume_fingerprint {
                 docker.start_container(CADDY_CONTAINER).await?;
                 return Ok(());
@@ -154,16 +154,16 @@ impl LocalPlatform {
             eprintln!("  create container {CADDY_CONTAINER}");
         }
         docker
-            .pull_image("lucaslorentz/caddy-docker-proxy:2.9-alpine")
+            .pull_image("lucaslorentz/caddy-docker-proxy:latest")
             .await?;
         let spec = |ports| ContainerRunSpec {
             name: CADDY_CONTAINER.to_owned(),
-            image: "lucaslorentz/caddy-docker-proxy:2.9-alpine".to_owned(),
+            image: "lucaslorentz/caddy-docker-proxy:latest".to_owned(),
             network: GUMGUM_NETWORK.to_owned(),
             restart_unless_stopped: true,
             labels: HashMap::from([(
                 "gumgum.platform.fingerprint".to_owned(),
-                "caddy-v2".to_owned(),
+                "caddy-v3".to_owned(),
             )]),
             env: Vec::new(),
             binds: vec![

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use super::types::{ProviderSpec, ProviderStatus};
 
 const GUMGUM_NETWORK: &str = "gumgum-network";
+const PLATFORM_FINGERPRINT_VERSION: &str = "v5";
 
 pub fn spec() -> ProviderSpec {
     ProviderSpec {
@@ -76,7 +77,7 @@ fn platform_run_spec(provider: &ProviderSpec, root_domain: &str) -> ContainerRun
     let mut labels = platform_labels(provider, root_domain);
     labels.insert(
         "gumgum.platform.fingerprint".to_owned(),
-        platform_fingerprint_parts(&env, &command, &binds),
+        platform_fingerprint_parts(&provider.image, &env, &command, &binds),
     );
     ContainerRunSpec {
         name: provider.container.clone(),
@@ -172,24 +173,28 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
 }
 
 fn platform_fingerprint(spec: &ContainerRunSpec) -> String {
-    platform_fingerprint_parts(&spec.env, &spec.command, &spec.binds)
+    platform_fingerprint_parts(&spec.image, &spec.env, &spec.command, &spec.binds)
 }
 
 fn platform_fingerprint_parts(
+    image: &str,
     env: &[(String, String)],
     command: &[String],
     binds: &[String],
 ) -> String {
-    let mut parts = env
-        .iter()
-        .map(|(name, value)| format!("env:{name}={value}"))
-        .chain(command.iter().map(|value| format!("cmd:{value}")))
-        .chain(binds.iter().map(|value| format!("bind:{value}")))
+    let mut parts = std::iter::once(format!("version:{PLATFORM_FINGERPRINT_VERSION}"))
+        .chain(std::iter::once(format!("image:{image}")))
+        .chain(
+            env.iter()
+                .map(|(name, value)| format!("env:{name}={value}"))
+                .chain(command.iter().map(|value| format!("cmd:{value}")))
+                .chain(binds.iter().map(|value| format!("bind:{value}"))),
+        )
         .collect::<Vec<_>>();
     parts.sort();
     let mut hasher = DefaultHasher::new();
     parts.hash(&mut hasher);
-    format!("v4:{:016x}", hasher.finish())
+    format!("{PLATFORM_FINGERPRINT_VERSION}:{:016x}", hasher.finish())
 }
 
 fn platform_command(provider: &ProviderSpec) -> Vec<String> {
@@ -354,6 +359,16 @@ discovery.relabel "gumgum_logs" {
   rule {
     source_labels = ["__meta_docker_container_label_gumgum_environment"]
     target_label  = "environment"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_gumgum_project"]
+    target_label  = "project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_gumgum_domain"]
+    target_label  = "domain"
   }
 
   rule {
@@ -869,6 +884,8 @@ mod tests {
         assert!(config.contains("http://gumgum-loki:3100/loki/api/v1/push"));
         assert!(config.contains("__meta_docker_container_label_gumgum_managed"));
         assert!(config.contains("target_label  = \"environment\""));
+        assert!(config.contains("target_label  = \"project\""));
+        assert!(config.contains("target_label  = \"domain\""));
         assert!(config.contains("target_label  = \"worker\""));
     }
 

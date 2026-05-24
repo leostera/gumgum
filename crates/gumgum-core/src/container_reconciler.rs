@@ -8,6 +8,8 @@ pub struct DeployRequest {
     pub image: String,
     pub container: String,
     pub route: Option<String>,
+    pub project: Option<String>,
+    pub domain: Option<String>,
     pub port: u16,
     pub health: String,
 }
@@ -54,6 +56,8 @@ impl ContainerReconciler {
                     && container.labels.get("prometheus.port") == Some(&request.port.to_string())
                     && container.labels.get("prometheus.path").map(String::as_str)
                         == Some("/_/metrics")
+                    && container.labels.get("gumgum.project") == request.project.as_ref()
+                    && container.labels.get("gumgum.domain") == request.domain.as_ref()
             })
         {
             actions.push("container already matches desired image, route, and bindings".to_owned());
@@ -104,6 +108,14 @@ impl ContainerReconciler {
         labels.insert("prometheus.port".to_owned(), request.port.to_string());
         labels.insert("prometheus.path".to_owned(), "/_/metrics".to_owned());
         labels.insert("prometheus.label_worker".to_owned(), request.worker.clone());
+        if let Some(project) = &request.project {
+            labels.insert("gumgum.project".to_owned(), project.clone());
+            labels.insert("prometheus.label_project".to_owned(), project.clone());
+        }
+        if let Some(domain) = &request.domain {
+            labels.insert("gumgum.domain".to_owned(), domain.clone());
+            labels.insert("prometheus.label_domain".to_owned(), domain.clone());
+        }
         if let Some(route) = &request.route {
             labels.insert("caddy".to_owned(), route.clone());
             labels.insert(

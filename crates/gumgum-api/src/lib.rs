@@ -71,6 +71,10 @@ pub struct DeployRequest {
     pub route: Option<String>,
     #[serde(default)]
     pub publish: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
     pub port: u16,
     pub health: String,
 }
