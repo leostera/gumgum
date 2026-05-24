@@ -1,4 +1,3 @@
-use crate::sanitize_name;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -44,34 +43,6 @@ pub struct PresentationGraph {
 pub type Graph = PresentationGraph;
 pub type GraphNode = PresentationGraphNode;
 pub type GraphEdge = PresentationGraphEdge;
-
-pub fn render_mermaid_graph(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
-    let mut graph = "graph TD\n".to_owned();
-    for node in nodes {
-        graph.push_str(&format!(
-            "  {}[\"{}\"]\n",
-            mermaid_id(&node.id),
-            mermaid_label(&node.label)
-        ));
-    }
-    for edge in edges {
-        graph.push_str(&format!(
-            "  {} -->|{}| {}\n",
-            mermaid_id(&edge.from),
-            edge.kind,
-            mermaid_id(&edge.to)
-        ));
-    }
-    graph
-}
-
-fn mermaid_id(value: &str) -> String {
-    sanitize_name(value).replace('-', "_")
-}
-
-fn mermaid_label(value: &str) -> String {
-    value.replace('"', "\\\"")
-}
 
 pub fn affected_subgraph(
     nodes: &[GraphNode],
@@ -153,23 +124,6 @@ mod graph_tests {
 
     fn ids(nodes: &[GraphNode]) -> Vec<String> {
         nodes.iter().map(|node| node.id.clone()).collect()
-    }
-
-    #[test]
-    fn render_mermaid_graph_escapes_labels_and_sanitizes_ids() {
-        let nodes = vec![
-            GraphNode::new("route/api.example.test", "route", "api \"quoted\" route"),
-            GraphNode::new("container/api", "container", "api"),
-        ];
-        let edges = vec![GraphEdge::new(
-            "route/api.example.test",
-            "container/api",
-            "routes_to",
-        )];
-
-        let graph = render_mermaid_graph(&nodes, &edges);
-        assert!(graph.contains("route_api_example_test[\"api \\\"quoted\\\" route\"]"));
-        assert!(graph.contains("route_api_example_test -->|routes_to| container_api"));
     }
 
     #[test]

@@ -22,7 +22,7 @@ use gumgum_core::{
     GlobalObject, GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore,
     GumgumError, LocalPlatform, PlatformEvent, PlatformStep, ProviderReconciler, Subsystem,
     WorkerBinding, affected_subgraph, internal_db, not_configured_status, object_dns,
-    object_provider_plan, render_mermaid_graph,
+    object_provider_plan, sanitize_name,
 };
 use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::{process::Command as TokioCommand, sync::mpsc};
@@ -339,6 +339,34 @@ async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<Domain
             "domain was not saved".to_owned()
         },
     })
+}
+
+fn render_mermaid_graph(nodes: &[GraphNode], edges: &[gumgum_api::GraphEdge]) -> String {
+    let mut graph = "graph TD\n".to_owned();
+    for node in nodes {
+        graph.push_str(&format!(
+            "  {}[\"{}\"]\n",
+            mermaid_id(&node.id),
+            mermaid_label(&node.label)
+        ));
+    }
+    for edge in edges {
+        graph.push_str(&format!(
+            "  {} -->|{}| {}\n",
+            mermaid_id(&edge.from),
+            edge.kind,
+            mermaid_id(&edge.to)
+        ));
+    }
+    graph
+}
+
+fn mermaid_id(value: &str) -> String {
+    sanitize_name(value).replace('-', "_")
+}
+
+fn mermaid_label(value: &str) -> String {
+    value.replace('"', "\\\"")
 }
 
 async fn daemon_graph(State(state): State<DaemonState>) -> Json<GraphReport> {

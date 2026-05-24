@@ -548,7 +548,7 @@ pub enum DoctorCheckStatus {
 pub mod presentation_graph;
 pub use presentation_graph::{
     Graph, GraphEdge, GraphNode, PresentationGraph, PresentationGraphEdge, PresentationGraphNode,
-    affected_subgraph, render_mermaid_graph,
+    affected_subgraph,
 };
 
 pub mod plan_graph;
@@ -971,6 +971,8 @@ mod presentation_boundary_tests {
             concat!("remove deployment", " "),
             concat!("remove graph", " node"),
             concat!("planned provider", " reconcile"),
+            concat!("render_", "mermaid_graph"),
+            concat!("graph ", "TD"),
             concat!("provider", " reconciled"),
             concat!("applied", " deployment"),
         ];
