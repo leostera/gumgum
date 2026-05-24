@@ -997,6 +997,36 @@ mod presentation_boundary_tests {
     }
 
     #[test]
+    fn core_sources_do_not_construct_cli_presentation_messages() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut violations = Vec::new();
+        collect_core_violations_except(
+            &src,
+            &[concat!("CoreAction::", "CliMessage")],
+            &["actions.rs", "lib.rs"],
+            &mut violations,
+        );
+        assert!(
+            violations.is_empty(),
+            "gumgum-core must not construct CLI presentation message actions:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
+    fn core_sources_do_not_define_prose_message_literals() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let forbidden = [concat!("message: ", "\""), concat!("message", ": format!")];
+        let mut violations = Vec::new();
+        collect_core_violations_except(&src, &forbidden, &["lib.rs"], &mut violations);
+        assert!(
+            violations.is_empty(),
+            "gumgum-core runtime reports/events should use symbolic JSON or typed fields, not prose message literals:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
     fn core_status_reports_use_symbolic_status_not_rendered_messages() {
         let lib = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
             .expect("read lib.rs");
@@ -1026,6 +1056,41 @@ mod presentation_boundary_tests {
             .expect("CoreAction::Planned block exists");
         assert!(planned_block.contains("action: PlannedAction"));
         assert!(!planned_block.contains("action: String"));
+    }
+
+    fn collect_core_violations_except(
+        path: &Path,
+        forbidden: &[&str],
+        excluded_files: &[&str],
+        violations: &mut Vec<String>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_core_violations_except(&path, forbidden, excluded_files, violations);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if excluded_files.contains(&file_name) {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (index, line) in contents.lines().enumerate() {
+                if forbidden.iter().any(|needle| line.contains(needle)) {
+                    violations.push(format!("{}:{}: {}", path.display(), index + 1, line.trim()));
+                }
+            }
+        }
     }
 
     fn collect_print_violations(path: &Path, forbidden: &[&str], violations: &mut Vec<String>) {
