@@ -697,11 +697,11 @@ pub async fn apply_grafana_artifact(
         }
         "dashboard" => {
             let folder_uid =
-                ensure_grafana_folder_path(&client, &base, &password, &folder_path).await?;
+                ensure_grafana_folder_path(&client, &base, &password, folder_path).await?;
             let mut dashboard = content;
             if dashboard.get("uid").and_then(|uid| uid.as_str()).is_none() {
                 dashboard["uid"] =
-                    serde_json::Value::String(grafana_dashboard_uid(name, &folder_path));
+                    serde_json::Value::String(grafana_dashboard_uid(name, folder_path));
             }
             let mut payload = serde_json::json!({
                 "dashboard": dashboard,
