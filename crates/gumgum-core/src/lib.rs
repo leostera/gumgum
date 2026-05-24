@@ -270,6 +270,9 @@ pub enum ErrorKind {
     GraphDatabaseMigrationFailed,
     SetupCommandSpawnFailed,
     SetupCommandFailed,
+    GraphValueInvalid,
+    ControlPlaneEventKindUnknown,
+    ReconcileEventStatusUnknown,
 }
 
 impl ErrorKind {
@@ -301,6 +304,9 @@ impl ErrorKind {
             ErrorKind::GraphDatabaseMigrationFailed => "config.graph_database.migration_failed",
             ErrorKind::SetupCommandSpawnFailed => "setup.command.spawn_failed",
             ErrorKind::SetupCommandFailed => "setup.command.failed",
+            ErrorKind::GraphValueInvalid => "graph.value.invalid",
+            ErrorKind::ControlPlaneEventKindUnknown => "graph.control_plane_event_kind.unknown",
+            ErrorKind::ReconcileEventStatusUnknown => "graph.reconcile_event_status.unknown",
         }
     }
 }
@@ -774,6 +780,33 @@ mod presentation_boundary_tests {
         assert!(
             violations.is_empty(),
             "gumgum-core must expose symbolic action/example data, not rendered user strings:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
+    fn migrated_core_modules_do_not_construct_prose_errors() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let files = [
+            "config_store.rs",
+            "internal_db.rs",
+            "process.rs",
+            "graph/types.rs",
+            "graph_store.rs",
+        ];
+        let mut violations = Vec::new();
+        for file in files {
+            let path = src.join(file);
+            let contents = std::fs::read_to_string(&path).expect("read migrated core module");
+            for (index, line) in contents.lines().enumerate() {
+                if line.contains("GumgumError::structured(") {
+                    violations.push(format!("{}:{}: {}", path.display(), index + 1, line.trim()));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "migrated gumgum-core modules must use symbolic ErrorKind values, not prose errors:\n{}",
             violations.join("\n")
         );
     }

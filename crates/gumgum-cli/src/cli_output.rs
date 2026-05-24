@@ -76,6 +76,11 @@ fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
         }
         gumgum_core::ErrorKind::SetupCommandSpawnFailed => "failed to run setup command",
         gumgum_core::ErrorKind::SetupCommandFailed => "setup command failed",
+        gumgum_core::ErrorKind::GraphValueInvalid => "graph value is invalid",
+        gumgum_core::ErrorKind::ControlPlaneEventKindUnknown => "unknown control plane event kind",
+        gumgum_core::ErrorKind::ReconcileEventStatusUnknown => {
+            "unknown reconciliation event status"
+        }
     }
 }
 

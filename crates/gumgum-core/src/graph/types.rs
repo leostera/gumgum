@@ -1,4 +1,4 @@
-use crate::{ErrorCode, GumgumError, Subsystem, sanitize_name};
+use crate::{ErrorCode, ErrorKind, GumgumError, Subsystem, sanitize_name};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -8,12 +8,7 @@ pub struct Port(u16);
 impl Port {
     pub fn new(value: u16) -> crate::Result<Self> {
         if value == 0 {
-            Err(GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::InvalidArgs,
-                "port must be between 1 and 65535",
-            )
-            .build())
+            Err(invalid_graph_value())
         } else {
             Ok(Self(value))
         }
@@ -45,7 +40,7 @@ impl WorkerId {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = sanitize_name(value.as_ref());
         if value.is_empty() {
-            Err(invalid_graph_value("worker id must not be empty"))
+            Err(invalid_graph_value())
         } else {
             Ok(Self(value))
         }
@@ -85,7 +80,7 @@ impl ContainerName {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = sanitize_name(value.as_ref());
         if value.is_empty() {
-            Err(invalid_graph_value("container name must not be empty"))
+            Err(invalid_graph_value())
         } else {
             Ok(Self(value))
         }
@@ -125,12 +120,10 @@ impl ImageName {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = value.as_ref().trim().to_owned();
         if value.is_empty() {
-            return Err(invalid_graph_value("image name must not be empty"));
+            return Err(invalid_graph_value());
         }
         if value.chars().any(char::is_whitespace) {
-            return Err(invalid_graph_value(
-                "image name must not contain whitespace",
-            ));
+            return Err(invalid_graph_value());
         }
         Ok(Self(value))
     }
@@ -173,12 +166,10 @@ impl RouteHost {
             .trim_end_matches('.')
             .to_ascii_lowercase();
         if value.is_empty() {
-            return Err(invalid_graph_value("route host must not be empty"));
+            return Err(invalid_graph_value());
         }
         if value.chars().any(char::is_whitespace) || !value.contains('.') {
-            return Err(invalid_graph_value(
-                "route host must be a dotted hostname without whitespace",
-            ));
+            return Err(invalid_graph_value());
         }
         Ok(Self(value))
     }
@@ -217,15 +208,13 @@ impl HealthPath {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = value.as_ref().trim().to_owned();
         if value.is_empty() {
-            return Err(invalid_graph_value("health path must not be empty"));
+            return Err(invalid_graph_value());
         }
         if !value.starts_with('/') {
-            return Err(invalid_graph_value("health path must start with /"));
+            return Err(invalid_graph_value());
         }
         if value.chars().any(char::is_whitespace) {
-            return Err(invalid_graph_value(
-                "health path must not contain whitespace",
-            ));
+            return Err(invalid_graph_value());
         }
         Ok(Self(value))
     }
@@ -264,12 +253,10 @@ impl ProviderName {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = value.as_ref().trim().to_owned();
         if value.is_empty() {
-            return Err(invalid_graph_value("provider name must not be empty"));
+            return Err(invalid_graph_value());
         }
         if value.chars().any(char::is_whitespace) {
-            return Err(invalid_graph_value(
-                "provider name must not contain whitespace",
-            ));
+            return Err(invalid_graph_value());
         }
         Ok(Self(value))
     }
@@ -308,12 +295,10 @@ impl ObjectName {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = value.as_ref().trim().to_owned();
         if value.is_empty() {
-            return Err(invalid_graph_value("object name must not be empty"));
+            return Err(invalid_graph_value());
         }
         if value.chars().any(char::is_whitespace) {
-            return Err(invalid_graph_value(
-                "object name must not contain whitespace",
-            ));
+            return Err(invalid_graph_value());
         }
         Ok(Self(value))
     }
@@ -352,12 +337,10 @@ impl BindingName {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = value.as_ref().trim().to_owned();
         if value.is_empty() {
-            return Err(invalid_graph_value("binding name must not be empty"));
+            return Err(invalid_graph_value());
         }
         if value.chars().any(char::is_whitespace) {
-            return Err(invalid_graph_value(
-                "binding name must not contain whitespace",
-            ));
+            return Err(invalid_graph_value());
         }
         Ok(Self(value))
     }
@@ -396,12 +379,10 @@ impl ObjectRef {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = value.as_ref().trim().to_owned();
         if value.is_empty() {
-            return Err(invalid_graph_value("object reference must not be empty"));
+            return Err(invalid_graph_value());
         }
         if value.chars().any(char::is_whitespace) || !value.contains('/') {
-            return Err(invalid_graph_value(
-                "object reference must be capability/name without whitespace",
-            ));
+            return Err(invalid_graph_value());
         }
         Ok(Self(value))
     }
@@ -440,12 +421,10 @@ impl GraphNodeId {
     pub fn new(value: impl AsRef<str>) -> crate::Result<Self> {
         let value = value.as_ref().trim().to_owned();
         if value.is_empty() {
-            return Err(invalid_graph_value("graph node id must not be empty"));
+            return Err(invalid_graph_value());
         }
         if value.chars().any(char::is_whitespace) {
-            return Err(invalid_graph_value(
-                "graph node id must not contain whitespace",
-            ));
+            return Err(invalid_graph_value());
         }
         Ok(Self(value))
     }
@@ -477,8 +456,13 @@ impl TryFrom<&str> for GraphNodeId {
     }
 }
 
-fn invalid_graph_value(message: &'static str) -> GumgumError {
-    GumgumError::structured(Subsystem::Config, ErrorCode::InvalidArgs, message).build()
+fn invalid_graph_value() -> GumgumError {
+    GumgumError::structured_kind(
+        Subsystem::Config,
+        ErrorCode::InvalidArgs,
+        ErrorKind::GraphValueInvalid,
+    )
+    .build()
 }
 
 #[cfg(test)]

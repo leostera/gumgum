@@ -1,8 +1,8 @@
 use crate::{
     ActionGraph, BindingName, Capability, ContainerName, CurrentGraph, DesiredGraph,
-    DesiredGraphNode, ErrorCode, GraphActionPlanner, GraphEdge, GraphExecutionStep, GraphMutation,
-    GraphNode, GumgumError, HealthPath, ImageName, ObjectName, ObjectRef, Port, ProviderName,
-    Result, RouteHost, Subsystem, WorkerId,
+    DesiredGraphNode, ErrorCode, ErrorKind, GraphActionPlanner, GraphEdge, GraphExecutionStep,
+    GraphMutation, GraphNode, GumgumError, HealthPath, ImageName, ObjectName, ObjectRef, Port,
+    ProviderName, Result, RouteHost, Subsystem, WorkerId,
 };
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -138,10 +138,10 @@ impl FromStr for ControlPlaneEventKind {
         match value {
             "mutation" => Ok(Self::Mutation),
             "reconciliation" => Ok(Self::Reconciliation),
-            _ => Err(GumgumError::structured(
+            _ => Err(GumgumError::structured_kind(
                 Subsystem::Config,
                 ErrorCode::InvalidArgs,
-                "unknown control plane event kind",
+                ErrorKind::ControlPlaneEventKindUnknown,
             )
             .build()),
         }
@@ -180,10 +180,10 @@ impl FromStr for ReconcileEventStatus {
             "planned" => Ok(Self::Planned),
             "executed" => Ok(Self::Executed),
             "failed" => Ok(Self::Failed),
-            _ => Err(GumgumError::structured(
+            _ => Err(GumgumError::structured_kind(
                 Subsystem::Config,
                 ErrorCode::InvalidArgs,
-                "unknown reconciliation event status",
+                ErrorKind::ReconcileEventStatusUnknown,
             )
             .build()),
         }
@@ -348,10 +348,10 @@ impl GraphStore {
     pub fn init(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|source| {
-                GumgumError::structured(
+                GumgumError::structured_kind(
                     Subsystem::Config,
                     ErrorCode::Io,
-                    "could not create graph directory",
+                    ErrorKind::GraphDirectoryCreateFailed,
                 )
                 .likely_cause(source.to_string())
                 .build()
@@ -1439,13 +1439,17 @@ impl GraphStore {
 
     fn open(&self) -> Result<Connection> {
         Connection::open(&self.path)
-            .map_err(|source| self.error("could not open graph database", source))
+            .map_err(|source| self.error("graph database open failed", source))
     }
 
-    fn error(&self, message: &'static str, source: rusqlite::Error) -> GumgumError {
-        GumgumError::structured(Subsystem::Config, ErrorCode::Io, message)
-            .likely_cause(source.to_string())
-            .build()
+    fn error(&self, _message: &'static str, source: rusqlite::Error) -> GumgumError {
+        GumgumError::structured_kind(
+            Subsystem::Config,
+            ErrorCode::Io,
+            ErrorKind::GraphDatabaseOpenFailed,
+        )
+        .likely_cause(source.to_string())
+        .build()
     }
 }
 
