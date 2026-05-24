@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct PresentationGraphNode {
+pub struct GraphProjectionNode {
     pub id: String,
     pub kind: String,
     pub label: String,
 }
 
-impl PresentationGraphNode {
+impl GraphProjectionNode {
     pub fn new(id: impl Into<String>, kind: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -18,13 +18,13 @@ impl PresentationGraphNode {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct PresentationGraphEdge {
+pub struct GraphProjectionEdge {
     pub from: String,
     pub to: String,
     pub kind: String,
 }
 
-impl PresentationGraphEdge {
+impl GraphProjectionEdge {
     pub fn new(from: impl Into<String>, to: impl Into<String>, kind: impl Into<String>) -> Self {
         Self {
             from: from.into(),
@@ -35,14 +35,14 @@ impl PresentationGraphEdge {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct PresentationGraph {
-    pub nodes: Vec<PresentationGraphNode>,
-    pub edges: Vec<PresentationGraphEdge>,
+pub struct GraphProjection {
+    pub nodes: Vec<GraphProjectionNode>,
+    pub edges: Vec<GraphProjectionEdge>,
 }
 
-pub type Graph = PresentationGraph;
-pub type GraphNode = PresentationGraphNode;
-pub type GraphEdge = PresentationGraphEdge;
+pub type Graph = GraphProjection;
+pub type GraphNode = GraphProjectionNode;
+pub type GraphEdge = GraphProjectionEdge;
 
 pub fn affected_subgraph(
     nodes: &[GraphNode],

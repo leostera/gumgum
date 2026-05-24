@@ -548,9 +548,9 @@ pub enum DoctorCheckStatus {
     Failed,
 }
 
-pub mod presentation_graph;
-pub use presentation_graph::{
-    Graph, GraphEdge, GraphNode, PresentationGraph, PresentationGraphEdge, PresentationGraphNode,
+pub mod graph_projection;
+pub use graph_projection::{
+    Graph, GraphEdge, GraphNode, GraphProjection, GraphProjectionEdge, GraphProjectionNode,
     affected_subgraph,
 };
 
@@ -975,6 +975,8 @@ mod presentation_boundary_tests {
             concat!("remove graph", " node"),
             concat!("planned provider", " reconcile"),
             concat!("render_", "mermaid_graph"),
+            concat!("Presentation", "Graph"),
+            concat!("presentation", "_graph"),
             concat!("graph ", "TD"),
             concat!("All zones ", "GumGum should manage"),
             concat!("Account used ", "for Cloudflare Tunnel ingress"),

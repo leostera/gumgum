@@ -1,4 +1,4 @@
-use crate::{GraphEdge, GraphNode, PresentationGraph};
+use crate::{GraphEdge, GraphNode, GraphProjection};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -83,7 +83,7 @@ impl PlanGraph {
     }
 }
 
-impl PresentationGraph {
+impl GraphProjection {
     pub fn new() -> Self {
         Self::default()
     }
