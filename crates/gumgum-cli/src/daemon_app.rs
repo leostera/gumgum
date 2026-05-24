@@ -2133,7 +2133,10 @@ mod tests {
             Some(("registry/api:rev1", Some("api.example.test"))),
             &[step],
             &execution_events,
-            &[CoreAction::ProviderConfigured { capability: gumgum_core::Capability::Manual, provider: "manual.main".to_owned() }],
+            &[CoreAction::ProviderConfigured {
+                capability: gumgum_core::Capability::Manual,
+                provider: "manual.main".to_owned(),
+            }],
             true,
             "desired deployment materialized and reconciled",
         );
@@ -2174,7 +2177,10 @@ mod tests {
             Some(("registry/api:rev1", Some("api.example.test"))),
             &[step],
             &[],
-            &[CoreAction::ProviderConfigured { capability: gumgum_core::Capability::Manual, provider: "manual.main".to_owned() }],
+            &[CoreAction::ProviderConfigured {
+                capability: gumgum_core::Capability::Manual,
+                provider: "manual.main".to_owned(),
+            }],
             true,
             "desired deployment materialized and reconciled",
         );
@@ -2297,12 +2303,12 @@ mod tests {
         .await;
         assert!(object_report.ok);
         assert_eq!(object_report.message, "object create preview");
-        assert!(
-            object_report
-                .provider_actions
-                .iter()
-                .any(|action| matches!(action, CoreAction::PreviewOnly { scope: ActionScope::Objects }))
-        );
+        assert!(object_report.provider_actions.iter().any(|action| matches!(
+            action,
+            CoreAction::PreviewOnly {
+                scope: ActionScope::Objects
+            }
+        )));
 
         let Json(binding_report) = daemon_create_binding(
             State(state.clone()),
@@ -2318,12 +2324,12 @@ mod tests {
         .await;
         assert!(binding_report.ok);
         assert_eq!(binding_report.message, "binding create preview");
-        assert!(
-            binding_report
-                .binding_actions
-                .iter()
-                .any(|action| matches!(action, CoreAction::PreviewOnly { scope: ActionScope::Bindings }))
-        );
+        assert!(binding_report.binding_actions.iter().any(|action| matches!(
+            action,
+            CoreAction::PreviewOnly {
+                scope: ActionScope::Bindings
+            }
+        )));
 
         let store = GraphStore::new(path.clone());
         let graph = store.load_desired_graph().unwrap();
@@ -2383,7 +2389,9 @@ mod tests {
         assert!(!binding_report.reconciliation_steps.is_empty());
         assert!(matches!(
             binding_report.binding_actions.as_slice(),
-            [CoreAction::PreviewOnly { scope: ActionScope::Bindings }]
+            [CoreAction::PreviewOnly {
+                scope: ActionScope::Bindings
+            }]
         ));
 
         let Json(object_report) = daemon_delete_object(
@@ -2610,7 +2618,10 @@ mod tests {
         assert_eq!(report.route.as_deref(), Some("api.example.test"));
         assert_eq!(report.port, Some(3000));
         assert_eq!(report.health.as_deref(), Some("/healthz"));
-        assert_eq!(crate::presentation::action_texts(&report.actions), vec!["rollback to registry/api:1"]);
+        assert_eq!(
+            crate::presentation::action_texts(&report.actions),
+            vec!["rollback to registry/api:1"]
+        );
     }
 
     #[test]
@@ -2619,7 +2630,10 @@ mod tests {
 
         assert!(!report.ok);
         assert_eq!(report.revision_id, Some(99));
-        assert_eq!(crate::presentation::action_texts(&report.actions), vec!["revision 99 not found"]);
+        assert_eq!(
+            crate::presentation::action_texts(&report.actions),
+            vec!["revision 99 not found"]
+        );
         assert_eq!(report.message, "deployment revision 99 not found");
     }
 
@@ -2646,12 +2660,12 @@ mod tests {
         assert_eq!(report.revision_id, Some(selected.id));
         assert_eq!(report.image, Some(selected.deploy.image));
         assert_eq!(report.route, selected.deploy.route);
-        assert!(
-            report
-                .actions
-                .iter()
-                .any(|action| matches!(action, CoreAction::PreviewOnly { scope: ActionScope::Deployment }))
-        );
+        assert!(report.actions.iter().any(|action| matches!(
+            action,
+            CoreAction::PreviewOnly {
+                scope: ActionScope::Deployment
+            }
+        )));
         assert!(crate::presentation::action_texts(&report.actions).iter().any(|action| action
             == "warning: rollback would change route from api-v3.example.test to api.example.test"));
         let _ = std::fs::remove_file(path);

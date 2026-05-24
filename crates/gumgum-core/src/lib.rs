@@ -436,19 +436,6 @@ impl DeployPlanner {
         }
         graph.finish()
     }
-
-    pub fn plan_lines(&self) -> Vec<String> {
-        self.graph()
-            .execution_levels
-            .iter()
-            .enumerate()
-            .flat_map(|(index, level)| {
-                level
-                    .iter()
-                    .map(move |node| format!("level {}: {node}", index + 1))
-            })
-            .collect()
-    }
 }
 
 struct MutablePlanGraph {

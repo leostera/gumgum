@@ -34,8 +34,12 @@ pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
 
 pub(crate) fn connection_examples(_name: &str, dns: &str) -> Vec<crate::ConnectionExample> {
     vec![
-        crate::ConnectionExample::RedisCli { dns: dns.to_owned() },
-        crate::ConnectionExample::RedisInsight { dns: dns.to_owned() },
+        crate::ConnectionExample::RedisCli {
+            dns: dns.to_owned(),
+        },
+        crate::ConnectionExample::RedisInsight {
+            dns: dns.to_owned(),
+        },
     ]
 }
 

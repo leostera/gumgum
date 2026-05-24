@@ -14,7 +14,6 @@ pub struct DeploymentDescriptor {
     pub port: u16,
     pub routes: Vec<String>,
     pub health_url: Option<String>,
-    pub plan: Vec<String>,
     pub plan_graph: PlanGraph,
 }
 
@@ -71,7 +70,6 @@ impl DeploymentDescriptor {
             port: deploy_port(manifest),
             routes,
             health_url,
-            plan: planner.plan_lines(),
             plan_graph: planner.graph(),
         }
     }

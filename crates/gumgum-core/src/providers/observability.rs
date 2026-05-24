@@ -35,7 +35,9 @@ pub(crate) fn actions(_safe_name: &str, dns: &str) -> CoreActions {
 }
 
 pub(crate) fn connection_examples(_name: &str, dns: &str) -> Vec<crate::ConnectionExample> {
-    vec![crate::ConnectionExample::OtelEndpoint { dns: dns.to_owned() }]
+    vec![crate::ConnectionExample::OtelEndpoint {
+        dns: dns.to_owned(),
+    }]
 }
 
 pub(crate) async fn ensure_platform_stack(root_domain: &str) -> crate::Result<CoreActions> {

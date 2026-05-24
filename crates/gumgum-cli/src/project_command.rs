@@ -328,7 +328,9 @@ mod tests {
             route: Some("api.example.test".to_owned()),
             port: Some(3000),
             health: Some("/healthz".to_owned()),
-            actions: vec![gumgum_core::CoreAction::CliMessage { message: "rollback to registry/api:1".to_owned() }],
+            actions: vec![gumgum_core::CoreAction::CliMessage {
+                message: "rollback to registry/api:1".to_owned(),
+            }],
             message: "rollback applied".to_owned(),
         };
 
@@ -356,8 +358,12 @@ mod tests {
             revision_id: 8,
             deleted: true,
             actions: vec![
-                gumgum_core::CoreAction::CliMessage { message: "deleted deployment revision 8".to_owned() },
-                gumgum_core::CoreAction::CliMessage { message: "no containers or desired deployments changed".to_owned() },
+                gumgum_core::CoreAction::CliMessage {
+                    message: "deleted deployment revision 8".to_owned(),
+                },
+                gumgum_core::CoreAction::CliMessage {
+                    message: "no containers or desired deployments changed".to_owned(),
+                },
             ],
             message: "deleted deployment revision 8".to_owned(),
         };
@@ -429,7 +435,9 @@ mod tests {
             route: None,
             port: None,
             health: None,
-            actions: vec![gumgum_core::CoreAction::PreviewOnly { scope: gumgum_core::ActionScope::Deployment }],
+            actions: vec![gumgum_core::CoreAction::PreviewOnly {
+                scope: gumgum_core::ActionScope::Deployment,
+            }],
             message: "rollback preview".to_owned(),
         };
 
@@ -449,7 +457,9 @@ mod tests {
             route: None,
             port: None,
             health: None,
-            actions: vec![gumgum_core::CoreAction::CliMessage { message: "no previous image recorded".to_owned() }],
+            actions: vec![gumgum_core::CoreAction::CliMessage {
+                message: "no previous image recorded".to_owned(),
+            }],
             message: "no previous deployment image recorded".to_owned(),
         };
 

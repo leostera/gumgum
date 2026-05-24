@@ -1,4 +1,6 @@
-use gumgum_core::{Capability, CloudflareGrant, ConnectionExample, CoreAction, DomainProvider, IngressMode};
+use gumgum_core::{
+    Capability, CloudflareGrant, ConnectionExample, CoreAction, DomainProvider, IngressMode,
+};
 pub use gumgum_core::{
     DeploymentRevision, GraphEdge, GraphExecutionStep, GraphNode, GumgumEvent, ProviderConfig,
     ProviderStatus, ReconcileEvent, ServerRecord,

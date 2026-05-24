@@ -269,7 +269,8 @@ fn deploy_report(
     );
     descriptor.container = env_prefixed_container_name(&descriptor.container, env);
     let grafana = grafana_artifact_plan(&path, manifest, project_name, project_domain, server, env);
-    descriptor.plan.extend(grafana.iter().map(|artifact| {
+    let mut plan = plan_graph_lines(&descriptor.plan_graph);
+    plan.extend(grafana.iter().map(|artifact| {
         format!(
             "provision Grafana {} {} from {}",
             artifact.kind, artifact.name, artifact.path
@@ -296,7 +297,7 @@ fn deploy_report(
         routes: descriptor.routes,
         health_url: descriptor.health_url,
         grafana,
-        plan: descriptor.plan,
+        plan,
         plan_graph: descriptor.plan_graph,
         events,
         message: if dry_run {
@@ -588,6 +589,19 @@ fn supports_deploy_event_stream(version: &gumgum_api::DaemonVersionReport) -> bo
 
 fn local_push_image(image: &str, tunnel_port: u16) -> String {
     image.replacen("127.0.0.1:55000", &format!("localhost:{tunnel_port}"), 1)
+}
+
+fn plan_graph_lines(graph: &PlanGraph) -> Vec<String> {
+    graph
+        .execution_levels
+        .iter()
+        .enumerate()
+        .flat_map(|(index, level)| {
+            level
+                .iter()
+                .map(move |node| format!("level {}: {node}", index + 1))
+        })
+        .collect()
 }
 
 fn grafana_artifact_plan(
@@ -1132,7 +1146,9 @@ mod deploy_hardening_tests {
             worker: "api@preview".to_owned(),
             materialized: false,
             changed: false,
-            actions: vec![gumgum_core::CoreAction::CliMessage { message: "deployment was not present".to_owned() }],
+            actions: vec![gumgum_core::CoreAction::CliMessage {
+                message: "deployment was not present".to_owned(),
+            }],
             reconciliation_steps: Vec::new(),
             typed_events: vec![event.clone()],
             message: "deployment was not present".to_owned(),
