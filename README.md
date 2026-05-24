@@ -23,6 +23,7 @@ gumgum is a self-hosted app platform for your VPS or local machine. It gives sma
   - [Queues](#queues)
   - [Secrets](#secrets)
 - [Bind resources to workers](#bind-resources-to-workers)
+- [Observability and platform services](#observability-and-platform-services)
 - [Deploy](#deploy)
 - [Logs, environment, status, and events](#logs-environment-status-and-events)
 - [Graph inspection](#graph-inspection)
@@ -37,7 +38,7 @@ gumgum is a self-hosted app platform for your VPS or local machine. It gives sma
 ## Why gumgum?
 
 - **One server, one simple platform.** Turn a Linux host or your local computer into a small PaaS.
-- **Batteries included.** gumgum starts the backing services most apps need: Postgres, Redis, MinIO/S3 buckets, Redpanda queues, and secrets.
+- **Batteries included.** gumgum starts the backing services most apps need: Postgres, Redis, MinIO/S3 buckets, Redpanda queues, secrets, and an observability stack.
 - **Project-first workflow.** Create resources, bind them to workers, deploy, view logs, and inspect events from the project directory.
 - **Local-first control.** The daemon runs on your server. Your CLI sends intent; gumgum handles runtime/provider convergence there.
 - **Human CLI by default.** Commands print readable output unless you ask for `--json`.
@@ -47,6 +48,7 @@ gumgum is a self-hosted app platform for your VPS or local machine. It gives sma
 - **Server**: the machine that runs `gumgumd`, Docker workloads, the gateway, and built-in providers. A server can have a public control-plane domain used for default routes.
 - **Domain**: a DNS zone or delegated domain GumGum may use for routes. Domains can be manual or Cloudflare-managed.
 - **Project**: one app/workspace with a production domain in `gumgum.toml`.
+- **Environment**: an isolated deployment target. GumGum uses `preview` and `prod`; app/provider containers and data objects are environment-scoped.
 - **Workspace**: a directory containing multiple worker projects.
 - **Resource**: a backing service object such as a database, KV namespace, bucket, queue, or secret.
 - **Binding**: an environment projection from a resource into a worker, for example `DATABASE_URL` or `UPLOADS_BUCKET`.
@@ -62,6 +64,8 @@ gumgum can manage:
 - Redis KV namespaces
 - MinIO/S3 buckets and bucket objects
 - Redpanda queues/topics
+- platform secrets and observability services
+- Prometheus scraping, host metrics, Docker/container metrics, Grafana dashboards, Loki, Tempo, and OTEL collector plumbing
 - worker environment bindings
 - logs, events, grouped event summaries, rollback metadata, and publish previews
 
@@ -376,6 +380,57 @@ Bindings default to read-write access. You can request another access mode:
 ```bash
 gumgum bucket bind uploads --to api --as UPLOADS_BUCKET --access read-only
 ```
+
+## Observability and platform services
+
+GumGum boots a singleton platform stack on each server, separate from per-environment app data providers:
+
+| Service | Container | Purpose |
+| --- | --- | --- |
+| Vaultwarden | `gumgum-vaultwarden` | platform-scoped secret service |
+| OpenTelemetry Collector | `gumgum-otel` | OTLP ingress for traces/metrics plumbing |
+| Prometheus | `gumgum-prometheus` | app/platform/host/container metrics |
+| Grafana | `gumgum-grafana` | dashboards and datasources at `grafana.<server-domain>` |
+| Loki | `gumgum-loki` | log backend |
+| Tempo | `gumgum-tempo` | trace backend |
+| node-exporter | `gumgum-node-exporter` | host metrics |
+| cAdvisor | `gumgum-cadvisor` | Docker/container metrics |
+| Docker socket proxy | `gumgum-docker-proxy` | read-only Docker discovery for Prometheus |
+
+Declare app metrics, required secrets, Grafana datasource files, and dashboard files in a worker manifest:
+
+```toml
+[observability]
+enable = true
+prometheus_metrics = "/_/metrics"
+
+[observability.grafana]
+sources = "../grafana/sources.json"
+
+[[secret]]
+name = "my-app/api-token"
+binding = "API_TOKEN"
+
+[[dashboard]]
+name = "API Overview"
+path = "../grafana/dashboards/api-overview.json"
+```
+
+When deployed, GumGum:
+
+- injects declared secret bindings and OTEL environment into workers
+- configures Prometheus scrapes for declared metrics endpoints
+- labels app containers for Docker service discovery (`prometheus.scrape=true`, `prometheus.port`, `prometheus.path`, `prometheus.label_*`)
+- applies Grafana datasources and dashboards through the daemon
+- stores Grafana dashboards under `<top-level-domain>` → `<project>` folders
+
+Grafana dashboards should include a top-level `GUMGUM_ENV` variable for switching between `preview` and `prod`. Query app metrics with that environment label, for example:
+
+```promql
+visit_counter_requests_total{environment="$GUMGUM_ENV"}
+```
+
+`gumgum status` includes platform provider health. A healthy server with the current default stack reports `Providers: 12/12 running`.
 
 ## Deploy
 
@@ -705,7 +760,11 @@ Errors are human-readable by default and structured as JSON only with `--json`.
 The `examples/visit-counter` workspace demonstrates:
 
 - API and background worker projects
+- preview/prod environment isolation
 - DB/KV/bucket/queue resources
+- platform-scoped secrets and observability declarations
+- Prometheus metrics from both API and worker
+- Grafana datasource/dashboard application under `<domain>` → `<project>` folders
 - resource bindings
 - deploy
 - logs and environment inspection
@@ -729,11 +788,14 @@ gumgum bucket bind visit-requests --to worker --as VISIT_REQUESTS_BUCKET
 gumgum queue bind visit-events --to api --as VISIT_EVENTS_QUEUE
 gumgum queue bind visit-events --to worker --as VISIT_EVENTS_QUEUE
 
-gumgum deploy
+gumgum deploy --env preview
+gumgum deploy --env prod
 gumgum logs
 gumgum events --grouped
 gumgum --dry-run publish
 ```
+
+The API worker uses `record = "@"`, so prod serves the project domain itself, for example `https://visit-counter.leostera.dev/`, while preview serves the project route under the server domain.
 
 ## Command reference
 
