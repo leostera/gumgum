@@ -5,6 +5,7 @@ import os
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover - only used outside uv-managed envs
 try:
     from opentelemetry import trace
     from opentelemetry.propagate import extract
+    from opentelemetry.trace import SpanKind
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
@@ -34,6 +36,7 @@ try:
 except ImportError:  # pragma: no cover - optional in local fallback mode
     trace = None
     extract = None
+    SpanKind = None
     OTLPSpanExporter = None
     Resource = None
     TracerProvider = None
@@ -87,6 +90,24 @@ def configure_tracing() -> None:
 
 
 configure_tracing()
+
+
+class _NoopSpan:
+    def set_attribute(self, key: str, value: object) -> None:
+        return
+
+
+@contextmanager
+def traced_span(name: str, kind=None, attributes: dict[str, object] | None = None):
+    if trace is None:
+        yield _NoopSpan()
+        return
+    with trace.get_tracer("visit_counter_worker").start_as_current_span(
+        name, kind=kind
+    ) as span:
+        for key, value in (attributes or {}).items():
+            span.set_attribute(key, value)
+        yield span
 
 
 def tracer():
@@ -352,9 +373,21 @@ def process_message(
     else:
         with span_context as span:
             span.set_attribute("messaging.system", "kafka" if KAFKA_BROKERS else "file")
+            span.set_attribute("messaging.operation.name", "process")
             span.set_attribute("messaging.destination.name", KAFKA_TOPIC or "visit-events")
+            span.set_attribute("peer.service", "redpanda" if KAFKA_BROKERS else "filesystem")
             span.set_attribute("visit.bucket_key", message["key"])
-            request = bucket.get_json(message["key"])
+            with traced_span(
+                "minio get visit request",
+                attributes={
+                    "db.system.name": "s3",
+                    "db.operation.name": "GetObject",
+                    "peer.service": "minio",
+                    "s3.bucket": message.get("bucket", BUCKET_NAME),
+                    "s3.key": message["key"],
+                },
+            ):
+                request = bucket.get_json(message["key"])
             span.set_attribute("visit.id", request["id"])
             _process_request(store, request, events, message)
 
@@ -366,7 +399,16 @@ def _process_request(
     message: dict[str, str],
 ) -> None:
     global PROCESSED_VISITS
-    store.insert_visit(request)
+    with traced_span(
+        "postgres insert visit",
+        attributes={
+            "db.system.name": "postgresql" if DATABASE_URL else "sqlite",
+            "db.operation.name": "INSERT",
+            "db.collection.name": "visits",
+            "peer.service": "postgres" if DATABASE_URL else "sqlite",
+        },
+    ):
+        store.insert_visit(request)
     PROCESSED_VISITS += 1
     if events is not None:
         events.acknowledge(message)

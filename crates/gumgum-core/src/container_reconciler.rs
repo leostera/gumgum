@@ -124,6 +124,27 @@ impl ContainerReconciler {
                 format!("{{{{upstreams {}}}}}", request.port),
             );
             labels.insert("caddy.tls".to_owned(), "internal".to_owned());
+            labels.insert("caddy.tracing".to_owned(), String::new());
+            labels.insert(
+                "caddy.tracing.span".to_owned(),
+                format!("{} ingress", request.worker),
+            );
+            labels.insert(
+                "caddy.tracing.span_attributes.gumgum_worker".to_owned(),
+                request.worker.clone(),
+            );
+            if let Some(project) = &request.project {
+                labels.insert(
+                    "caddy.tracing.span_attributes.gumgum_project".to_owned(),
+                    project.clone(),
+                );
+            }
+            if let Some(domain) = &request.domain {
+                labels.insert(
+                    "caddy.tracing.span_attributes.gumgum_domain".to_owned(),
+                    domain.clone(),
+                );
+            }
         }
         docker
             .create_and_start_container(ContainerRunSpec {

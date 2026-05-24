@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 import time
 import uuid
 from pathlib import Path
@@ -28,6 +29,7 @@ from fastapi.responses import PlainTextResponse
 try:
     from opentelemetry import trace
     from opentelemetry.propagate import inject
+    from opentelemetry.trace import SpanKind
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     from opentelemetry.sdk.resources import Resource
@@ -36,6 +38,7 @@ try:
 except ImportError:  # pragma: no cover - optional in local fallback mode
     trace = None
     inject = None
+    SpanKind = None
     OTLPSpanExporter = None
     FastAPIInstrumentor = None
     Resource = None
@@ -69,6 +72,28 @@ def otel_resource_attributes() -> dict[str, str]:
         key, value = pair.split("=", 1)
         attributes[key.strip()] = value.strip()
     return attributes
+
+
+class _NoopSpan:
+    def set_attribute(self, key: str, value: object) -> None:
+        return
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return
+
+
+@contextmanager
+def traced_span(name: str, kind=None, attributes: dict[str, object] | None = None):
+    if trace is None:
+        yield _NoopSpan()
+        return
+    with trace.get_tracer("visit_counter_api").start_as_current_span(name, kind=kind) as span:
+        for key, value in (attributes or {}).items():
+            span.set_attribute(key, value)
+        yield span
 
 
 def configure_tracing() -> None:
@@ -258,7 +283,15 @@ def record_visit(
     counters = counters or counter_store()
     bucket = bucket or request_bucket()
     queue = queue or event_queue()
-    visitor_count, total_count = counters.increment(visitor_id)
+    with traced_span(
+        "redis increment user counter",
+        attributes={
+            "db.system.name": "redis",
+            "db.operation.name": "INCR",
+            "peer.service": "redis",
+        },
+    ):
+        visitor_count, total_count = counters.increment(visitor_id)
     request_id = uuid.uuid4().hex
     key = f"requests/{int(time.time())}-{request_id}.json"
     payload = {
@@ -271,11 +304,32 @@ def record_visit(
         "visitor_count": str(visitor_count),
         "total_count": str(total_count),
     }
-    bucket.put_json(key, payload)
-    message = {"bucket": BUCKET_NAME, "key": key}
-    if inject is not None:
-        inject(message)
-    queue.publish(request_id, message)
+    with traced_span(
+        "minio put visit request",
+        attributes={
+            "db.system.name": "s3",
+            "db.operation.name": "PutObject",
+            "peer.service": "minio",
+            "s3.bucket": BUCKET_NAME,
+            "s3.key": key,
+        },
+    ):
+        bucket.put_json(key, payload)
+    with traced_span(
+        "redpanda produce visit event",
+        kind=SpanKind.PRODUCER if SpanKind is not None else None,
+        attributes={
+            "messaging.system": "kafka",
+            "messaging.operation.name": "send",
+            "messaging.destination.name": KAFKA_TOPIC or "visit-events",
+            "messaging.kafka.message.key": request_id,
+            "peer.service": "redpanda",
+        },
+    ):
+        message = {"bucket": BUCKET_NAME, "key": key}
+        if inject is not None:
+            inject(message)
+        queue.publish(request_id, message)
     return visitor_id, visitor_count, total_count
 
 
