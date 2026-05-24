@@ -652,6 +652,25 @@ mod presentation_boundary_tests {
         );
     }
 
+    #[test]
+    fn core_sources_do_not_expose_presentation_string_action_lists() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let forbidden = [
+            concat!("actions", ": Vec<String>"),
+            concat!("provider_actions", ": Vec<String>"),
+            concat!("binding_actions", ": Vec<String>"),
+            concat!("connection_examples", ": Vec<String>"),
+            concat!("pub fn ", "plan_lines"),
+        ];
+        let mut violations = Vec::new();
+        collect_print_violations(&src, &forbidden, &mut violations);
+        assert!(
+            violations.is_empty(),
+            "gumgum-core must expose symbolic action/example data, not rendered user strings:\n{}",
+            violations.join("\n")
+        );
+    }
+
     fn collect_print_violations(path: &Path, forbidden: &[&str], violations: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(path) else {
             return;
