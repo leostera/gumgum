@@ -43,7 +43,7 @@ pub use manifest::{
     WorkspaceProject, Zone, init_plan, load_worker_path, load_workspace_path, validate_path,
     validate_str, worker_manifest_template, worker_scaffold_files, workspace_manifest_template,
 };
-pub use platform::LocalPlatform;
+pub use platform::{LocalPlatform, PlatformEvent, PlatformStep};
 pub use process::{run_setup_command, run_setup_command_streaming};
 pub use providers::{
     ObjectProviderPlan, ProviderConfig, ProviderCredentials, ProviderReconciler, ProviderSpec,
@@ -639,5 +639,51 @@ mod deploy_planner_tests {
                 .iter()
                 .any(|node| node.id == "binding/visit-counter-api/VISIT_EVENTS_QUEUE")
         );
+    }
+}
+
+#[cfg(test)]
+mod presentation_boundary_tests {
+    use std::path::Path;
+
+    #[test]
+    fn core_sources_do_not_print_directly() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let forbidden = [
+            concat!("print", "ln!"),
+            concat!("eprint", "ln!"),
+            concat!("eprint", "!"),
+        ];
+        let mut violations = Vec::new();
+        collect_print_violations(&src, &forbidden, &mut violations);
+        assert!(
+            violations.is_empty(),
+            "gumgum-core must report typed data and let gumgum-cli present it; direct printing found:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    fn collect_print_violations(path: &Path, forbidden: &[&str], violations: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_print_violations(&path, forbidden, violations);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (index, line) in contents.lines().enumerate() {
+                if forbidden.iter().any(|needle| line.contains(needle)) {
+                    violations.push(format!("{}:{}: {}", path.display(), index + 1, line.trim()));
+                }
+            }
+        }
     }
 }

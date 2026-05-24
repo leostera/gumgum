@@ -1,8 +1,8 @@
-use crate::server_client::ServerClient;
 use crate::{
     ServerCommand, ServerSubcommand, ServerUpgradeArgs, StatusArgs, config_command,
     print_config_report, print_value, progress,
 };
+use crate::{domain_command::authorize_cloudflare_zone, server_client::ServerClient};
 use gumgum_api::{
     DaemonVersionReport, DomainAddRequest, GraphReport, PingReport, ProviderStatusReport,
     ServerListReport,
@@ -217,7 +217,7 @@ async fn add_server(
             quiet,
             format!("authorizing Cloudflare for {}", setup.root_domain),
         );
-        let grant = gumgum_core::cloudflare::authorize_zone(&setup.root_domain).await?;
+        let grant = authorize_cloudflare_zone(&setup.root_domain)?;
         let domain_report = client
             .add_domain(&DomainAddRequest {
                 name: setup.root_domain.clone(),

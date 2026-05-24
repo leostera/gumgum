@@ -2,6 +2,7 @@ use crate::{DomainAddArgs, DomainArgs, DomainCommand, print_value, resolve_serve
 use gumgum_api::{DomainAddRequest, DomainReport};
 use gumgum_core::{DomainProvider, IngressMode, cloudflare};
 use serde::Serialize;
+use std::io::{self, Write};
 
 use crate::server_client::ServerClient;
 
@@ -84,7 +85,7 @@ pub(crate) async fn add_domain(
                 );
             }
         }
-        let grant = cloudflare::authorize_zone(&args.name).await?;
+        let grant = authorize_cloudflare_zone(&args.name)?;
         report = client
             .add_domain(&DomainAddRequest {
                 name: args.name,
@@ -110,4 +111,51 @@ pub(crate) async fn add_domain(
         println!("{}", report.message);
     }
     Ok(report)
+}
+
+pub(crate) fn authorize_cloudflare_zone(
+    zone_name: &str,
+) -> gumgum_core::Result<gumgum_core::CloudflareGrant> {
+    let prompt = cloudflare::token_prompt(zone_name);
+    eprintln!("Cloudflare API token required for {}.", prompt.zone_name);
+    eprintln!("Create a Cloudflare API token with these permission policies:");
+    eprintln!("  Scope    Permission                                      Applies to");
+    eprintln!(
+        "  -------  ----------------------------------------------  ---------------------------------------------------------------"
+    );
+    for permission in &prompt.permissions {
+        eprintln!(
+            "  {:<7}  {:<46}  {}",
+            permission.scope, permission.permission, permission.applies_to
+        );
+    }
+    eprintln!("Use Cloudflare's token builder as:");
+    eprintln!("  All zones in your account: Zone Read, DNS Write");
+    eprintln!("  Entire account: Cloudflare One Connector: cloudflared Write");
+    eprintln!("Make sure the zone list includes: {}", prompt.zone_name);
+    eprintln!(
+        "When adding more Cloudflare-managed domains later, update/recreate the token to include those domains too."
+    );
+    eprintln!("Cloudflare token page: {}", prompt.token_url);
+    eprint!("Paste Cloudflare API token: ");
+    io::stderr().flush().map_err(|source| {
+        gumgum_core::GumgumError::structured(
+            gumgum_core::Subsystem::Config,
+            gumgum_core::ErrorCode::Io,
+            "could not flush prompt",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    let mut token = String::new();
+    io::stdin().read_line(&mut token).map_err(|source| {
+        gumgum_core::GumgumError::structured(
+            gumgum_core::Subsystem::Config,
+            gumgum_core::ErrorCode::Io,
+            "could not read Cloudflare token",
+        )
+        .likely_cause(source.to_string())
+        .build()
+    })?;
+    cloudflare::grant_from_api_token(zone_name, token)
 }

@@ -19,8 +19,9 @@ use gumgum_api::{
 use gumgum_core::{
     ConfigStore, DesiredDeploy, DesiredProvider, DomainRecord, ErrorCode, GlobalObject,
     GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore, GumgumError,
-    LocalPlatform, ProviderReconciler, Subsystem, WorkerBinding, affected_subgraph, internal_db,
-    not_configured_status, object_dns, object_provider_plan, render_mermaid_graph,
+    LocalPlatform, PlatformEvent, PlatformStep, ProviderReconciler, Subsystem, WorkerBinding,
+    affected_subgraph, internal_db, not_configured_status, object_dns, object_provider_plan,
+    render_mermaid_graph,
 };
 use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::{process::Command as TokioCommand, sync::mpsc};
@@ -31,6 +32,54 @@ pub(crate) struct DaemonState {
 }
 
 pub(crate) struct DaemonApp;
+
+fn print_platform_event(event: PlatformEvent) {
+    match event {
+        PlatformEvent::StepStarted { step } => eprintln!("→ {}", platform_step_label(step)),
+        PlatformEvent::StepFinished { step, elapsed_ms } => {
+            eprintln!(
+                "✓ {} ({:.1}s)",
+                platform_step_label(step),
+                elapsed_ms as f32 / 1000.0
+            )
+        }
+        PlatformEvent::StepFailed { step, elapsed_ms } => {
+            eprintln!(
+                "✗ {} ({:.1}s)",
+                platform_step_label(step),
+                elapsed_ms as f32 / 1000.0
+            )
+        }
+        PlatformEvent::ContainerCreate { container } => eprintln!("  create container {container}"),
+        PlatformEvent::ContainerRecreate { container } => {
+            eprintln!("  recreate {container} to publish host ports 80/443")
+        }
+        PlatformEvent::NetworkCreated { network } => {
+            eprintln!("  created Docker network {network}")
+        }
+        PlatformEvent::DnsConfig {
+            bind_address,
+            upstream,
+        } => eprintln!("  DNS bind address: {bind_address}; upstream: {upstream}"),
+        PlatformEvent::PortUnavailable {
+            bind_address,
+            port,
+            container,
+        } => eprintln!("warning: {bind_address}:{port} is already in use; {container} not started"),
+        PlatformEvent::GatewayPortsUnavailable { container, error } => eprintln!(
+            "warning: could not publish ports 80/443 for {container}; starting for tunnel-only ingress: {error}"
+        ),
+    }
+}
+
+fn platform_step_label(step: PlatformStep) -> &'static str {
+    match step {
+        PlatformStep::DockerNetwork => "checking Docker network gumgum-network",
+        PlatformStep::LocalRegistry => "checking local registry container",
+        PlatformStep::DnsForwarder => "checking DNS forwarding container",
+        PlatformStep::HttpGateway => "checking HTTP gateway container",
+    }
+}
 
 impl DaemonApp {
     pub(crate) fn new() -> Self {
@@ -43,7 +92,7 @@ impl DaemonApp {
             "Most users do not need to run this manually; prefer `gumgum setup` or `gumgum server add`."
         );
         eprintln!("Preparing local Docker/network prerequisites...");
-        LocalPlatform::ensure(false).await?;
+        LocalPlatform::ensure_with_events(print_platform_event).await?;
         let graph_path = ConfigStore::from_home_env()?.root().join("graph.sqlite");
         eprintln!("Using graph store: {}", graph_path.display());
         internal_db::migrate_graph_store(&graph_path).await?;

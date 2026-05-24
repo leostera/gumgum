@@ -1,8 +1,10 @@
-use crate::{SetupArgs, progress, server_client::ServerClient};
+use crate::{
+    SetupArgs, domain_command::authorize_cloudflare_zone, progress, server_client::ServerClient,
+};
 use gumgum_api::{DomainAddRequest, ServerRecord, SetupReport};
 use gumgum_core::{
     ConfigStore, DaemonHealthClient, DomainProvider, ErrorCode, GumgumError, GumgumInstaller,
-    IngressMode, SetupOptions, SetupTarget, Subsystem, cloudflare, setup_actions,
+    IngressMode, SetupOptions, SetupTarget, Subsystem, setup_actions,
 };
 pub(crate) async fn resolve_setup(args: SetupArgs) -> gumgum_core::Result<SetupTarget> {
     if args.host.is_none() {
@@ -51,7 +53,7 @@ pub(crate) async fn install_gumgumd(
             quiet,
             format!("authorizing Cloudflare for {}", setup.root_domain),
         );
-        let grant = cloudflare::authorize_zone(&setup.root_domain).await?;
+        let grant = authorize_cloudflare_zone(&setup.root_domain)?;
         ServerClient::new(setup.host.clone())
             .add_domain(&DomainAddRequest {
                 name: setup.root_domain.clone(),

@@ -1,9 +1,11 @@
 use crate::{ContainerRunSpec, DockerEngine, ErrorCode, GumgumError, PortBindingSpec, Subsystem};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{
     future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
     path::PathBuf,
+    pin::Pin,
     time::Instant,
 };
 use tokio::process::Command as TokioCommand;
@@ -15,27 +17,78 @@ const CADDY_CONTAINER: &str = "gumgum-caddy";
 
 pub struct LocalPlatform;
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PlatformEvent {
+    StepStarted {
+        step: PlatformStep,
+    },
+    StepFinished {
+        step: PlatformStep,
+        elapsed_ms: u128,
+    },
+    StepFailed {
+        step: PlatformStep,
+        elapsed_ms: u128,
+    },
+    ContainerCreate {
+        container: String,
+    },
+    ContainerRecreate {
+        container: String,
+    },
+    NetworkCreated {
+        network: String,
+    },
+    DnsConfig {
+        bind_address: String,
+        upstream: String,
+    },
+    PortUnavailable {
+        bind_address: String,
+        port: u16,
+        container: String,
+    },
+    GatewayPortsUnavailable {
+        container: String,
+        error: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformStep {
+    DockerNetwork,
+    LocalRegistry,
+    DnsForwarder,
+    HttpGateway,
+}
+
 impl LocalPlatform {
-    pub async fn ensure(quiet: bool) -> crate::Result<()> {
-        platform_step(quiet, "checking Docker network gumgum-network", async {
-            ensure_network(GUMGUM_NETWORK, quiet).await
+    pub async fn ensure(_quiet: bool) -> crate::Result<()> {
+        Self::ensure_with_events(|_| {}).await
+    }
+
+    pub async fn ensure_with_events(mut emit: impl FnMut(PlatformEvent)) -> crate::Result<()> {
+        platform_step(&mut emit, PlatformStep::DockerNetwork, |emit| {
+            Box::pin(ensure_network(GUMGUM_NETWORK, emit))
         })
         .await?;
-        platform_step(quiet, "checking local registry container", async {
-            Self::ensure_registry(quiet).await
+        platform_step(&mut emit, PlatformStep::LocalRegistry, |emit| {
+            Box::pin(Self::ensure_registry(emit))
         })
         .await?;
-        platform_step(quiet, "checking DNS forwarding container", async {
-            Self::ensure_dnsmasq(quiet).await
+        platform_step(&mut emit, PlatformStep::DnsForwarder, |emit| {
+            Box::pin(Self::ensure_dnsmasq(emit))
         })
         .await?;
-        platform_step(quiet, "checking HTTP gateway container", async {
-            Self::ensure_caddy(quiet).await
+        platform_step(&mut emit, PlatformStep::HttpGateway, |emit| {
+            Box::pin(Self::ensure_caddy(emit))
         })
         .await
     }
 
-    async fn ensure_registry(quiet: bool) -> crate::Result<()> {
+    async fn ensure_registry(emit: &mut impl FnMut(PlatformEvent)) -> crate::Result<()> {
         let docker = DockerEngine::local()?;
         if docker
             .inspect_container(REGISTRY_CONTAINER)
@@ -45,9 +98,9 @@ impl LocalPlatform {
             docker.start_container(REGISTRY_CONTAINER).await?;
             return Ok(());
         }
-        if !quiet {
-            eprintln!("  create container {REGISTRY_CONTAINER}");
-        }
+        emit(PlatformEvent::ContainerCreate {
+            container: REGISTRY_CONTAINER.to_owned(),
+        });
         docker.pull_image("registry:2").await?;
         docker
             .create_and_start_container(ContainerRunSpec {
@@ -69,14 +122,15 @@ impl LocalPlatform {
             .await
     }
 
-    async fn ensure_dnsmasq(quiet: bool) -> crate::Result<()> {
+    async fn ensure_dnsmasq(emit: &mut impl FnMut(PlatformEvent)) -> crate::Result<()> {
         let host_ip = host_lan_ip().await.unwrap_or(Ipv4Addr::LOCALHOST);
         let upstream = upstream_dns(host_ip)
             .await
             .unwrap_or(Ipv4Addr::new(1, 1, 1, 1));
-        if !quiet {
-            eprintln!("  DNS bind address: {host_ip}; upstream: {upstream}");
-        }
+        emit(PlatformEvent::DnsConfig {
+            bind_address: host_ip.to_string(),
+            upstream: upstream.to_string(),
+        });
         write_dnsmasq_config(upstream)?;
 
         let docker = DockerEngine::local()?;
@@ -87,18 +141,18 @@ impl LocalPlatform {
         }
 
         if !port_available(host_ip, 53) {
-            if !quiet {
-                eprintln!(
-                    "warning: {host_ip}:53 is already in use; {DNSMASQ_CONTAINER} not started"
-                );
-            }
+            emit(PlatformEvent::PortUnavailable {
+                bind_address: host_ip.to_string(),
+                port: 53,
+                container: DNSMASQ_CONTAINER.to_owned(),
+            });
             return Ok(());
         }
 
         let config_mount = format!("{}:/etc/dnsmasq.conf:ro", dnsmasq_config_path()?.display());
-        if !quiet {
-            eprintln!("  create container {DNSMASQ_CONTAINER}");
-        }
+        emit(PlatformEvent::ContainerCreate {
+            container: DNSMASQ_CONTAINER.to_owned(),
+        });
         docker.pull_image("jpillora/dnsmasq:latest").await?;
         docker
             .create_and_start_container(ContainerRunSpec {
@@ -119,7 +173,7 @@ impl LocalPlatform {
             .await
     }
 
-    async fn ensure_caddy(quiet: bool) -> crate::Result<()> {
+    async fn ensure_caddy(emit: &mut impl FnMut(PlatformEvent)) -> crate::Result<()> {
         let docker = DockerEngine::local()?;
         if let Some(existing) = docker.inspect_container(CADDY_CONTAINER).await? {
             let has_http = existing
@@ -139,9 +193,9 @@ impl LocalPlatform {
                 docker.start_container(CADDY_CONTAINER).await?;
                 return Ok(());
             }
-            if !quiet {
-                eprintln!("  recreate {CADDY_CONTAINER} to publish host ports 80/443");
-            }
+            emit(PlatformEvent::ContainerRecreate {
+                container: CADDY_CONTAINER.to_owned(),
+            });
             docker.remove_container_force(CADDY_CONTAINER).await?;
         }
 
@@ -150,9 +204,9 @@ impl LocalPlatform {
             PortBindingSpec::tcp(None, 80, 80),
             PortBindingSpec::tcp(None, 443, 443),
         ];
-        if !quiet {
-            eprintln!("  create container {CADDY_CONTAINER}");
-        }
+        emit(PlatformEvent::ContainerCreate {
+            container: CADDY_CONTAINER.to_owned(),
+        });
         docker
             .pull_image("lucaslorentz/caddy-docker-proxy:latest")
             .await?;
@@ -200,43 +254,39 @@ impl LocalPlatform {
             Ok(()) => Ok(()),
             Err(error) => {
                 let _ = docker.remove_container_force(CADDY_CONTAINER).await;
-                if !quiet {
-                    eprintln!(
-                        "warning: could not publish ports 80/443 for {CADDY_CONTAINER}; starting for tunnel-only ingress: {}",
-                        error.to_report().message
-                    );
-                }
+                emit(PlatformEvent::GatewayPortsUnavailable {
+                    container: CADDY_CONTAINER.to_owned(),
+                    error: error.to_report().message,
+                });
                 docker.create_and_start_container(spec(Vec::new())).await
             }
         }
     }
 }
 
-async fn platform_step<T>(
-    quiet: bool,
-    label: impl AsRef<str>,
-    future: impl Future<Output = crate::Result<T>>,
-) -> crate::Result<T> {
-    let label = label.as_ref();
-    if !quiet {
-        eprintln!("→ {label}");
-    }
+async fn platform_step<T, E, F>(emit: &mut E, step: PlatformStep, run: F) -> crate::Result<T>
+where
+    E: FnMut(PlatformEvent),
+    F: for<'a> FnOnce(&'a mut E) -> Pin<Box<dyn Future<Output = crate::Result<T>> + 'a>>,
+{
+    emit(PlatformEvent::StepStarted { step });
     let started = Instant::now();
-    let result = future.await;
-    if !quiet {
-        match &result {
-            Ok(_) => eprintln!("✓ {label} ({:.1}s)", started.elapsed().as_secs_f32()),
-            Err(_) => eprintln!("✗ {label} ({:.1}s)", started.elapsed().as_secs_f32()),
-        }
+    let result = run(emit).await;
+    let elapsed_ms = started.elapsed().as_millis();
+    match &result {
+        Ok(_) => emit(PlatformEvent::StepFinished { step, elapsed_ms }),
+        Err(_) => emit(PlatformEvent::StepFailed { step, elapsed_ms }),
     }
     result
 }
 
-async fn ensure_network(name: &str, quiet: bool) -> crate::Result<()> {
+async fn ensure_network(name: &str, emit: &mut impl FnMut(PlatformEvent)) -> crate::Result<()> {
     let docker = DockerEngine::local()?;
     let created = docker.ensure_network(name).await?;
-    if created && !quiet {
-        eprintln!("  created Docker network {name}");
+    if created {
+        emit(PlatformEvent::NetworkCreated {
+            network: name.to_owned(),
+        });
     }
     Ok(())
 }
