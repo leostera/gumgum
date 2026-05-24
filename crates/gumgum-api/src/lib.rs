@@ -100,6 +100,8 @@ pub struct DeployApplyReport {
 pub struct GrafanaArtifactRequest {
     pub kind: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folder_path: Vec<String>,
     pub content: serde_json::Value,
 }
 

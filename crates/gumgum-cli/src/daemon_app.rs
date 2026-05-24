@@ -735,6 +735,7 @@ async fn daemon_apply_grafana_artifact(
     match gumgum_core::providers::observability::apply_grafana_artifact(
         &request.kind,
         &request.name,
+        &request.folder_path,
         request.content,
     )
     .await

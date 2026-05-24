@@ -20,6 +20,8 @@ use crate::{deploy_executor::DeployExecutor, server_client::ServerClient};
 pub(crate) struct GrafanaArtifactPlan {
     pub(crate) kind: String,
     pub(crate) name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) folder_path: Vec<String>,
     pub(crate) path: String,
 }
 
@@ -262,7 +264,7 @@ fn deploy_report(
         env.is_prod(),
     );
     descriptor.container = env_prefixed_container_name(&descriptor.container, env);
-    let grafana = grafana_artifact_plan(&path, manifest, project_name);
+    let grafana = grafana_artifact_plan(&path, manifest, project_name, project_domain);
     descriptor.plan.extend(grafana.iter().map(|artifact| {
         format!(
             "provision Grafana {} {} from {}",
@@ -468,6 +470,7 @@ async fn apply_grafana_artifacts(
             .apply_grafana_artifact(&GrafanaArtifactRequest {
                 kind: artifact.kind.clone(),
                 name: artifact.name.clone(),
+                folder_path: artifact.folder_path.clone(),
                 content,
             })
             .await?;
@@ -583,6 +586,7 @@ fn grafana_artifact_plan(
     manifest_path: &std::path::Path,
     manifest: &WorkerManifest,
     project_name: Option<&str>,
+    project_domain: Option<&str>,
 ) -> Vec<GrafanaArtifactPlan> {
     let base_dir = manifest_path
         .parent()
@@ -595,6 +599,7 @@ fn grafana_artifact_plan(
                 .map(|project| project.namespace.as_str())
         })
         .unwrap_or("root");
+    let folder_path = grafana_folder_path(project_domain, project);
     let mut artifacts = Vec::new();
     if let Some(sources) = manifest
         .observability
@@ -605,6 +610,7 @@ fn grafana_artifact_plan(
         artifacts.push(GrafanaArtifactPlan {
             kind: "datasource".to_owned(),
             name: format!("{project} / datasources"),
+            folder_path: Vec::new(),
             path: base_dir.join(sources).display().to_string(),
         });
     }
@@ -615,10 +621,18 @@ fn grafana_artifact_plan(
             .map(|dashboard| GrafanaArtifactPlan {
                 kind: "dashboard".to_owned(),
                 name: format!("{project} / {}", dashboard.name),
+                folder_path: folder_path.clone(),
                 path: base_dir.join(&dashboard.path).display().to_string(),
             }),
     );
     artifacts
+}
+
+fn grafana_folder_path(project_domain: Option<&str>, project: &str) -> Vec<String> {
+    project_domain
+        .filter(|domain| !domain.trim().is_empty())
+        .map(|domain| vec![domain.to_owned(), project.to_owned()])
+        .unwrap_or_else(|| vec![project.to_owned()])
 }
 
 fn deployment_key(worker: &str, env: crate::DeployEnv) -> String {
@@ -846,7 +860,7 @@ mod deploy_hardening_tests {
             std::path::PathBuf::from("examples/visit-counter/api/gumgum.toml"),
             &manifest,
             None,
-            None,
+            Some("kava.fund"),
             None,
             true,
             crate::DeployEnv::Preview,
@@ -905,11 +919,13 @@ mod deploy_hardening_tests {
             std::path::Path::new("examples/visit-counter/api/gumgum.toml"),
             &manifest,
             None,
+            Some("kava.fund"),
         );
 
         assert_eq!(plan.len(), 2);
         assert_eq!(plan[0].kind, "datasource");
         assert_eq!(plan[0].name, "kava-fund / datasources");
+        assert_eq!(plan[1].folder_path, vec!["kava.fund", "kava-fund"]);
         assert!(
             plan[1]
                 .path

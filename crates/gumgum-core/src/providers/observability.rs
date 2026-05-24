@@ -337,6 +337,7 @@ fn io_error(message: &str, error: std::io::Error) -> crate::GumgumError {
 pub async fn apply_grafana_artifact(
     kind: &str,
     name: &str,
+    folder_path: &[String],
     content: serde_json::Value,
 ) -> crate::Result<Vec<String>> {
     let password = std::env::var("GUMGUM_GRAFANA_ADMIN_PASSWORD")
@@ -417,14 +418,20 @@ pub async fn apply_grafana_artifact(
             Ok(actions)
         }
         "dashboard" => {
+            let folder_uid =
+                ensure_grafana_folder_path(&client, &base, &password, &folder_path).await?;
+            let mut payload = serde_json::json!({
+                "dashboard": content,
+                "overwrite": true,
+                "message": format!("gumgum apply {name}"),
+            });
+            if let Some(folder_uid) = folder_uid {
+                payload["folderUid"] = serde_json::Value::String(folder_uid);
+            }
             let response = client
                 .post(format!("{base}/api/dashboards/db"))
                 .basic_auth("gumgum", Some(&password))
-                .json(&serde_json::json!({
-                    "dashboard": content,
-                    "overwrite": true,
-                    "message": format!("gumgum apply {name}"),
-                }))
+                .json(&payload)
                 .send()
                 .await
                 .map_err(grafana_error)?;
@@ -441,6 +448,41 @@ pub async fn apply_grafana_artifact(
         )
         .build()),
     }
+}
+
+async fn ensure_grafana_folder_path(
+    client: &reqwest::Client,
+    base: &str,
+    password: &str,
+    folder_path: &[String],
+) -> crate::Result<Option<String>> {
+    let mut parent_uid: Option<String> = None;
+    for title in folder_path.iter().filter(|title| !title.trim().is_empty()) {
+        let uid = grafana_folder_uid(parent_uid.as_deref(), title);
+        let response = client
+            .post(format!("{base}/api/folders"))
+            .basic_auth("gumgum", Some(password))
+            .json(&serde_json::json!({
+                "uid": uid,
+                "title": title,
+                "parentUid": parent_uid,
+            }))
+            .send()
+            .await
+            .map_err(grafana_error)?;
+        if response.status().is_success() || response.status().as_u16() == 409 {
+            parent_uid = Some(uid);
+        } else {
+            return Err(grafana_response_error(response).await);
+        }
+    }
+    Ok(parent_uid)
+}
+
+fn grafana_folder_uid(parent_uid: Option<&str>, title: &str) -> String {
+    let prefix = parent_uid.unwrap_or("gumgum");
+    let slug = crate::sanitize_name(title);
+    format!("{prefix}-{slug}").chars().take(40).collect()
 }
 
 async fn grafana_datasource_uid(
@@ -603,6 +645,16 @@ mod tests {
         assert_eq!(
             labels.get("gumgum.capability").map(String::as_str),
             Some("observability")
+        );
+    }
+
+    #[test]
+    fn grafana_folder_uid_builds_stable_nested_path() {
+        let domain = grafana_folder_uid(None, "kava.fund");
+        assert_eq!(domain, "gumgum-kava-fund");
+        assert_eq!(
+            grafana_folder_uid(Some(&domain), "visit-counter"),
+            "gumgum-kava-fund-visit-counter"
         );
     }
 

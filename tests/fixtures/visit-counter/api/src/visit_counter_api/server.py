@@ -45,7 +45,9 @@ KAFKA_TOPIC = os.environ.get("VISIT_EVENTS_QUEUE_TOPIC")
 
 
 class CounterStore(Protocol):
-    def increment(self, visitor_id: str) -> int: ...
+    def increment(self, visitor_id: str) -> tuple[int, int]: ...
+
+    def total(self) -> int: ...
 
 
 class RequestBucket(Protocol):
@@ -61,12 +63,17 @@ class JsonFileCounterStore:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def increment(self, visitor_id: str) -> int:
+    def increment(self, visitor_id: str) -> tuple[int, int]:
         values = self._load()
-        key = f"visitor:{visitor_id}:count"
-        values[key] = int(values.get(key, 0)) + 1
+        visitor_key = f"visitor:{visitor_id}:count"
+        total_key = "visits:total"
+        values[visitor_key] = int(values.get(visitor_key, 0)) + 1
+        values[total_key] = int(values.get(total_key, 0)) + 1
         self.path.write_text(json.dumps(values, indent=2, sort_keys=True))
-        return values[key]
+        return values[visitor_key], values[total_key]
+
+    def total(self) -> int:
+        return int(self._load().get("visits:total", 0))
 
     def _load(self) -> dict[str, int]:
         if not self.path.exists():
@@ -88,8 +95,16 @@ class RedisCounterStore:
     def key(self, value: str) -> str:
         return f"{self.key_prefix}{value}"
 
-    def increment(self, visitor_id: str) -> int:
-        return int(self.client.incr(self.key(f"visitor:{visitor_id}:count")))
+    def increment(self, visitor_id: str) -> tuple[int, int]:
+        pipe = self.client.pipeline()
+        pipe.incr(self.key(f"visitor:{visitor_id}:count"))
+        pipe.incr(self.key("visits:total"))
+        visitor_count, total_count = pipe.execute()
+        return int(visitor_count), int(total_count)
+
+    def total(self) -> int:
+        value = self.client.get(self.key("visits:total"))
+        return int(value or 0)
 
 
 class FileRequestBucket:
@@ -191,13 +206,13 @@ def record_visit(
     counters: CounterStore | None = None,
     bucket: RequestBucket | None = None,
     queue: EventQueue | None = None,
-) -> tuple[str, int]:
+) -> tuple[str, int, int]:
     ensure_dirs()
     visitor_id = visitor_id or uuid.uuid4().hex
     counters = counters or counter_store()
     bucket = bucket or request_bucket()
     queue = queue or event_queue()
-    count = counters.increment(visitor_id)
+    visitor_count, total_count = counters.increment(visitor_id)
     request_id = uuid.uuid4().hex
     key = f"requests/{int(time.time())}-{request_id}.json"
     payload = {
@@ -207,10 +222,12 @@ def record_visit(
         "user_agent": user_agent,
         "seen_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "bucket_key": key,
+        "visitor_count": str(visitor_count),
+        "total_count": str(total_count),
     }
     bucket.put_json(key, payload)
     queue.publish(request_id, {"bucket": BUCKET_NAME, "key": key})
-    return visitor_id, count
+    return visitor_id, visitor_count, total_count
 
 
 @app.get("/healthz", response_class=PlainTextResponse)
@@ -222,10 +239,14 @@ def healthz() -> str:
 
 @app.get("/_/metrics", response_class=PlainTextResponse)
 def metrics() -> str:
+    total_count = counter_store().total()
     return (
         "# HELP visit_counter_info Visit counter fixture metadata\n"
         "# TYPE visit_counter_info gauge\n"
         'visit_counter_info{service="api"} 1\n'
+        "# HELP visit_counter_requests_total Total visits recorded by the fixture API\n"
+        "# TYPE visit_counter_requests_total counter\n"
+        f'visit_counter_requests_total{{service="api"}} {total_count}\n'
     )
 
 
@@ -233,13 +254,16 @@ def metrics() -> str:
 def visit(
     request: Request, response: Response, visit_counter_id: str | None = Cookie(default=None)
 ) -> str:
-    visitor_id, count = record_visit(
+    visitor_id, visitor_count, total_count = record_visit(
         path=request.url.path,
         user_agent=request.headers.get("User-Agent", ""),
         visitor_id=visit_counter_id,
     )
     response.set_cookie("visit_counter_id", visitor_id, path="/", samesite="lax")
-    return f"Hello visitor {visitor_id}, visit #{count}\n"
+    return (
+        f"Hello visitor {visitor_id}, "
+        f"this is your visit #{visitor_count} and site visit #{total_count}\n"
+    )
 
 
 def main() -> None:

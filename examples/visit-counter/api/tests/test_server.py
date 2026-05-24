@@ -17,9 +17,14 @@ def configure_fallback_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "KAFKA_TOPIC", None)
 
 
-def test_metrics_endpoint_exposes_prometheus_text():
-    assert "visit_counter_info" in server.metrics()
-    assert 'service="api"' in server.metrics()
+def test_metrics_endpoint_exposes_prometheus_text(monkeypatch, tmp_path):
+    configure_fallback_paths(monkeypatch, tmp_path)
+    server.record_visit(path="/", user_agent="pytest", visitor_id="visitor-1")
+    metrics = server.metrics()
+    assert "visit_counter_info" in metrics
+    assert 'service="api"' in metrics
+    assert "visit_counter_requests_total" in metrics
+    assert 'visit_counter_requests_total{service="api"} 1' in metrics
 
 
 def test_visit_increments_counter_and_writes_bucket_and_queue(monkeypatch, tmp_path):

@@ -145,6 +145,7 @@ mod tests {
             grafana: vec![crate::deploy_command::GrafanaArtifactPlan {
                 kind: "dashboard".to_owned(),
                 name: "kava-fund / API Overview".to_owned(),
+                folder_path: vec!["kava.fund".to_owned(), "kava-fund".to_owned()],
                 path: "grafana/dashboards/api-overview.json".to_owned(),
             }],
             plan: Vec::new(),

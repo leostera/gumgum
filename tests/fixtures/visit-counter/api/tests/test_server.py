@@ -17,35 +17,48 @@ def configure_fallback_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "KAFKA_TOPIC", None)
 
 
-def test_metrics_endpoint_exposes_prometheus_text():
-    assert "visit_counter_info" in server.metrics()
-    assert 'service="api"' in server.metrics()
+def test_metrics_endpoint_exposes_prometheus_text(monkeypatch, tmp_path):
+    configure_fallback_paths(monkeypatch, tmp_path)
+    server.record_visit(path="/", user_agent="pytest", visitor_id="visitor-1")
+    metrics = server.metrics()
+    assert "visit_counter_info" in metrics
+    assert 'service="api"' in metrics
+    assert "visit_counter_requests_total" in metrics
+    assert 'visit_counter_requests_total{service="api"} 1' in metrics
 
 
 def test_visit_increments_counter_and_writes_bucket_and_queue(monkeypatch, tmp_path):
     configure_fallback_paths(monkeypatch, tmp_path)
 
-    first_visitor, first_count = server.record_visit(
+    first_visitor, first_count, first_total = server.record_visit(
         path="/", user_agent="pytest", visitor_id="visitor-1"
     )
-    second_visitor, second_count = server.record_visit(
+    second_visitor, second_count, second_total = server.record_visit(
         path="/", user_agent="pytest", visitor_id="visitor-1"
+    )
+    third_visitor, third_count, third_total = server.record_visit(
+        path="/", user_agent="pytest", visitor_id="visitor-2"
     )
 
-    assert (first_visitor, first_count) == ("visitor-1", 1)
-    assert (second_visitor, second_count) == ("visitor-1", 2)
+    assert (first_visitor, first_count, first_total) == ("visitor-1", 1, 1)
+    assert (second_visitor, second_count, second_total) == ("visitor-1", 2, 2)
+    assert (third_visitor, third_count, third_total) == ("visitor-2", 1, 3)
     kv = json.loads((tmp_path / "kv.json").read_text())
     assert kv["visitor:visitor-1:count"] == 2
+    assert kv["visitor:visitor-2:count"] == 1
+    assert kv["visits:total"] == 3
 
     request_objects = sorted((tmp_path / "bucket" / "requests").glob("*.json"))
     queue_messages = sorted((tmp_path / "queue").glob("*.json"))
-    assert len(request_objects) == 2
-    assert len(queue_messages) == 2
+    assert len(request_objects) == 3
+    assert len(queue_messages) == 3
 
-    request = json.loads(request_objects[0].read_text())
-    message = json.loads(queue_messages[0].read_text())
-    assert request["visitor_id"] == "visitor-1"
-    assert request["user_agent"] == "pytest"
-    assert request["bucket_key"].startswith("requests/")
-    assert message["bucket"] == "visit-requests"
-    assert message["key"].startswith("requests/")
+    requests = [json.loads(path.read_text()) for path in request_objects]
+    messages = [json.loads(path.read_text()) for path in queue_messages]
+    assert {request["visitor_id"] for request in requests} == {"visitor-1", "visitor-2"}
+    assert all(request["user_agent"] == "pytest" for request in requests)
+    assert all(request["bucket_key"].startswith("requests/") for request in requests)
+    assert {request["visitor_count"] for request in requests} == {"1", "2"}
+    assert {request["total_count"] for request in requests} == {"1", "2", "3"}
+    assert all(message["bucket"] == "visit-requests" for message in messages)
+    assert all(message["key"].startswith("requests/") for message in messages)

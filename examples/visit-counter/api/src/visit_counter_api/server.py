@@ -47,6 +47,8 @@ KAFKA_TOPIC = os.environ.get("VISIT_EVENTS_QUEUE_TOPIC")
 class CounterStore(Protocol):
     def increment(self, visitor_id: str) -> tuple[int, int]: ...
 
+    def total(self) -> int: ...
+
 
 class RequestBucket(Protocol):
     def put_json(self, key: str, payload: dict[str, str]) -> None: ...
@@ -69,6 +71,9 @@ class JsonFileCounterStore:
         values[total_key] = int(values.get(total_key, 0)) + 1
         self.path.write_text(json.dumps(values, indent=2, sort_keys=True))
         return values[visitor_key], values[total_key]
+
+    def total(self) -> int:
+        return int(self._load().get("visits:total", 0))
 
     def _load(self) -> dict[str, int]:
         if not self.path.exists():
@@ -96,6 +101,10 @@ class RedisCounterStore:
         pipe.incr(self.key("visits:total"))
         visitor_count, total_count = pipe.execute()
         return int(visitor_count), int(total_count)
+
+    def total(self) -> int:
+        value = self.client.get(self.key("visits:total"))
+        return int(value or 0)
 
 
 class FileRequestBucket:
@@ -230,10 +239,14 @@ def healthz() -> str:
 
 @app.get("/_/metrics", response_class=PlainTextResponse)
 def metrics() -> str:
+    total_count = counter_store().total()
     return (
         "# HELP visit_counter_info Visit counter fixture metadata\n"
         "# TYPE visit_counter_info gauge\n"
         'visit_counter_info{service="api"} 1\n'
+        "# HELP visit_counter_requests_total Total visits recorded by the fixture API\n"
+        "# TYPE visit_counter_requests_total counter\n"
+        f'visit_counter_requests_total{{service="api"}} {total_count}\n'
     )
 
 
