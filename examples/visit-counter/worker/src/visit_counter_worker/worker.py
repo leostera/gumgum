@@ -102,8 +102,9 @@ def traced_span(name: str, kind=None, attributes: dict[str, object] | None = Non
     if trace is None:
         yield _NoopSpan()
         return
+    span_kwargs = {"kind": kind} if kind is not None else {}
     with trace.get_tracer("visit_counter_worker").start_as_current_span(
-        name, kind=kind
+        name, **span_kwargs
     ) as span:
         for key, value in (attributes or {}).items():
             span.set_attribute(key, value)
