@@ -522,6 +522,15 @@ impl GraphStore {
         })
     }
 
+    pub fn record_activity_payload(
+        &self,
+        target: impl Into<String>,
+        action: impl Into<String>,
+        payload: serde_json::Value,
+    ) -> Result<ReconcileEventId> {
+        self.record_activity_event(target, action, payload.to_string())
+    }
+
     pub fn list_reconcile_events(&self, limit: u32) -> Result<Vec<ReconcileEvent>> {
         self.init()?;
         let conn = self.open()?;
@@ -606,13 +615,14 @@ impl GraphStore {
             params![provider.name, provider.capability.to_string()],
         )
         .map_err(|source| self.error("could not materialize provider", source))?;
-        self.record_activity_event(
+        self.record_activity_payload(
             format!("provider/{}", provider.name),
             "provider.upsert",
-            format!(
-                "saved desired {} provider {}",
-                provider.capability, provider.name
-            ),
+            serde_json::json!({
+                "event": "provider_upserted",
+                "capability": provider.capability,
+                "provider": provider.name,
+            }),
         )?;
         Ok(true)
     }
@@ -681,13 +691,14 @@ impl GraphStore {
         tx.commit()
             .map_err(|source| self.error("could not commit object delete transaction", source))?;
         if changed > 0 {
-            self.record_activity_event(
+            self.record_activity_payload(
                 format!("object/{}/{}", object.capability, object.name),
                 "object.delete",
-                format!(
-                    "deleted desired {} object {}",
-                    object.capability, object.name
-                ),
+                serde_json::json!({
+                    "event": "object_deleted",
+                    "capability": object.capability,
+                    "object": object.name,
+                }),
             )?;
         }
         Ok(changed > 0)
@@ -712,10 +723,14 @@ impl GraphStore {
             params![kind, object.name, object.namespace, object.root_domain, dns, provider],
         )
         .map_err(|source| self.error("could not materialize object", source))?;
-        self.record_activity_event(
+        self.record_activity_payload(
             format!("object/{}/{}", object.capability, object.name),
             "object.upsert",
-            format!("saved desired {} object {}", object.capability, object.name),
+            serde_json::json!({
+                "event": "object_upserted",
+                "capability": object.capability,
+                "object": object.name,
+            }),
         )?;
         Ok(true)
     }
@@ -742,10 +757,15 @@ impl GraphStore {
             params![object_kind, object_name, field, env_name, secret_ref, value],
         )
         .map_err(|source| self.error("could not materialize object secret", source))?;
-        self.record_activity_event(
+        self.record_activity_payload(
             format!("object/{object_kind}/{object_name}"),
             "object_secret.upsert",
-            format!("saved secret field {field} for {object_kind} object {object_name}"),
+            serde_json::json!({
+                "event": "object_secret_upserted",
+                "kind": object_kind,
+                "object": object_name,
+                "field": field,
+            }),
         )?;
         Ok(true)
     }
@@ -791,13 +811,14 @@ impl GraphStore {
             )
             .map_err(|source| self.error("could not delete binding", source))?;
         if changed > 0 {
-            self.record_activity_event(
+            self.record_activity_payload(
                 format!("binding/{}/{}", binding.worker, binding.binding),
                 "binding.delete",
-                format!(
-                    "deleted binding {} from worker {}",
-                    binding.binding, binding.worker
-                ),
+                serde_json::json!({
+                    "event": "binding_deleted",
+                    "worker": binding.worker,
+                    "binding": binding.binding,
+                }),
             )?;
         }
         Ok(changed > 0)
@@ -823,13 +844,14 @@ impl GraphStore {
             ],
         )
         .map_err(|source| self.error("could not materialize binding", source))?;
-        self.record_activity_event(
+        self.record_activity_payload(
             format!("binding/{}/{}", binding.worker, binding.binding),
             "binding.upsert",
-            format!(
-                "saved binding {} for worker {}",
-                binding.binding, binding.worker
-            ),
+            serde_json::json!({
+                "event": "binding_upserted",
+                "worker": binding.worker,
+                "binding": binding.binding,
+            }),
         )?;
         Ok(true)
     }
@@ -884,10 +906,13 @@ impl GraphStore {
             )
             .map_err(|source| self.error("could not delete desired deployment", source))?;
         if changed > 0 {
-            self.record_activity_event(
+            self.record_activity_payload(
                 format!("deployment/{worker}"),
                 "deployment.delete",
-                format!("deleted desired deployment {worker}"),
+                serde_json::json!({
+                    "event": "deployment_deleted",
+                    "worker": worker,
+                }),
             )?;
         }
         Ok(changed > 0)
@@ -930,10 +955,13 @@ impl GraphStore {
         .map_err(|source| self.error("could not materialize deployment", source))?;
         tx.commit()
             .map_err(|source| self.error("could not commit graph transaction", source))?;
-        self.record_activity_event(
+        self.record_activity_payload(
             format!("deployment/{}", request.worker),
             "deployment.upsert",
-            format!("saved desired deployment {}", request.worker),
+            serde_json::json!({
+                "event": "deployment_upserted",
+                "worker": request.worker,
+            }),
         )?;
         Ok(true)
     }
@@ -1020,10 +1048,14 @@ impl GraphStore {
             .map_err(|source| self.error("could not delete deployment revision", source))?
             > 0;
         if deleted {
-            self.record_activity_event(
+            self.record_activity_payload(
                 format!("deployment/{worker}/revision/{revision_id}"),
                 "deployment_revision.delete",
-                format!("deleted deployment revision {revision_id} for {worker}"),
+                serde_json::json!({
+                    "event": "deployment_revision_deleted",
+                    "worker": worker,
+                    "revision_id": revision_id,
+                }),
             )?;
         }
         Ok(deleted)
