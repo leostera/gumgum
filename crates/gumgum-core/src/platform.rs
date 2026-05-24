@@ -134,7 +134,7 @@ impl LocalPlatform {
                 .labels
                 .get("gumgum.platform.fingerprint")
                 .map(String::as_str)
-                == Some("caddy-v4");
+                == Some("caddy-v5");
             if has_http && has_https && has_volume_fingerprint {
                 docker.start_container(CADDY_CONTAINER).await?;
                 return Ok(());
@@ -163,7 +163,7 @@ impl LocalPlatform {
             restart_unless_stopped: true,
             labels: HashMap::from([(
                 "gumgum.platform.fingerprint".to_owned(),
-                "caddy-v4".to_owned(),
+                "caddy-v5".to_owned(),
             )]),
             binds: vec![
                 socket_mount.to_owned(),
@@ -174,7 +174,15 @@ impl LocalPlatform {
                 ("OTEL_SERVICE_NAME".to_owned(), "gumgum-caddy".to_owned()),
                 (
                     "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
-                    "gumgum-otel:4317".to_owned(),
+                    "http://gumgum-otel:4318".to_owned(),
+                ),
+                (
+                    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT".to_owned(),
+                    "http://gumgum-otel:4318/v1/traces".to_owned(),
+                ),
+                (
+                    "OTEL_EXPORTER_OTLP_PROTOCOL".to_owned(),
+                    "http/protobuf".to_owned(),
                 ),
                 ("OTEL_TRACES_EXPORTER".to_owned(), "otlp".to_owned()),
                 ("OTEL_METRICS_EXPORTER".to_owned(), "none".to_owned()),
