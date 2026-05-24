@@ -19,8 +19,16 @@ pub(crate) fn error_output(json: bool, err: GumgumError) -> String {
     if json {
         return serde_json::to_string_pretty(&report).expect("serialize error");
     }
-    let mut lines = vec![format!("error: {}", error_descriptor_text(report.error))];
-    lines.push(format!("detail: {}", report.message));
+    let mut lines = vec![format!(
+        "error: {}",
+        report
+            .kind
+            .map(error_kind_text)
+            .unwrap_or_else(|| error_descriptor_text(report.error))
+    )];
+    if report.kind.is_none() {
+        lines.push(format!("detail: {}", report.message));
+    }
     if let Some(cause) = report.likely_cause {
         lines.push(format!("cause: {cause}"));
     }
@@ -28,6 +36,37 @@ pub(crate) fn error_output(json: bool, err: GumgumError) -> String {
         lines.push(format!("next: {command}"));
     }
     lines.join("\n")
+}
+
+fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
+    match kind {
+        gumgum_core::ErrorKind::HomeReadFailed => "could not read HOME",
+        gumgum_core::ErrorKind::ConfigDirectoryCreateFailed => "could not create config directory",
+        gumgum_core::ErrorKind::ConfigReadFailed => "could not read config",
+        gumgum_core::ErrorKind::ConfigParseFailed => "could not parse config",
+        gumgum_core::ErrorKind::ConfigWriteFailed => "could not write config",
+        gumgum_core::ErrorKind::DomainListReadFailed => "could not read domain list",
+        gumgum_core::ErrorKind::DomainListParseFailed => "could not parse domain list",
+        gumgum_core::ErrorKind::DomainListWriteFailed => "could not write domain list",
+        gumgum_core::ErrorKind::ServerListReadFailed => "could not read server list",
+        gumgum_core::ErrorKind::ServerListParseFailed => "could not parse server list",
+        gumgum_core::ErrorKind::ServerListWriteFailed => "could not write server list",
+        gumgum_core::ErrorKind::CloudflareGrantReadFailed => "could not read Cloudflare grant",
+        gumgum_core::ErrorKind::CloudflareGrantParseFailed => "could not parse Cloudflare grant",
+        gumgum_core::ErrorKind::CloudflareGrantWriteFailed => "could not write Cloudflare grant",
+        gumgum_core::ErrorKind::ProviderConfigReadFailed => "could not read provider config",
+        gumgum_core::ErrorKind::ProviderConfigParseFailed => "could not parse provider config",
+        gumgum_core::ErrorKind::ProviderConfigWriteFailed => "could not write provider config",
+        gumgum_core::ErrorKind::ProviderCredentialsReadFailed => {
+            "could not read provider credentials"
+        }
+        gumgum_core::ErrorKind::ProviderCredentialsParseFailed => {
+            "could not parse provider credentials"
+        }
+        gumgum_core::ErrorKind::ProviderCredentialsWriteFailed => {
+            "could not write provider credentials"
+        }
+    }
 }
 
 fn error_descriptor_text(error: gumgum_core::ErrorDescriptor) -> &'static str {
@@ -65,7 +104,7 @@ pub(crate) fn print_error(json: bool, err: GumgumError) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gumgum_core::{ErrorCode, Subsystem};
+    use gumgum_core::{ErrorCode, ErrorKind, Subsystem};
 
     fn sample_error() -> GumgumError {
         GumgumError::structured(Subsystem::Cli, ErrorCode::InvalidArgs, "bad input")
@@ -85,11 +124,29 @@ mod tests {
     }
 
     #[test]
+    fn human_errors_render_known_kinds_without_core_detail_text() {
+        let output = error_output(
+            false,
+            GumgumError::structured_kind(
+                Subsystem::Config,
+                ErrorCode::Io,
+                ErrorKind::ConfigReadFailed,
+            )
+            .likely_cause("permission denied")
+            .build(),
+        );
+        assert!(output.contains("error: could not read config"));
+        assert!(output.contains("cause: permission denied"));
+        assert!(!output.contains("detail:"));
+    }
+
+    #[test]
     fn json_errors_are_structured_reports() {
         let output = error_output(true, sample_error());
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(value["error"]["subsystem"], "cli");
         assert_eq!(value["error"]["code"], "INVALID_ARGS");
+        assert!(value.get("kind").is_none());
         assert_eq!(value["message"], "bad input");
         assert_eq!(value["likely_cause"], "missing --host");
         assert_eq!(value["next_commands"][0], "gumgum server add <host>");

@@ -1,6 +1,6 @@
 use crate::{
-    CloudflareGrant, DomainRecord, ErrorCode, GumgumError, ProviderConfig, ProviderCredentials,
-    Result, Subsystem, sanitize_name,
+    CloudflareGrant, DomainRecord, ErrorCode, ErrorKind, GumgumError, ProviderConfig,
+    ProviderCredentials, Result, Subsystem, sanitize_name,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -40,11 +40,8 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     pub fn from_home_env() -> Result<Self> {
-        let home = std::env::var("HOME").map_err(|source| {
-            GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not read HOME")
-                .likely_cause(source.to_string())
-                .build()
-        })?;
+        let home = std::env::var("HOME")
+            .map_err(|source| Self::config_io_error(ErrorKind::HomeReadFailed, source))?;
         Ok(Self::new(PathBuf::from(home).join(".gumgum")))
     }
 
@@ -91,24 +88,10 @@ impl ConfigStore {
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let raw = fs::read_to_string(&path).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read domain list",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-        serde_json::from_str(&raw).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not parse domain list",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        let raw = fs::read_to_string(&path)
+            .map_err(|source| Self::config_io_error(ErrorKind::DomainListReadFailed, source))?;
+        serde_json::from_str(&raw)
+            .map_err(|source| Self::config_io_error(ErrorKind::DomainListParseFailed, source))
     }
 
     pub fn save_domain(&self, domain: DomainRecord) -> Result<()> {
@@ -121,15 +104,7 @@ impl ConfigStore {
             &path,
             serde_json::to_string_pretty(&domains).expect("serialize domains"),
         )
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not write domain list",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        .map_err(|source| Self::config_io_error(ErrorKind::DomainListWriteFailed, source))
     }
 
     pub fn load_servers(&self) -> Result<Vec<ServerRecord>> {
@@ -137,24 +112,10 @@ impl ConfigStore {
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let raw = fs::read_to_string(&path).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read server list",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-        serde_json::from_str(&raw).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not parse server list",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        let raw = fs::read_to_string(&path)
+            .map_err(|source| Self::config_io_error(ErrorKind::ServerListReadFailed, source))?;
+        serde_json::from_str(&raw)
+            .map_err(|source| Self::config_io_error(ErrorKind::ServerListParseFailed, source))
     }
 
     pub fn load_default_server(&self) -> Result<Option<ServerRecord>> {
@@ -167,23 +128,10 @@ impl ConfigStore {
             return Ok(None);
         }
         let raw = fs::read_to_string(&path).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read Cloudflare grant",
-            )
-            .likely_cause(source.to_string())
-            .build()
+            Self::config_io_error(ErrorKind::CloudflareGrantReadFailed, source)
         })?;
-        serde_json::from_str(&raw).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not parse Cloudflare grant",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        serde_json::from_str(&raw)
+            .map_err(|source| Self::config_io_error(ErrorKind::CloudflareGrantParseFailed, source))
     }
 
     pub fn save_cloudflare_grant(&self, grant: &CloudflareGrant) -> Result<()> {
@@ -193,15 +141,7 @@ impl ConfigStore {
             &path,
             serde_json::to_string_pretty(grant).expect("serialize Cloudflare grant"),
         )
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not write Cloudflare grant",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        .map_err(|source| Self::config_io_error(ErrorKind::CloudflareGrantWriteFailed, source))
     }
 
     pub fn load_provider_config(&self, provider: &str) -> Result<Option<ProviderConfig>> {
@@ -209,24 +149,10 @@ impl ConfigStore {
         if !path.exists() {
             return Ok(None);
         }
-        let raw = fs::read_to_string(&path).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read provider config",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-        serde_json::from_str(&raw).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not parse provider config",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        let raw = fs::read_to_string(&path)
+            .map_err(|source| Self::config_io_error(ErrorKind::ProviderConfigReadFailed, source))?;
+        serde_json::from_str(&raw)
+            .map_err(|source| Self::config_io_error(ErrorKind::ProviderConfigParseFailed, source))
     }
 
     pub fn save_provider_config(&self, config: &ProviderConfig) -> Result<()> {
@@ -236,15 +162,7 @@ impl ConfigStore {
             &path,
             serde_json::to_string_pretty(config).expect("serialize provider config"),
         )
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not write provider config",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        .map_err(|source| Self::config_io_error(ErrorKind::ProviderConfigWriteFailed, source))
     }
 
     pub fn load_provider_credentials(&self, provider: &str) -> Result<Option<ProviderCredentials>> {
@@ -253,22 +171,10 @@ impl ConfigStore {
             return Ok(None);
         }
         let raw = fs::read_to_string(&path).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not read provider credentials",
-            )
-            .likely_cause(source.to_string())
-            .build()
+            Self::config_io_error(ErrorKind::ProviderCredentialsReadFailed, source)
         })?;
         serde_json::from_str(&raw).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not parse provider credentials",
-            )
-            .likely_cause(source.to_string())
-            .build()
+            Self::config_io_error(ErrorKind::ProviderCredentialsParseFailed, source)
         })
     }
 
@@ -283,15 +189,7 @@ impl ConfigStore {
             &path,
             serde_json::to_string_pretty(credentials).expect("serialize provider credentials"),
         )
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not write provider credentials",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        .map_err(|source| Self::config_io_error(ErrorKind::ProviderCredentialsWriteFailed, source))
     }
 
     pub fn load_or_init_provider_credentials(
@@ -369,15 +267,8 @@ impl ConfigStore {
 
     fn save_servers(&self, path: &Path, servers: &[ServerRecord]) -> Result<()> {
         let raw = serde_json::to_string_pretty(servers).expect("serialize servers");
-        fs::write(path, raw).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Config,
-                ErrorCode::Io,
-                "could not write server list",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })
+        fs::write(path, raw)
+            .map_err(|source| Self::config_io_error(ErrorKind::ServerListWriteFailed, source))
     }
 
     fn servers_path(&self) -> PathBuf {
@@ -421,16 +312,10 @@ impl ConfigStore {
         if !path.exists() {
             return Ok(Map::new());
         }
-        let raw = fs::read_to_string(&path).map_err(|source| {
-            GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not read config")
-                .likely_cause(source.to_string())
-                .build()
-        })?;
-        serde_json::from_str(&raw).map_err(|source| {
-            GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not parse config")
-                .likely_cause(source.to_string())
-                .build()
-        })
+        let raw = fs::read_to_string(&path)
+            .map_err(|source| Self::config_io_error(ErrorKind::ConfigReadFailed, source))?;
+        serde_json::from_str(&raw)
+            .map_err(|source| Self::config_io_error(ErrorKind::ConfigParseFailed, source))
     }
 
     fn save_config_map(&self, path: PathBuf, values: &Map<String, Value>) -> Result<()> {
@@ -439,26 +324,22 @@ impl ConfigStore {
             &path,
             serde_json::to_string_pretty(values).expect("serialize config"),
         )
-        .map_err(|source| {
-            GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not write config")
-                .likely_cause(source.to_string())
-                .build()
-        })
+        .map_err(|source| Self::config_io_error(ErrorKind::ConfigWriteFailed, source))
     }
 
     fn ensure_parent(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| {
-                GumgumError::structured(
-                    Subsystem::Config,
-                    ErrorCode::Io,
-                    "could not create config directory",
-                )
-                .likely_cause(source.to_string())
-                .build()
+                Self::config_io_error(ErrorKind::ConfigDirectoryCreateFailed, source)
             })?;
         }
         Ok(())
+    }
+
+    fn config_io_error(kind: ErrorKind, source: impl std::fmt::Display) -> GumgumError {
+        GumgumError::structured_kind(Subsystem::Config, ErrorCode::Io, kind)
+            .likely_cause(source.to_string())
+            .build()
     }
 }
 

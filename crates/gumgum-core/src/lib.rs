@@ -105,6 +105,7 @@ pub enum GumgumError {
         subsystem: Subsystem,
         code: ErrorCode,
         message: String,
+        kind: Option<ErrorKind>,
         likely_cause: Option<String>,
         next_commands: Vec<String>,
     },
@@ -120,6 +121,18 @@ impl GumgumError {
             subsystem,
             code,
             message: message.into(),
+            kind: None,
+            likely_cause: None,
+            next_commands: Vec::new(),
+        }
+    }
+
+    pub fn structured_kind(subsystem: Subsystem, code: ErrorCode, kind: ErrorKind) -> ErrorBuilder {
+        ErrorBuilder {
+            subsystem,
+            code,
+            message: kind.machine_code().to_owned(),
+            kind: Some(kind),
             likely_cause: None,
             next_commands: Vec::new(),
         }
@@ -131,6 +144,7 @@ impl GumgumError {
                 subsystem,
                 code,
                 message,
+                kind,
                 likely_cause,
                 next_commands,
             } => ErrorReport {
@@ -141,6 +155,7 @@ impl GumgumError {
                 },
                 subsystem: *subsystem,
                 code: *code,
+                kind: *kind,
                 message: message.clone(),
                 likely_cause: likely_cause.clone(),
                 next_commands: next_commands.clone(),
@@ -154,6 +169,7 @@ pub struct ErrorBuilder {
     subsystem: Subsystem,
     code: ErrorCode,
     message: String,
+    kind: Option<ErrorKind>,
     likely_cause: Option<String>,
     next_commands: Vec<String>,
 }
@@ -174,6 +190,7 @@ impl ErrorBuilder {
             subsystem: self.subsystem,
             code: self.code,
             message: self.message,
+            kind: self.kind,
             likely_cause: self.likely_cause,
             next_commands: self.next_commands,
         }
@@ -224,12 +241,66 @@ pub struct ErrorDescriptor {
     pub code: ErrorCode,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorKind {
+    HomeReadFailed,
+    ConfigDirectoryCreateFailed,
+    ConfigReadFailed,
+    ConfigParseFailed,
+    ConfigWriteFailed,
+    DomainListReadFailed,
+    DomainListParseFailed,
+    DomainListWriteFailed,
+    ServerListReadFailed,
+    ServerListParseFailed,
+    ServerListWriteFailed,
+    CloudflareGrantReadFailed,
+    CloudflareGrantParseFailed,
+    CloudflareGrantWriteFailed,
+    ProviderConfigReadFailed,
+    ProviderConfigParseFailed,
+    ProviderConfigWriteFailed,
+    ProviderCredentialsReadFailed,
+    ProviderCredentialsParseFailed,
+    ProviderCredentialsWriteFailed,
+}
+
+impl ErrorKind {
+    pub fn machine_code(self) -> &'static str {
+        match self {
+            ErrorKind::HomeReadFailed => "config.home.read_failed",
+            ErrorKind::ConfigDirectoryCreateFailed => "config.directory.create_failed",
+            ErrorKind::ConfigReadFailed => "config.read_failed",
+            ErrorKind::ConfigParseFailed => "config.parse_failed",
+            ErrorKind::ConfigWriteFailed => "config.write_failed",
+            ErrorKind::DomainListReadFailed => "config.domain_list.read_failed",
+            ErrorKind::DomainListParseFailed => "config.domain_list.parse_failed",
+            ErrorKind::DomainListWriteFailed => "config.domain_list.write_failed",
+            ErrorKind::ServerListReadFailed => "config.server_list.read_failed",
+            ErrorKind::ServerListParseFailed => "config.server_list.parse_failed",
+            ErrorKind::ServerListWriteFailed => "config.server_list.write_failed",
+            ErrorKind::CloudflareGrantReadFailed => "config.cloudflare_grant.read_failed",
+            ErrorKind::CloudflareGrantParseFailed => "config.cloudflare_grant.parse_failed",
+            ErrorKind::CloudflareGrantWriteFailed => "config.cloudflare_grant.write_failed",
+            ErrorKind::ProviderConfigReadFailed => "config.provider_config.read_failed",
+            ErrorKind::ProviderConfigParseFailed => "config.provider_config.parse_failed",
+            ErrorKind::ProviderConfigWriteFailed => "config.provider_config.write_failed",
+            ErrorKind::ProviderCredentialsReadFailed => "config.provider_credentials.read_failed",
+            ErrorKind::ProviderCredentialsParseFailed => "config.provider_credentials.parse_failed",
+            ErrorKind::ProviderCredentialsWriteFailed => "config.provider_credentials.write_failed",
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ErrorReport {
     pub ok: bool,
     pub error: ErrorDescriptor,
     pub subsystem: Subsystem,
     pub code: ErrorCode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ErrorKind>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub likely_cause: Option<String>,
