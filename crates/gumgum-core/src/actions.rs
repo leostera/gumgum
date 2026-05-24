@@ -26,7 +26,7 @@ pub enum CoreAction {
     },
     Planned {
         target: String,
-        action: String,
+        action: PlannedAction,
     },
     ProviderConfigured {
         capability: Capability,
@@ -223,6 +223,21 @@ pub enum SetupStep {
     ExitSsh,
     SaveServerLocally,
     CheckRemoteHealth,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannedAction {
+    EnsureProvider,
+    EnsureWorker,
+    EnsureContainer,
+    EnsureDeploy,
+    EnsureRoute,
+    EnsureBinding,
+    EnsureObject,
+    RemoveObject,
+    RemoveNode,
+    RemoveDeploy,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

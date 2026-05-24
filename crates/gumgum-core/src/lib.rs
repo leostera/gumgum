@@ -17,7 +17,9 @@ pub mod providers;
 pub mod setup;
 pub mod setup_installer;
 
-pub use actions::{ActionScope, ConnectionExample, CoreAction, CoreActions, SetupStep};
+pub use actions::{
+    ActionScope, ConnectionExample, CoreAction, CoreActions, PlannedAction, SetupStep,
+};
 pub use cloudflare::{CloudflareGrant, IngressMode};
 pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
@@ -1010,6 +1012,17 @@ mod presentation_boundary_tests {
             .expect("DoctorCheck block exists");
         assert!(doctor_block.contains("pub status: DoctorCheckStatus"));
         assert!(!doctor_block.contains("message: String"));
+
+        let actions =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/actions.rs"))
+                .expect("read actions.rs");
+        let planned_block = actions
+            .split("Planned {")
+            .nth(1)
+            .and_then(|tail| tail.split("},").next())
+            .expect("CoreAction::Planned block exists");
+        assert!(planned_block.contains("action: PlannedAction"));
+        assert!(!planned_block.contains("action: String"));
     }
 
     fn collect_print_violations(path: &Path, forbidden: &[&str], violations: &mut Vec<String>) {

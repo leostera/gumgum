@@ -473,7 +473,7 @@ impl GraphExecutionSession {
                 } else {
                     Ok(vec![crate::CoreAction::Planned {
                         target: step.target.event_target(),
-                        action: step.action.event_action(),
+                        action: step.action.planned_action(),
                     }])
                 }
             }
@@ -487,7 +487,7 @@ impl GraphExecutionSession {
                 } else {
                     Ok(vec![crate::CoreAction::Planned {
                         target: step.target.event_target(),
-                        action: step.action.event_action(),
+                        action: step.action.planned_action(),
                     }])
                 }
             }
@@ -497,7 +497,7 @@ impl GraphExecutionSession {
             | GraphExecutionTarget::Gateway { .. }
             | GraphExecutionTarget::GraphStore { .. } => Ok(vec![crate::CoreAction::Planned {
                 target: step.target.event_target(),
-                action: step.action.event_action(),
+                action: step.action.planned_action(),
             }]),
             GraphExecutionTarget::Removal { .. } => self.execute_removal_step(step).await,
         }
@@ -510,7 +510,7 @@ impl GraphExecutionSession {
         if self.container_runtime_seen {
             return Ok(vec![crate::CoreAction::Planned {
                 target: step.target.event_target(),
-                action: step.action.event_action(),
+                action: step.action.planned_action(),
             }]);
         }
         self.container_runtime_seen = true;
@@ -518,7 +518,7 @@ impl GraphExecutionSession {
             let Some(request) = step.target.deploy_request() else {
                 return Ok(vec![crate::CoreAction::Planned {
                     target: step.target.event_target(),
-                    action: step.action.event_action(),
+                    action: step.action.planned_action(),
                 }]);
             };
             let (changed, mut deploy_actions) = crate::ContainerReconciler::new(graph_path.clone())
@@ -533,7 +533,7 @@ impl GraphExecutionSession {
         } else {
             Ok(vec![crate::CoreAction::Planned {
                 target: step.target.event_target(),
-                action: step.action.event_action(),
+                action: step.action.planned_action(),
             }])
         }
     }
@@ -545,7 +545,7 @@ impl GraphExecutionSession {
         let GraphExecutionTarget::Removal { id, container } = &step.target else {
             return Ok(vec![crate::CoreAction::Planned {
                 target: step.target.event_target(),
-                action: step.action.event_action(),
+                action: step.action.planned_action(),
             }]);
         };
         let docker = crate::DockerEngine::local()?;
@@ -568,7 +568,7 @@ impl GraphExecutionSession {
         if containers.is_empty() {
             return Ok(vec![crate::CoreAction::Planned {
                 target: step.target.event_target(),
-                action: step.action.event_action(),
+                action: step.action.planned_action(),
             }]);
         }
         let mut actions = Vec::new();
@@ -652,6 +652,21 @@ impl GraphExecutionTarget {
 }
 
 impl GraphReconcileAction {
+    fn planned_action(&self) -> crate::PlannedAction {
+        match self {
+            Self::EnsureProvider { .. } => crate::PlannedAction::EnsureProvider,
+            Self::EnsureWorker { .. } => crate::PlannedAction::EnsureWorker,
+            Self::EnsureContainer { .. } => crate::PlannedAction::EnsureContainer,
+            Self::EnsureDeploy { .. } => crate::PlannedAction::EnsureDeploy,
+            Self::EnsureRoute { .. } => crate::PlannedAction::EnsureRoute,
+            Self::EnsureBinding { .. } => crate::PlannedAction::EnsureBinding,
+            Self::EnsureObject { .. } => crate::PlannedAction::EnsureObject,
+            Self::RemoveObject { .. } => crate::PlannedAction::RemoveObject,
+            Self::RemoveNode { .. } => crate::PlannedAction::RemoveNode,
+            Self::RemoveDeploy { .. } => crate::PlannedAction::RemoveDeploy,
+        }
+    }
+
     fn event_action(&self) -> String {
         match self {
             Self::EnsureProvider { .. } => "ensure_provider".to_owned(),

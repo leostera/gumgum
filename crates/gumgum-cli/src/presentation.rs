@@ -2,7 +2,9 @@
 
 use crate::deploy_command::{DeployOutput, DeployReport, WorkspaceDeployReport};
 use gumgum_api::ObjectReport;
-use gumgum_core::{ActionScope, ConnectionExample, CoreAction, PlanAction, SetupStep};
+use gumgum_core::{
+    ActionScope, ConnectionExample, CoreAction, PlanAction, PlannedAction, SetupStep,
+};
 
 pub(crate) struct Presenter;
 
@@ -318,7 +320,9 @@ pub(crate) fn action_text(action: &CoreAction) -> String {
         CoreAction::ReconcileFailed { scope, error } => {
             format!("{} reconcile failed: {error}", scope_noun(*scope))
         }
-        CoreAction::Planned { target, action } => format!("planned {action} for {target}"),
+        CoreAction::Planned { target, action } => {
+            format!("planned {} for {target}", planned_action_text(*action))
+        }
         CoreAction::ProviderConfigured {
             capability,
             provider,
@@ -481,6 +485,21 @@ fn scope_noun(scope: ActionScope) -> &'static str {
         ActionScope::Deployment => "deployments",
         ActionScope::Provider => "provider",
         ActionScope::Reconcile => "reconcile",
+    }
+}
+
+fn planned_action_text(action: PlannedAction) -> &'static str {
+    match action {
+        PlannedAction::EnsureProvider => "ensure provider",
+        PlannedAction::EnsureWorker => "ensure worker",
+        PlannedAction::EnsureContainer => "ensure container",
+        PlannedAction::EnsureDeploy => "ensure deployment",
+        PlannedAction::EnsureRoute => "ensure route",
+        PlannedAction::EnsureBinding => "ensure binding",
+        PlannedAction::EnsureObject => "ensure object",
+        PlannedAction::RemoveObject => "remove object",
+        PlannedAction::RemoveNode => "remove node",
+        PlannedAction::RemoveDeploy => "remove deployment",
     }
 }
 
