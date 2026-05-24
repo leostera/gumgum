@@ -176,7 +176,7 @@ impl ErrorBuilder {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Subsystem {
     Cli,
@@ -203,7 +203,7 @@ impl fmt::Display for Subsystem {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
     InvalidArgs,
@@ -230,7 +230,13 @@ pub struct StatusReport {
     pub ok: bool,
     pub configured: bool,
     pub daemon: DaemonStatus,
-    pub message: String,
+    pub status: StatusMessage,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusMessage {
+    NotConfigured,
 }
 
 #[derive(Debug, Serialize)]

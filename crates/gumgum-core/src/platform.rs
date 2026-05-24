@@ -51,7 +51,8 @@ pub enum PlatformEvent {
     },
     GatewayPortsUnavailable {
         container: String,
-        error: String,
+        subsystem: Subsystem,
+        code: ErrorCode,
     },
 }
 
@@ -254,9 +255,11 @@ impl LocalPlatform {
             Ok(()) => Ok(()),
             Err(error) => {
                 let _ = docker.remove_container_force(CADDY_CONTAINER).await;
+                let report = error.to_report();
                 emit(PlatformEvent::GatewayPortsUnavailable {
                     container: CADDY_CONTAINER.to_owned(),
-                    error: error.to_report().message,
+                    subsystem: report.subsystem,
+                    code: report.code,
                 });
                 docker.create_and_start_container(spec(Vec::new())).await
             }

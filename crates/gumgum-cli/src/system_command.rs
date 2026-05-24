@@ -33,7 +33,12 @@ pub(crate) async fn status(args: StatusArgs, json: bool) -> gumgum_core::Result<
             print_status_summary(&server.host, &report).await?;
         }
     } else {
-        print_value(json, &not_configured_status())
+        let report = not_configured_status();
+        if json {
+            print_value(true, &report)
+        } else {
+            println!("{}", status_message_text(report.status));
+        }
     }
     Ok(())
 }
@@ -569,6 +574,14 @@ fn print_server_list(servers: &[ServerRecord]) {
             "{:<18} {:<16} {:<20} {}",
             server.name, server.host, server.root_domain, server.health_url
         );
+    }
+}
+
+fn status_message_text(status: gumgum_core::StatusMessage) -> &'static str {
+    match status {
+        gumgum_core::StatusMessage::NotConfigured => {
+            "GumGum.dev is not configured on this machine yet"
+        }
     }
 }
 

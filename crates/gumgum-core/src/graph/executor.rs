@@ -403,7 +403,14 @@ impl GraphExecutionSession {
                     report.actions.extend(step_actions);
                 }
                 Err(error) => {
-                    let message = error.to_report().message.clone();
+                    let error_report = error.to_report();
+                    let message = serde_json::json!({
+                        "error": {
+                            "subsystem": error_report.subsystem,
+                            "code": error_report.code,
+                        }
+                    })
+                    .to_string();
                     self.record(crate::ReconcileEventStatus::Failed, step, message.clone())?;
                     let failed_event = step.failed_event(self.operation_id.clone(), message);
                     self.emit_event(failed_event.clone());
@@ -879,7 +886,7 @@ mod tests {
         assert_eq!(events[0].status, crate::ReconcileEventStatus::Failed);
         assert_eq!(events[0].target, "provider/manual.main");
         assert_eq!(events[0].action, "ensure_provider");
-        assert_eq!(events[0].message, "injected graph execution failure");
+        assert!(events[0].message.contains("INVALID_ARGS"));
         assert!(events[0].operation_id.is_some());
         assert_eq!(events[0].operation_id, events[1].operation_id);
         assert_eq!(events[1].status, crate::ReconcileEventStatus::Planned);

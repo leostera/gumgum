@@ -1,4 +1,4 @@
-use crate::{CoreAction, DaemonStatus, SetupStep, StatusReport};
+use crate::{CoreAction, DaemonStatus, SetupStep, StatusMessage, StatusReport};
 
 pub fn setup_actions(local: bool) -> Vec<CoreAction> {
     let steps = if local {
@@ -30,6 +30,6 @@ pub fn not_configured_status() -> StatusReport {
         ok: true,
         configured: false,
         daemon: DaemonStatus::NotConfigured,
-        message: "GumGum.dev is not configured on this machine yet".to_owned(),
+        status: StatusMessage::NotConfigured,
     }
 }

@@ -80,8 +80,8 @@ fn print_platform_event(event: PlatformEvent) {
             port,
             container,
         } => eprintln!("warning: {bind_address}:{port} is already in use; {container} not started"),
-        PlatformEvent::GatewayPortsUnavailable { container, error } => eprintln!(
-            "warning: could not publish ports 80/443 for {container}; starting for tunnel-only ingress: {error}"
+        PlatformEvent::GatewayPortsUnavailable { container, .. } => eprintln!(
+            "warning: could not publish ports 80/443 for {container}; starting for tunnel-only ingress"
         ),
     }
 }
