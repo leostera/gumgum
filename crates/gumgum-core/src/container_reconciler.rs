@@ -137,10 +137,8 @@ impl ContainerReconciler {
     ) -> crate::Result<CoreActions> {
         Self::remove_stale_containers(
             docker,
-            request,
             keep_container,
             stale_worker_container_labels(&request.worker),
-            "remove stale deployment container",
         )
         .await
     }
@@ -160,22 +158,13 @@ impl ContainerReconciler {
         if let Some(environment) = deployment_environment(&request.worker) {
             labels.push(format!("gumgum.environment={environment}"));
         }
-        Self::remove_stale_containers(
-            docker,
-            request,
-            keep_container,
-            labels,
-            "remove stale deployment container for route",
-        )
-        .await
+        Self::remove_stale_containers(docker, keep_container, labels).await
     }
 
     async fn remove_stale_containers(
         docker: &DockerEngine,
-        _request: &DeployRequest,
         keep_container: &str,
         labels: Vec<String>,
-        _action_prefix: &str,
     ) -> crate::Result<CoreActions> {
         let mut actions = Vec::new();
         for container in docker.list_container_names_by_label(&labels).await? {

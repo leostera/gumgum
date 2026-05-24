@@ -983,6 +983,8 @@ mod presentation_boundary_tests {
             concat!("collect a ", "token"),
             concat!("health check ", "timed out"),
             concat!("readiness check ", "timed out"),
+            concat!("remove stale ", "deployment container"),
+            concat!("add the domain ", "to this server"),
             concat!("provider", " reconciled"),
             concat!("applied", " deployment"),
         ];

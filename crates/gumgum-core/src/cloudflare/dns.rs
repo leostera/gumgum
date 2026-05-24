@@ -16,9 +16,7 @@ pub async fn ensure_published_route(
             ErrorCode::InvalidArgs,
             ErrorKind::PublishedRouteDomainNotManaged,
         )
-        .likely_cause(format!(
-            "hostname={hostname}; add the domain to this server before deploying a published route"
-        ))
+        .likely_cause(format!("hostname={hostname}; domain_registration=missing"))
         .next_command("gumgum domain add <domain> --provider cloudflare --ingress cloudflare")
         .build());
     };
