@@ -93,25 +93,6 @@ impl ProviderReconciler {
 
     pub async fn statuses() -> Vec<ProviderStatus> {
         let mut statuses = Vec::new();
-        for capability in [
-            Capability::Db,
-            Capability::Kv,
-            Capability::Blob,
-            Capability::Queue,
-        ] {
-            let spec = super::specs::provider_spec(capability);
-            let running = super::docker::running(&spec.container).await;
-            if running {
-                statuses.push(ProviderStatus {
-                    capability,
-                    provider: spec.provider,
-                    container: spec.container,
-                    image: spec.image,
-                    port: spec.port,
-                    running,
-                });
-            }
-        }
         statuses.push(super::vaultwarden::status().await);
         statuses.extend(super::observability::platform_statuses().await);
         statuses

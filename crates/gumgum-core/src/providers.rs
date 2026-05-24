@@ -60,7 +60,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provider_statuses_cover_platform_backends_without_counting_stopped_legacy_defaults() {
+    async fn provider_statuses_are_platform_only() {
         let statuses = ProviderReconciler::statuses().await;
 
         assert!(
@@ -76,7 +76,7 @@ mod tests {
         assert!(
             statuses
                 .iter()
-                .all(|status| { status.running || !status.provider.ends_with(".main") })
+                .all(|status| status.provider.ends_with(".platform"))
         );
     }
 
