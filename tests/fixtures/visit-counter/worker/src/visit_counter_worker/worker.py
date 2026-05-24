@@ -43,6 +43,7 @@ KAFKA_BROKERS = os.environ.get("VISIT_EVENTS_QUEUE_BROKERS")
 KAFKA_TOPIC = os.environ.get("VISIT_EVENTS_QUEUE_TOPIC")
 KAFKA_GROUP_ID = os.environ.get("VISIT_EVENTS_QUEUE_GROUP_ID", "visit-counter-worker")
 HEALTH_PORT = int(os.environ.get("PORT", "3000"))
+PROCESSED_VISITS = 0
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -51,6 +52,17 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"ok\n")
+            return
+        if self.path == "/_/metrics":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(
+                (
+                    "# HELP visit_counter_worker_processed_total Visits processed by the fixture worker\n"
+                    "# TYPE visit_counter_worker_processed_total counter\n"
+                    f'visit_counter_worker_processed_total{{service="worker"}} {PROCESSED_VISITS}\n'
+                ).encode()
+            )
             return
         self.send_response(404)
         self.end_headers()
@@ -276,7 +288,9 @@ def process_message(
 ) -> None:
     bucket = bucket or request_bucket()
     request = bucket.get_json(message["key"])
+    global PROCESSED_VISITS
     store.insert_visit(request)
+    PROCESSED_VISITS += 1
     if events is not None:
         events.acknowledge(message)
     print(f"processed visit {request['id']} from {request['bucket_key']}", flush=True)
