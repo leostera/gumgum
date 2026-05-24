@@ -1,4 +1,7 @@
-use crate::{ContainerRunSpec, DockerEngine, ErrorCode, GraphStore, GumgumError, Subsystem};
+use crate::{
+    ContainerRunSpec, ContainerSnapshot, DockerEngine, ErrorCode, GraphStore, GumgumError,
+    Subsystem,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
@@ -29,44 +32,35 @@ impl ContainerReconciler {
         let binding_env = self.binding_env(&request.worker)?;
         let runtime_env = deployment_runtime_env(&binding_env, request);
         let binding_env_fingerprint = binding_env_fingerprint(&runtime_env);
-        let expected_proxy = request
-            .route
-            .as_ref()
-            .map(|_| format!("{{{{upstreams {}}}}}", request.port))
-            .unwrap_or_default();
-        let expected_route = request.route.clone().unwrap_or_default();
         let expected_environment = deployment_environment(&request.worker);
-        if docker
-            .inspect_container(&request.container)
+        let labels = deployment_labels(request, &binding_env_fingerprint, expected_environment);
+        let rollout_fingerprint = deployment_rollout_fingerprint(request, &runtime_env);
+        let desired_container = rollout_container_name(&request.container, &rollout_fingerprint);
+
+        for container_name in docker
+            .list_container_names_by_label(&stale_worker_container_labels(&request.worker))
             .await?
-            .is_some_and(|container| {
-                container.image.as_deref() == Some(request.image.as_str())
-                    && container.labels.get("caddy") == Some(&expected_route)
-                    && container.labels.get("caddy.reverse_proxy") == Some(&expected_proxy)
-                    && container.labels.get("gumgum.binding_env") == Some(&binding_env_fingerprint)
-                    && container
-                        .labels
-                        .get("gumgum.environment")
-                        .map(String::as_str)
-                        == expected_environment
-                    && container
-                        .labels
-                        .get("prometheus.scrape")
-                        .map(String::as_str)
-                        == Some("true")
-                    && container.labels.get("prometheus.port") == Some(&request.port.to_string())
-                    && container.labels.get("prometheus.path").map(String::as_str)
-                        == Some("/_/metrics")
-                    && container.labels.get("gumgum.project") == request.project.as_ref()
-                    && container.labels.get("gumgum.domain") == request.domain.as_ref()
-            })
         {
-            actions.push("container already matches desired image, route, and bindings".to_owned());
-            let before_cleanup = actions.len();
-            actions.extend(Self::remove_stale_worker_containers(&docker, request).await?);
-            actions.extend(Self::remove_stale_route_containers(&docker, request).await?);
-            return Ok((actions.len() > before_cleanup, actions));
+            if docker
+                .inspect_container(&container_name)
+                .await?
+                .is_some_and(|container| deployment_container_matches(&container, request, &labels))
+            {
+                actions.push(format!(
+                    "container {container_name} already matches desired image, route, and bindings"
+                ));
+                docker.start_container(&container_name).await?;
+                let before_cleanup = actions.len();
+                actions.extend(
+                    Self::remove_stale_worker_containers(&docker, request, &container_name).await?,
+                );
+                actions.extend(
+                    Self::remove_stale_route_containers(&docker, request, &container_name).await?,
+                );
+                return Ok((actions.len() > before_cleanup, actions));
+            }
         }
+
         actions.push(format!("pull {}", request.image));
         docker.pull_image(&request.image).await?;
         let shared_network = if docker
@@ -88,71 +82,13 @@ impl ContainerReconciler {
         if !runtime_env.is_empty() {
             actions.push(format!("project {} env var(s)", runtime_env.len()));
         }
-        actions.push(format!("recreate {}", request.container));
-        let _ = docker.remove_container_force(&request.container).await;
-        let mut labels = HashMap::from([
-            ("gumgum.managed".to_owned(), "deployment".to_owned()),
-            ("gumgum.worker".to_owned(), request.worker.clone()),
-            (
-                "gumgum.binding_env".to_owned(),
-                binding_env_fingerprint.clone(),
-            ),
-        ]);
-        if let Some(environment) = expected_environment {
-            labels.insert("gumgum.environment".to_owned(), environment.to_owned());
-            labels.insert(
-                "prometheus.label_environment".to_owned(),
-                environment.to_owned(),
-            );
-        }
-        labels.insert("prometheus.scrape".to_owned(), "true".to_owned());
-        labels.insert("prometheus.port".to_owned(), request.port.to_string());
-        labels.insert("prometheus.path".to_owned(), "/_/metrics".to_owned());
-        labels.insert("prometheus.label_worker".to_owned(), request.worker.clone());
-        if let Some(project) = &request.project {
-            labels.insert("gumgum.project".to_owned(), project.clone());
-            labels.insert("prometheus.label_project".to_owned(), project.clone());
-        }
-        if let Some(domain) = &request.domain {
-            labels.insert("gumgum.domain".to_owned(), domain.clone());
-            labels.insert("prometheus.label_domain".to_owned(), domain.clone());
-        }
-        if let Some(route) = &request.route {
-            labels.insert("caddy".to_owned(), route.clone());
-            labels.insert(
-                "caddy.reverse_proxy".to_owned(),
-                format!("{{{{upstreams {}}}}}", request.port),
-            );
-            labels.insert("caddy.tls".to_owned(), "internal".to_owned());
-            labels.insert("caddy.tracing".to_owned(), String::new());
-            labels.insert(
-                "caddy.tracing.span".to_owned(),
-                format!("{}-ingress", request.worker),
-            );
-            labels.insert(
-                "caddy.request_header".to_owned(),
-                "traceparent 00-{http.vars.trace_id}-{http.vars.span_id}-01".to_owned(),
-            );
-            labels.insert(
-                "caddy.tracing.span_attributes.gumgum_worker".to_owned(),
-                request.worker.clone(),
-            );
-            if let Some(project) = &request.project {
-                labels.insert(
-                    "caddy.tracing.span_attributes.gumgum_project".to_owned(),
-                    project.clone(),
-                );
-            }
-            if let Some(domain) = &request.domain {
-                labels.insert(
-                    "caddy.tracing.span_attributes.gumgum_domain".to_owned(),
-                    domain.clone(),
-                );
-            }
-        }
+        actions.push(format!(
+            "start new deployment container {desired_container}"
+        ));
+        let _ = docker.remove_container_force(&desired_container).await;
         docker
             .create_and_start_container(ContainerRunSpec {
-                name: request.container.clone(),
+                name: desired_container.clone(),
                 image: request.image.clone(),
                 network: network.to_owned(),
                 restart_unless_stopped: true,
@@ -166,25 +102,34 @@ impl ContainerReconciler {
             .await?;
         if network != shared_network && docker.network_exists(shared_network).await.unwrap_or(false)
         {
-            actions.push(format!("connect {} to {shared_network}", request.container));
+            actions.push(format!("connect {desired_container} to {shared_network}"));
             docker
-                .connect_container_to_network(&request.container, shared_network)
+                .connect_container_to_network(&desired_container, shared_network)
                 .await?;
         }
-        Self::wait_for_container_health(&docker, &request.container, request.port, &request.health)
+        Self::wait_for_container_health(&docker, &desired_container, request.port, &request.health)
             .await?;
-        actions.extend(Self::remove_stale_worker_containers(&docker, request).await?);
-        actions.extend(Self::remove_stale_route_containers(&docker, request).await?);
+        actions.push(format!(
+            "new deployment container {desired_container} is healthy; removing old containers"
+        ));
+        actions.extend(
+            Self::remove_stale_worker_containers(&docker, request, &desired_container).await?,
+        );
+        actions.extend(
+            Self::remove_stale_route_containers(&docker, request, &desired_container).await?,
+        );
         Ok((true, actions))
     }
 
     async fn remove_stale_worker_containers(
         docker: &DockerEngine,
         request: &DeployRequest,
+        keep_container: &str,
     ) -> crate::Result<Vec<String>> {
         Self::remove_stale_containers(
             docker,
             request,
+            keep_container,
             stale_worker_container_labels(&request.worker),
             "remove stale deployment container",
         )
@@ -194,6 +139,7 @@ impl ContainerReconciler {
     async fn remove_stale_route_containers(
         docker: &DockerEngine,
         request: &DeployRequest,
+        keep_container: &str,
     ) -> crate::Result<Vec<String>> {
         let Some(route) = request.route.as_deref() else {
             return Ok(Vec::new());
@@ -208,6 +154,7 @@ impl ContainerReconciler {
         Self::remove_stale_containers(
             docker,
             request,
+            keep_container,
             labels,
             "remove stale deployment container for route",
         )
@@ -216,13 +163,14 @@ impl ContainerReconciler {
 
     async fn remove_stale_containers(
         docker: &DockerEngine,
-        request: &DeployRequest,
+        _request: &DeployRequest,
+        keep_container: &str,
         labels: Vec<String>,
         action_prefix: &str,
     ) -> crate::Result<Vec<String>> {
         let mut actions = Vec::new();
         for container in docker.list_container_names_by_label(&labels).await? {
-            if container == request.container {
+            if container == keep_container {
                 continue;
             }
             actions.push(format!("{action_prefix} {container}"));
@@ -263,6 +211,126 @@ impl ContainerReconciler {
         )
         .build())
     }
+}
+
+fn deployment_labels(
+    request: &DeployRequest,
+    binding_env_fingerprint: &str,
+    expected_environment: Option<&str>,
+) -> HashMap<String, String> {
+    let mut labels = HashMap::from([
+        ("gumgum.managed".to_owned(), "deployment".to_owned()),
+        ("gumgum.worker".to_owned(), request.worker.clone()),
+        (
+            "gumgum.deployment.base_container".to_owned(),
+            request.container.clone(),
+        ),
+        (
+            "gumgum.binding_env".to_owned(),
+            binding_env_fingerprint.to_owned(),
+        ),
+        ("prometheus.scrape".to_owned(), "true".to_owned()),
+        ("prometheus.port".to_owned(), request.port.to_string()),
+        ("prometheus.path".to_owned(), "/_/metrics".to_owned()),
+        ("prometheus.label_worker".to_owned(), request.worker.clone()),
+    ]);
+    if let Some(environment) = expected_environment {
+        labels.insert("gumgum.environment".to_owned(), environment.to_owned());
+        labels.insert(
+            "prometheus.label_environment".to_owned(),
+            environment.to_owned(),
+        );
+    }
+    if let Some(project) = &request.project {
+        labels.insert("gumgum.project".to_owned(), project.clone());
+        labels.insert("prometheus.label_project".to_owned(), project.clone());
+    }
+    if let Some(domain) = &request.domain {
+        labels.insert("gumgum.domain".to_owned(), domain.clone());
+        labels.insert("prometheus.label_domain".to_owned(), domain.clone());
+    }
+    if let Some(route) = &request.route {
+        labels.insert("caddy".to_owned(), route.clone());
+        labels.insert(
+            "caddy.reverse_proxy".to_owned(),
+            format!("{{{{upstreams {}}}}}", request.port),
+        );
+        labels.insert("caddy.tls".to_owned(), "internal".to_owned());
+        labels.insert("caddy.tracing".to_owned(), String::new());
+        labels.insert(
+            "caddy.tracing.span".to_owned(),
+            format!("{}-ingress", request.worker),
+        );
+        labels.insert(
+            "caddy.request_header".to_owned(),
+            "traceparent 00-{http.vars.trace_id}-{http.vars.span_id}-01".to_owned(),
+        );
+        labels.insert(
+            "caddy.tracing.span_attributes.gumgum_worker".to_owned(),
+            request.worker.clone(),
+        );
+        if let Some(project) = &request.project {
+            labels.insert(
+                "caddy.tracing.span_attributes.gumgum_project".to_owned(),
+                project.clone(),
+            );
+        }
+        if let Some(domain) = &request.domain {
+            labels.insert(
+                "caddy.tracing.span_attributes.gumgum_domain".to_owned(),
+                domain.clone(),
+            );
+        }
+    }
+    labels
+}
+
+fn deployment_container_matches(
+    container: &ContainerSnapshot,
+    request: &DeployRequest,
+    expected_labels: &HashMap<String, String>,
+) -> bool {
+    container.running
+        && container.image.as_deref() == Some(request.image.as_str())
+        && expected_labels
+            .iter()
+            .all(|(name, value)| container.labels.get(name) == Some(value))
+}
+
+fn deployment_rollout_fingerprint(
+    request: &DeployRequest,
+    runtime_env: &[(String, String)],
+) -> String {
+    let mut entries = vec![
+        format!("image={}", request.image),
+        format!("route={}", request.route.as_deref().unwrap_or_default()),
+        format!("port={}", request.port),
+        format!("health={}", request.health),
+        format!("project={}", request.project.as_deref().unwrap_or_default()),
+        format!("domain={}", request.domain.as_deref().unwrap_or_default()),
+    ];
+    entries.extend(
+        runtime_env
+            .iter()
+            .map(|(name, value)| format!("env:{name}={value}")),
+    );
+    entries.sort();
+    fnv_hash(entries.join("\0").as_bytes())
+}
+
+fn rollout_container_name(base: &str, fingerprint: &str) -> String {
+    let max_base_len = 63usize.saturating_sub(fingerprint.len() + 1);
+    let trimmed = base.chars().take(max_base_len).collect::<String>();
+    format!("{trimmed}-{fingerprint}")
+}
+
+fn fnv_hash(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn stale_worker_container_labels(worker: &str) -> Vec<String> {
@@ -437,5 +505,51 @@ mod tests {
                 && value.contains("service.namespace=visit-counter")
                 && value.contains("gumgum.domain=kava.fund")
         }));
+    }
+
+    #[test]
+    fn rollout_container_name_is_stable_for_same_deploy_inputs() {
+        let request = DeployRequest {
+            worker: "api-prod".to_owned(),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-prod-dev-leostera-visit-counter-api".to_owned(),
+            route: Some("kava.fund".to_owned()),
+            project: Some("visit-counter".to_owned()),
+            domain: Some("kava.fund".to_owned()),
+            port: 3000,
+            health: "/_/ready".to_owned(),
+        };
+        let env = vec![("DATABASE_URL".to_owned(), "postgres://db".to_owned())];
+        let first = deployment_rollout_fingerprint(&request, &env);
+        let second = deployment_rollout_fingerprint(&request, &env);
+
+        assert_eq!(first, second);
+        let name = rollout_container_name(&request.container, &first);
+        assert!(name.len() <= 63);
+        assert!(name.ends_with(&first));
+    }
+
+    #[test]
+    fn deployment_container_match_uses_labels_not_logical_name() {
+        let request = DeployRequest {
+            worker: "api-prod".to_owned(),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            route: Some("kava.fund".to_owned()),
+            project: Some("visit-counter".to_owned()),
+            domain: Some("kava.fund".to_owned()),
+            port: 3000,
+            health: "/_/ready".to_owned(),
+        };
+        let labels = deployment_labels(&request, "env-123", Some("prod"));
+        let snapshot = ContainerSnapshot {
+            name: "gumgum-api-deadbeef".to_owned(),
+            image: Some("registry/api:1".to_owned()),
+            labels: labels.clone(),
+            running: true,
+            ..ContainerSnapshot::default()
+        };
+
+        assert!(deployment_container_matches(&snapshot, &request, &labels));
     }
 }

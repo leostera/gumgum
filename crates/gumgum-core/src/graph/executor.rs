@@ -494,35 +494,35 @@ impl GraphExecutionSession {
     }
 
     async fn execute_removal_step(&self, step: &GraphExecutionStep) -> crate::Result<Vec<String>> {
-        let GraphExecutionTarget::Removal {
-            container: Some(container),
-            ..
-        } = &step.target
-        else {
+        let GraphExecutionTarget::Removal { id, container } = &step.target else {
             return Ok(vec![format!("planned {}", step.description)]);
         };
-        let output = tokio::process::Command::new("docker")
-            .arg("rm")
-            .arg("-f")
-            .arg(container.as_str())
-            .output()
-            .await
-            .map_err(|source| {
-                crate::GumgumError::structured(
-                    crate::Subsystem::Setup,
-                    crate::ErrorCode::Io,
-                    "could not remove deployment container",
-                )
-                .likely_cause(source.to_string())
-                .build()
-            })?;
-        if output.status.success() {
-            Ok(vec![format!("removed deployment container {container}")])
-        } else {
-            Ok(vec![format!(
-                "deployment container {container} was already absent"
-            )])
+        let docker = crate::DockerEngine::local()?;
+        let mut containers = Vec::new();
+        if let Some(worker) = id.as_str().strip_prefix("deployment/") {
+            containers.extend(
+                docker
+                    .list_container_names_by_label(&[
+                        "gumgum.managed=deployment".to_owned(),
+                        format!("gumgum.worker={worker}"),
+                    ])
+                    .await?,
+            );
         }
+        if let Some(container) = container {
+            containers.push(container.to_string());
+        }
+        containers.sort();
+        containers.dedup();
+        if containers.is_empty() {
+            return Ok(vec![format!("planned {}", step.description)]);
+        }
+        let mut actions = Vec::new();
+        for container in containers {
+            docker.remove_container_force(&container).await?;
+            actions.push(format!("removed deployment container {container}"));
+        }
+        Ok(actions)
     }
 
     fn record(
