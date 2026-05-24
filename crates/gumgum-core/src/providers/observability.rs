@@ -670,7 +670,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn grafana_folder_create_existing_statuses_are_idempotent() {
         assert!(matches!(409, 409 | 412));
         assert!(matches!(412, 409 | 412));
