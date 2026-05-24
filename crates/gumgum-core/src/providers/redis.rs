@@ -89,6 +89,8 @@ async fn create_redis_provider_container(
             "redis-server".to_owned(),
             "--requirepass".to_owned(),
             credentials.password,
+            "--appendonly".to_owned(),
+            "yes".to_owned(),
         ],
     )
     .await

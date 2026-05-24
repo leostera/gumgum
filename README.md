@@ -60,10 +60,10 @@ gumgum can manage:
 
 - app/worker deployment to Docker
 - explicit HTTP routes through the gumgum gateway
-- Postgres databases
-- Redis KV namespaces
-- MinIO/S3 buckets and bucket objects
-- Redpanda queues/topics
+- Postgres databases on Docker named volumes
+- Redis KV namespaces on Docker named volumes with append-only persistence
+- MinIO/S3 buckets and bucket objects on Docker named volumes
+- Redpanda queues/topics on Docker named volumes
 - platform secrets and observability services
 - Prometheus scraping, host metrics, Docker/container metrics, Grafana dashboards, Loki, Tempo, and OTEL collector plumbing
 - worker environment bindings
@@ -431,6 +431,8 @@ visit_counter_requests_total{environment="$GUMGUM_ENV"}
 ```
 
 `gumgum status` includes platform provider health. A healthy server with the current default stack reports `Providers: 12/12 running`.
+
+Stateful platform services use Docker named volumes for durability across container and machine restarts: Grafana, Prometheus, Loki, Tempo, and Vaultwarden all keep their data outside the container filesystem.
 
 ## Deploy
 

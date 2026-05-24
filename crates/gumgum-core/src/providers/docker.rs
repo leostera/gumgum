@@ -61,6 +61,17 @@ fn provider_environment_label(provider: &ProviderSpec) -> Option<String> {
         .map(str::to_owned)
 }
 
+pub(crate) fn provider_binds(provider: &ProviderSpec) -> Vec<String> {
+    let volume = provider.container.replace('.', "-");
+    match provider.capability {
+        crate::Capability::Db => vec![format!("{volume}-data:/var/lib/postgresql/data")],
+        crate::Capability::Kv => vec![format!("{volume}-data:/data")],
+        crate::Capability::Blob => vec![format!("{volume}-data:/data")],
+        crate::Capability::Queue => vec![format!("{volume}-data:/var/lib/redpanda/data")],
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) async fn create_provider_container(
     provider: &ProviderSpec,
     env: Vec<(String, String)>,
@@ -80,7 +91,7 @@ pub(crate) async fn create_provider_container(
             restart_unless_stopped: true,
             labels,
             env,
-            binds: Vec::new(),
+            binds: provider_binds(provider),
             ports: Vec::new(),
             command,
             entrypoint: Vec::new(),
@@ -111,5 +122,38 @@ mod tests {
             provider_environment_label(&provider).as_deref(),
             Some("prod")
         );
+    }
+
+    #[test]
+    fn provider_binds_make_stateful_providers_durable() {
+        let cases = [
+            (
+                Capability::Db,
+                "gumgum-prod-provider-postgres",
+                "/var/lib/postgresql/data",
+            ),
+            (Capability::Kv, "gumgum-prod-provider-redis", "/data"),
+            (Capability::Blob, "gumgum-prod-provider-minio", "/data"),
+            (
+                Capability::Queue,
+                "gumgum-prod-provider-redpanda",
+                "/var/lib/redpanda/data",
+            ),
+        ];
+
+        for (capability, container, mount) in cases {
+            let provider = ProviderSpec {
+                capability,
+                provider: format!("{}.prod", capability.provider()),
+                container: container.to_owned(),
+                image: "example:latest".to_owned(),
+                port: 1234,
+                protocol: "tcp".to_owned(),
+            };
+            assert_eq!(
+                provider_binds(&provider),
+                vec![format!("{container}-data:{mount}")]
+            );
+        }
     }
 }

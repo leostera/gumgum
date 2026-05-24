@@ -131,6 +131,13 @@ for job in jobs:
         unhealthy.append(job)
 if missing or unhealthy:
     raise SystemExit(f"missing_jobs={missing} unhealthy_jobs={unhealthy}")
+docker_targets = by_job.get('gumgum-docker', [])
+if not docker_targets:
+    raise SystemExit('missing gumgum-docker Docker service discovery targets')
+unhealthy_docker = [target.get('scrapeUrl') for target in docker_targets if target.get('health') != 'up']
+if unhealthy_docker:
+    raise SystemExit(f'unhealthy gumgum-docker targets={unhealthy_docker}')
+print(f'ok: gumgum-docker discovered {len(docker_targets)} target(s)')
 PY
 
   local query_file

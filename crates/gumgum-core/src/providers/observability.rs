@@ -155,6 +155,7 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
             "/dev/disk:/dev/disk:ro".to_owned(),
         ],
         "gumgum-loki" => vec!["gumgum-loki-data:/loki".to_owned()],
+        "gumgum-tempo" => vec!["gumgum-tempo-data:/tmp/tempo".to_owned()],
         _ => Vec::new(),
     }
 }
@@ -828,6 +829,24 @@ mod tests {
                 .contains(&"/var/run/docker.sock:/var/run/docker.sock:ro".to_owned())
         );
         assert!(spec.command.contains(&"--web.enable-lifecycle".to_owned()));
+    }
+
+    #[test]
+    fn platform_stateful_services_use_named_volumes() {
+        let specs = platform_specs("leostera.dev");
+        for (container, bind) in [
+            ("gumgum-grafana", "gumgum-grafana-data:/var/lib/grafana"),
+            ("gumgum-prometheus", "gumgum-prometheus-data:/prometheus"),
+            ("gumgum-loki", "gumgum-loki-data:/loki"),
+            ("gumgum-tempo", "gumgum-tempo-data:/tmp/tempo"),
+        ] {
+            let provider = specs
+                .iter()
+                .find(|spec| spec.container == container)
+                .unwrap();
+            let spec = platform_run_spec(provider, "leostera.dev");
+            assert!(spec.binds.contains(&bind.to_owned()));
+        }
     }
 
     #[test]
