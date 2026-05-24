@@ -1,4 +1,6 @@
-use crate::{ContainerRunSpec, DockerEngine, ErrorCode, GumgumError, PortBindingSpec, Subsystem};
+use crate::{
+    ContainerRunSpec, DockerEngine, ErrorCode, ErrorKind, GumgumError, PortBindingSpec, Subsystem,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{
@@ -344,10 +346,10 @@ fn write_dnsmasq_config(upstream: Ipv4Addr) -> crate::Result<()> {
         config.push('\n');
     }
     std::fs::write(path, config).map_err(|source| {
-        GumgumError::structured(
+        GumgumError::structured_kind(
             Subsystem::Setup,
             ErrorCode::Io,
-            "could not write dnsmasq config",
+            ErrorKind::DnsmasqConfigWriteFailed,
         )
         .likely_cause(source.to_string())
         .build()
@@ -356,16 +358,16 @@ fn write_dnsmasq_config(upstream: Ipv4Addr) -> crate::Result<()> {
 
 fn dnsmasq_config_path() -> crate::Result<PathBuf> {
     let home = std::env::var("HOME").map_err(|source| {
-        GumgumError::structured(Subsystem::Config, ErrorCode::Io, "could not read HOME")
+        GumgumError::structured_kind(Subsystem::Config, ErrorCode::Io, ErrorKind::HomeReadFailed)
             .likely_cause(source.to_string())
             .build()
     })?;
     let dir = PathBuf::from(home).join(".gumgum").join("dnsmasq");
     std::fs::create_dir_all(&dir).map_err(|source| {
-        GumgumError::structured(
+        GumgumError::structured_kind(
             Subsystem::Setup,
             ErrorCode::Io,
-            "could not create dnsmasq config directory",
+            ErrorKind::DnsmasqConfigDirectoryCreateFailed,
         )
         .likely_cause(source.to_string())
         .build()

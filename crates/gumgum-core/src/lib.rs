@@ -282,6 +282,10 @@ pub enum ErrorKind {
     DaemonInvalidJson,
     DockerDaemonRequestFailed,
     DockerExecFailed,
+    DnsmasqConfigWriteFailed,
+    DnsmasqConfigDirectoryCreateFailed,
+    DeploymentContainerHealthCheckFailed,
+    GraphExecutionInjectedFailure,
 }
 
 impl ErrorKind {
@@ -325,6 +329,14 @@ impl ErrorKind {
             ErrorKind::DaemonInvalidJson => "api.daemon.invalid_json",
             ErrorKind::DockerDaemonRequestFailed => "setup.docker.request_failed",
             ErrorKind::DockerExecFailed => "setup.docker.exec_failed",
+            ErrorKind::DnsmasqConfigWriteFailed => "setup.dnsmasq_config.write_failed",
+            ErrorKind::DnsmasqConfigDirectoryCreateFailed => {
+                "setup.dnsmasq_config_directory.create_failed"
+            }
+            ErrorKind::DeploymentContainerHealthCheckFailed => {
+                "api.deployment_container.health_check_failed"
+            }
+            ErrorKind::GraphExecutionInjectedFailure => "setup.graph_execution.injected_failure",
         }
     }
 }
@@ -814,6 +826,9 @@ mod presentation_boundary_tests {
             "manifest.rs",
             "daemon_health.rs",
             "docker_engine.rs",
+            "platform.rs",
+            "container_reconciler.rs",
+            "graph/executor.rs",
         ];
         let mut violations = Vec::new();
         for file in files {

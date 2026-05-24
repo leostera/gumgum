@@ -435,10 +435,10 @@ impl GraphExecutionSession {
         #[cfg(test)]
         if self.context.fail_next_step {
             self.context.fail_next_step = false;
-            return Err(crate::GumgumError::structured(
+            return Err(crate::GumgumError::structured_kind(
                 crate::Subsystem::Setup,
                 crate::ErrorCode::InvalidArgs,
-                "injected graph execution failure",
+                crate::ErrorKind::GraphExecutionInjectedFailure,
             )
             .build());
         }

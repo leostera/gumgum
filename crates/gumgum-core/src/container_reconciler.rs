@@ -1,6 +1,6 @@
 use crate::{
     ContainerRunSpec, ContainerSnapshot, CoreAction, CoreActions, DockerEngine, ErrorCode,
-    GraphStore, GumgumError, Subsystem,
+    ErrorKind, GraphStore, GumgumError, Subsystem,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
@@ -215,10 +215,10 @@ impl ContainerReconciler {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        Err(GumgumError::structured(
+        Err(GumgumError::structured_kind(
             Subsystem::Api,
             ErrorCode::Io,
-            "deployment container did not become healthy",
+            ErrorKind::DeploymentContainerHealthCheckFailed,
         )
         .build())
     }

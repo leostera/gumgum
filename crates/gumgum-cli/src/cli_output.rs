@@ -90,6 +90,14 @@ fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
         gumgum_core::ErrorKind::DaemonInvalidJson => "gumgumd returned invalid JSON",
         gumgum_core::ErrorKind::DockerDaemonRequestFailed => "Docker daemon request failed",
         gumgum_core::ErrorKind::DockerExecFailed => "Docker exec failed",
+        gumgum_core::ErrorKind::DnsmasqConfigWriteFailed => "could not write dnsmasq config",
+        gumgum_core::ErrorKind::DnsmasqConfigDirectoryCreateFailed => {
+            "could not create dnsmasq config directory"
+        }
+        gumgum_core::ErrorKind::DeploymentContainerHealthCheckFailed => {
+            "deployment container did not become healthy"
+        }
+        gumgum_core::ErrorKind::GraphExecutionInjectedFailure => "injected graph execution failure",
     }
 }
 
