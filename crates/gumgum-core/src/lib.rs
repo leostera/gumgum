@@ -970,6 +970,9 @@ mod presentation_boundary_tests {
             concat!("ensure binding", " projects"),
             concat!("remove deployment", " "),
             concat!("remove graph", " node"),
+            concat!("planned provider", " reconcile"),
+            concat!("provider", " reconciled"),
+            concat!("applied", " deployment"),
         ];
         let mut violations = Vec::new();
         collect_print_violations(&src, &forbidden, &mut violations);

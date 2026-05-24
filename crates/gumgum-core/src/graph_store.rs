@@ -424,7 +424,7 @@ impl GraphStore {
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );",
         )
-        .map_err(|source| self.error("could not initialize graph database", source))?;
+        .map_err(|source| self.error(source))?;
         Ok(())
     }
 
@@ -502,7 +502,7 @@ impl GraphStore {
                 event.message
             ],
         )
-        .map_err(|source| self.error("could not record reconciliation event", source))?;
+        .map_err(|source| self.error(source))?;
         Ok(ReconcileEventId::new(conn.last_insert_rowid()))
     }
 
@@ -542,7 +542,7 @@ impl GraphStore {
                  ORDER BY id DESC
                  LIMIT ?1",
             )
-            .map_err(|source| self.error("could not query reconciliation events", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map(params![limit], |row| {
                 let kind: String = row.get(1)?;
@@ -559,11 +559,11 @@ impl GraphStore {
                     row.get::<_, String>(7)?,
                 ))
             })
-            .map_err(|source| self.error("could not read reconciliation events", source))?;
+            .map_err(|source| self.error(source))?;
         let mut events = Vec::new();
         for row in rows {
             let (id, kind, operation_id, status, target, action, message, created_at) =
-                row.map_err(|source| self.error("could not decode reconciliation event", source))?;
+                row.map_err(|source| self.error(source))?;
             events.push(ReconcileEvent {
                 id: ReconcileEventId::new(id),
                 kind: ControlPlaneEventKind::from_str(&kind)?,
@@ -614,7 +614,7 @@ impl GraphStore {
                updated_at=CURRENT_TIMESTAMP",
             params![provider.name, provider.capability.to_string()],
         )
-        .map_err(|source| self.error("could not materialize provider", source))?;
+        .map_err(|source| self.error(source))?;
         self.record_activity_payload(
             format!("provider/{}", provider.name),
             "provider.upsert",
@@ -635,7 +635,7 @@ impl GraphStore {
             .prepare(
                 "SELECT worker, binding, access FROM bindings WHERE object_kind = ?1 AND object_name = ?2 ORDER BY worker, binding",
             )
-            .map_err(|source| self.error("could not query object bindings", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map(params![kind, object.name], |row| {
                 Ok(ObjectBindingRef {
@@ -644,9 +644,9 @@ impl GraphStore {
                     access: row.get(2)?,
                 })
             })
-            .map_err(|source| self.error("could not read object bindings", source))?;
+            .map_err(|source| self.error(source))?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|source| self.error("could not decode object bindings", source))
+            .map_err(|source| self.error(source))
     }
 
     pub fn worker_bindings(&self, worker: &str) -> Result<Vec<ObjectBindingRef>> {
@@ -656,7 +656,7 @@ impl GraphStore {
             .prepare(
                 "SELECT object_kind || '/' || object_name, binding, access FROM bindings WHERE worker = ?1 ORDER BY binding",
             )
-            .map_err(|source| self.error("could not query worker bindings", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map(params![worker], |row| {
                 Ok(ObjectBindingRef {
@@ -665,31 +665,28 @@ impl GraphStore {
                     access: row.get(2)?,
                 })
             })
-            .map_err(|source| self.error("could not read worker bindings", source))?;
+            .map_err(|source| self.error(source))?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|source| self.error("could not decode worker bindings", source))
+            .map_err(|source| self.error(source))
     }
 
     pub fn delete_object(&self, object: &GlobalObject) -> Result<bool> {
         self.init()?;
         let mut conn = self.open()?;
-        let tx = conn
-            .transaction()
-            .map_err(|source| self.error("could not begin object delete transaction", source))?;
+        let tx = conn.transaction().map_err(|source| self.error(source))?;
         let kind = object.capability.to_string();
         tx.execute(
             "DELETE FROM object_secrets WHERE object_kind = ?1 AND object_name = ?2",
             params![kind, object.name],
         )
-        .map_err(|source| self.error("could not delete object secrets", source))?;
+        .map_err(|source| self.error(source))?;
         let changed = tx
             .execute(
                 "DELETE FROM global_objects WHERE kind = ?1 AND name = ?2",
                 params![kind, object.name],
             )
-            .map_err(|source| self.error("could not delete object", source))?;
-        tx.commit()
-            .map_err(|source| self.error("could not commit object delete transaction", source))?;
+            .map_err(|source| self.error(source))?;
+        tx.commit().map_err(|source| self.error(source))?;
         if changed > 0 {
             self.record_activity_payload(
                 format!("object/{}/{}", object.capability, object.name),
@@ -722,7 +719,7 @@ impl GraphStore {
                updated_at=CURRENT_TIMESTAMP",
             params![kind, object.name, object.namespace, object.root_domain, dns, provider],
         )
-        .map_err(|source| self.error("could not materialize object", source))?;
+        .map_err(|source| self.error(source))?;
         self.record_activity_payload(
             format!("object/{}/{}", object.capability, object.name),
             "object.upsert",
@@ -756,7 +753,7 @@ impl GraphStore {
                updated_at=CURRENT_TIMESTAMP",
             params![object_kind, object_name, field, env_name, secret_ref, value],
         )
-        .map_err(|source| self.error("could not materialize object secret", source))?;
+        .map_err(|source| self.error(source))?;
         self.record_activity_payload(
             format!("object/{object_kind}/{object_name}"),
             "object_secret.upsert",
@@ -780,17 +777,12 @@ impl GraphStore {
         let conn = self.open()?;
         let mut stmt = conn
             .prepare("SELECT value FROM object_secrets WHERE object_kind = ?1 AND object_name = ?2 AND field = ?3")
-            .map_err(|source| self.error("could not query object secret", source))?;
+            .map_err(|source| self.error(source))?;
         let mut rows = stmt
             .query(params![object_kind, object_name, field])
-            .map_err(|source| self.error("could not read object secret", source))?;
-        if let Some(row) = rows
-            .next()
-            .map_err(|source| self.error("could not decode object secret", source))?
-        {
-            Ok(Some(row.get(0).map_err(|source| {
-                self.error("could not decode object secret", source)
-            })?))
+            .map_err(|source| self.error(source))?;
+        if let Some(row) = rows.next().map_err(|source| self.error(source))? {
+            Ok(Some(row.get(0).map_err(|source| self.error(source))?))
         } else {
             Ok(None)
         }
@@ -809,7 +801,7 @@ impl GraphStore {
                     binding.binding
                 ],
             )
-            .map_err(|source| self.error("could not delete binding", source))?;
+            .map_err(|source| self.error(source))?;
         if changed > 0 {
             self.record_activity_payload(
                 format!("binding/{}/{}", binding.worker, binding.binding),
@@ -843,7 +835,7 @@ impl GraphStore {
                 binding.access
             ],
         )
-        .map_err(|source| self.error("could not materialize binding", source))?;
+        .map_err(|source| self.error(source))?;
         self.record_activity_payload(
             format!("binding/{}/{}", binding.worker, binding.binding),
             "binding.upsert",
@@ -861,35 +853,20 @@ impl GraphStore {
         let conn = self.open()?;
         let mut stmt = conn
             .prepare("SELECT worker, image, container, route, port, health FROM desired_deployments WHERE worker = ?1")
-            .map_err(|source| self.error("could not query desired deployment", source))?;
+            .map_err(|source| self.error(source))?;
         let mut rows = stmt
             .query(params![worker])
-            .map_err(|source| self.error("could not read desired deployment", source))?;
-        if let Some(row) = rows
-            .next()
-            .map_err(|source| self.error("could not decode desired deployment", source))?
-        {
+            .map_err(|source| self.error(source))?;
+        if let Some(row) = rows.next().map_err(|source| self.error(source))? {
             Ok(Some(DesiredDeploy {
-                worker: row
-                    .get(0)
-                    .map_err(|source| self.error("could not decode desired deployment", source))?,
-                image: row
-                    .get(1)
-                    .map_err(|source| self.error("could not decode desired deployment", source))?,
-                container: row
-                    .get(2)
-                    .map_err(|source| self.error("could not decode desired deployment", source))?,
-                route: row
-                    .get(3)
-                    .map_err(|source| self.error("could not decode desired deployment", source))?,
+                worker: row.get(0).map_err(|source| self.error(source))?,
+                image: row.get(1).map_err(|source| self.error(source))?,
+                container: row.get(2).map_err(|source| self.error(source))?,
+                route: row.get(3).map_err(|source| self.error(source))?,
                 project: None,
                 domain: None,
-                port: row
-                    .get(4)
-                    .map_err(|source| self.error("could not decode desired deployment", source))?,
-                health: row
-                    .get(5)
-                    .map_err(|source| self.error("could not decode desired deployment", source))?,
+                port: row.get(4).map_err(|source| self.error(source))?,
+                health: row.get(5).map_err(|source| self.error(source))?,
             }))
         } else {
             Ok(None)
@@ -904,7 +881,7 @@ impl GraphStore {
                 "DELETE FROM desired_deployments WHERE worker = ?1",
                 params![worker],
             )
-            .map_err(|source| self.error("could not delete desired deployment", source))?;
+            .map_err(|source| self.error(source))?;
         if changed > 0 {
             self.record_activity_payload(
                 format!("deployment/{worker}"),
@@ -921,9 +898,7 @@ impl GraphStore {
     pub fn materialize_deploy(&self, request: &DesiredDeploy) -> Result<bool> {
         self.init()?;
         let mut conn = self.open()?;
-        let tx = conn
-            .transaction()
-            .map_err(|source| self.error("could not begin graph transaction", source))?;
+        let tx = conn.transaction().map_err(|source| self.error(source))?;
         tx.execute(
             "INSERT INTO deployment_revisions (worker, image, container, route, port, health)
              SELECT worker, image, container, route, port, health
@@ -939,7 +914,7 @@ impl GraphStore {
                 request.health
             ],
         )
-        .map_err(|source| self.error("could not record deployment revision", source))?;
+        .map_err(|source| self.error(source))?;
         tx.execute(
             "INSERT INTO desired_deployments (worker, image, container, route, port, health, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
@@ -952,9 +927,8 @@ impl GraphStore {
                updated_at=CURRENT_TIMESTAMP",
             params![request.worker, request.image, request.container, request.route, request.port, request.health],
         )
-        .map_err(|source| self.error("could not materialize deployment", source))?;
-        tx.commit()
-            .map_err(|source| self.error("could not commit graph transaction", source))?;
+        .map_err(|source| self.error(source))?;
+        tx.commit().map_err(|source| self.error(source))?;
         self.record_activity_payload(
             format!("deployment/{}", request.worker),
             "deployment.upsert",
@@ -996,41 +970,24 @@ impl GraphStore {
         let conn = self.open()?;
         let mut stmt = conn
             .prepare("SELECT id, image, container, route, port, health, created_at FROM deployment_revisions WHERE worker = ?1 AND id = ?2")
-            .map_err(|source| self.error("could not query deployment revision", source))?;
+            .map_err(|source| self.error(source))?;
         let mut rows = stmt
             .query(params![worker, revision_id])
-            .map_err(|source| self.error("could not read deployment revision", source))?;
-        if let Some(row) = rows
-            .next()
-            .map_err(|source| self.error("could not decode deployment revision", source))?
-        {
+            .map_err(|source| self.error(source))?;
+        if let Some(row) = rows.next().map_err(|source| self.error(source))? {
             Ok(Some(DeploymentRevision {
-                id: row
-                    .get(0)
-                    .map_err(|source| self.error("could not decode deployment revision", source))?,
+                id: row.get(0).map_err(|source| self.error(source))?,
                 deploy: DesiredDeploy {
                     worker: worker.to_owned(),
-                    image: row.get(1).map_err(|source| {
-                        self.error("could not decode deployment revision", source)
-                    })?,
-                    container: row.get(2).map_err(|source| {
-                        self.error("could not decode deployment revision", source)
-                    })?,
-                    route: row.get(3).map_err(|source| {
-                        self.error("could not decode deployment revision", source)
-                    })?,
+                    image: row.get(1).map_err(|source| self.error(source))?,
+                    container: row.get(2).map_err(|source| self.error(source))?,
+                    route: row.get(3).map_err(|source| self.error(source))?,
                     project: None,
                     domain: None,
-                    port: row.get::<_, i64>(4).map_err(|source| {
-                        self.error("could not decode deployment revision", source)
-                    })? as u16,
-                    health: row.get(5).map_err(|source| {
-                        self.error("could not decode deployment revision", source)
-                    })?,
+                    port: row.get::<_, i64>(4).map_err(|source| self.error(source))? as u16,
+                    health: row.get(5).map_err(|source| self.error(source))?,
                 },
-                created_at: row
-                    .get(6)
-                    .map_err(|source| self.error("could not decode deployment revision", source))?,
+                created_at: row.get(6).map_err(|source| self.error(source))?,
             }))
         } else {
             Ok(None)
@@ -1045,7 +1002,7 @@ impl GraphStore {
                 "DELETE FROM deployment_revisions WHERE worker = ?1 AND id = ?2",
                 params![worker, revision_id],
             )
-            .map_err(|source| self.error("could not delete deployment revision", source))?
+            .map_err(|source| self.error(source))?
             > 0;
         if deleted {
             self.record_activity_payload(
@@ -1070,7 +1027,7 @@ impl GraphStore {
         let conn = self.open()?;
         let mut stmt = conn
             .prepare("SELECT id, image, container, route, port, health, created_at FROM deployment_revisions WHERE worker = ?1 ORDER BY id DESC LIMIT ?2")
-            .map_err(|source| self.error("could not query deployment revisions", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map(params![worker, limit], |row| {
                 Ok(DeploymentRevision {
@@ -1088,12 +1045,10 @@ impl GraphStore {
                     created_at: row.get(6)?,
                 })
             })
-            .map_err(|source| self.error("could not read deployment revisions", source))?;
+            .map_err(|source| self.error(source))?;
         let mut revisions = Vec::new();
         for row in rows {
-            revisions.push(
-                row.map_err(|source| self.error("could not decode deployment revision", source))?,
-            );
+            revisions.push(row.map_err(|source| self.error(source))?);
         }
         Ok(revisions)
     }
@@ -1109,7 +1064,7 @@ impl GraphStore {
                  WHERE b.worker = ?1
                  ORDER BY b.binding",
             )
-            .map_err(|source| self.error("could not query binding env", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map(params![worker], |row| {
                 Ok((
@@ -1119,11 +1074,10 @@ impl GraphStore {
                     row.get::<_, String>(3)?,
                 ))
             })
-            .map_err(|source| self.error("could not read binding env", source))?;
+            .map_err(|source| self.error(source))?;
         let mut env = Vec::new();
         for row in rows {
-            let (binding, kind, name, dns) =
-                row.map_err(|source| self.error("could not decode binding env", source))?;
+            let (binding, kind, name, dns) = row.map_err(|source| self.error(source))?;
             let secret = if kind == "db" {
                 self.object_secret(&kind, &name, "password")?
             } else {
@@ -1141,15 +1095,14 @@ impl GraphStore {
     ) -> Result<()> {
         let mut stmt = conn
             .prepare("SELECT name, capability FROM desired_providers ORDER BY name")
-            .map_err(|source| self.error("could not query desired providers", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|source| self.error("could not read desired providers", source))?;
+            .map_err(|source| self.error(source))?;
         for row in rows {
-            let (name, capability) =
-                row.map_err(|source| self.error("could not decode desired provider", source))?;
+            let (name, capability) = row.map_err(|source| self.error(source))?;
             nodes.push(DesiredGraphNode::Provider {
                 name: ProviderName::new(&name)?,
                 capability: Capability::from_str(&capability).unwrap_or(Capability::Manual),
@@ -1167,7 +1120,7 @@ impl GraphStore {
             .prepare(
                 "SELECT worker, image, container, route, port, health FROM desired_deployments ORDER BY worker",
             )
-            .map_err(|source| self.error("could not query desired deployments", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -1179,10 +1132,10 @@ impl GraphStore {
                     row.get::<_, String>(5)?,
                 ))
             })
-            .map_err(|source| self.error("could not read desired deployments", source))?;
+            .map_err(|source| self.error(source))?;
         for row in rows {
             let (worker, image, container, route, port, health) =
-                row.map_err(|source| self.error("could not decode desired deployment", source))?;
+                row.map_err(|source| self.error(source))?;
             nodes.push(DesiredGraphNode::Deployment {
                 worker: WorkerId::new(&worker)?,
                 image: ImageName::new(&image)?,
@@ -1202,7 +1155,7 @@ impl GraphStore {
     ) -> Result<()> {
         let mut stmt = conn
             .prepare("SELECT kind, name, provider FROM global_objects ORDER BY kind, name")
-            .map_err(|source| self.error("could not query desired objects", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -1211,10 +1164,9 @@ impl GraphStore {
                     row.get::<_, String>(2)?,
                 ))
             })
-            .map_err(|source| self.error("could not read desired objects", source))?;
+            .map_err(|source| self.error(source))?;
         for row in rows {
-            let (kind, name, provider) =
-                row.map_err(|source| self.error("could not decode desired object", source))?;
+            let (kind, name, provider) = row.map_err(|source| self.error(source))?;
             nodes.push(DesiredGraphNode::Object {
                 capability: Capability::from_str(&kind).unwrap_or(Capability::Manual),
                 name: ObjectName::new(&name)?,
@@ -1231,7 +1183,7 @@ impl GraphStore {
     ) -> Result<()> {
         let mut stmt = conn
             .prepare("SELECT object_kind, object_name, worker, binding FROM bindings ORDER BY worker, binding")
-            .map_err(|source| self.error("could not query desired bindings", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -1241,10 +1193,9 @@ impl GraphStore {
                     row.get::<_, String>(3)?,
                 ))
             })
-            .map_err(|source| self.error("could not read desired bindings", source))?;
+            .map_err(|source| self.error(source))?;
         for row in rows {
-            let (kind, name, worker, binding) =
-                row.map_err(|source| self.error("could not decode desired binding", source))?;
+            let (kind, name, worker, binding) = row.map_err(|source| self.error(source))?;
             nodes.push(DesiredGraphNode::Binding {
                 worker: WorkerId::new(&worker)?,
                 name: BindingName::new(&binding)?,
@@ -1262,15 +1213,14 @@ impl GraphStore {
     ) -> Result<()> {
         let mut stmt = conn
             .prepare("SELECT name, capability FROM desired_providers ORDER BY name")
-            .map_err(|source| self.error("could not query graph providers", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|source| self.error("could not read graph providers", source))?;
+            .map_err(|source| self.error(source))?;
         for row in rows {
-            let (name, capability) =
-                row.map_err(|source| self.error("could not decode graph provider", source))?;
+            let (name, capability) = row.map_err(|source| self.error(source))?;
             let id = format!("provider/{name}");
             nodes.push(GraphNode::new(
                 &id,
@@ -1292,7 +1242,7 @@ impl GraphStore {
             .prepare(
                 "SELECT worker, image, container, route FROM desired_deployments ORDER BY worker",
             )
-            .map_err(|source| self.error("could not query graph database", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -1302,10 +1252,9 @@ impl GraphStore {
                     row.get::<_, String>(3)?,
                 ))
             })
-            .map_err(|source| self.error("could not read graph rows", source))?;
+            .map_err(|source| self.error(source))?;
         for row in rows {
-            let (worker, image, container, route) =
-                row.map_err(|source| self.error("could not decode graph row", source))?;
+            let (worker, image, container, route) = row.map_err(|source| self.error(source))?;
             let worker_id = format!("worker/{worker}");
             let image_id = format!("image/{worker}");
             let container_id = format!("container/{container}");
@@ -1374,7 +1323,7 @@ impl GraphStore {
     ) -> Result<()> {
         let mut stmt = conn
             .prepare("SELECT kind, name, dns, provider FROM global_objects ORDER BY kind, name")
-            .map_err(|source| self.error("could not query graph objects", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -1384,10 +1333,9 @@ impl GraphStore {
                     row.get::<_, String>(3)?,
                 ))
             })
-            .map_err(|source| self.error("could not read graph objects", source))?;
+            .map_err(|source| self.error(source))?;
         for row in rows {
-            let (kind, name, dns, provider) =
-                row.map_err(|source| self.error("could not decode graph object", source))?;
+            let (kind, name, dns, provider) = row.map_err(|source| self.error(source))?;
             let object_id = format!("{kind}/{name}");
             let provider_id = format!("provider/{provider}");
             nodes.push(GraphNode::new(
@@ -1408,7 +1356,7 @@ impl GraphStore {
     ) -> Result<()> {
         let mut stmt = conn
             .prepare("SELECT object_kind, object_name, worker, binding, access FROM bindings ORDER BY worker, binding")
-            .map_err(|source| self.error("could not query graph bindings", source))?;
+            .map_err(|source| self.error(source))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -1419,10 +1367,9 @@ impl GraphStore {
                     row.get::<_, String>(4)?,
                 ))
             })
-            .map_err(|source| self.error("could not read graph bindings", source))?;
+            .map_err(|source| self.error(source))?;
         for row in rows {
-            let (kind, name, worker, binding, access) =
-                row.map_err(|source| self.error("could not decode graph binding", source))?;
+            let (kind, name, worker, binding, access) = row.map_err(|source| self.error(source))?;
             let binding_id = format!("binding/{worker}/{binding}");
             let worker_id = format!("worker/{worker}");
             let object_id = format!("{kind}/{name}");
@@ -1438,11 +1385,10 @@ impl GraphStore {
     }
 
     fn open(&self) -> Result<Connection> {
-        Connection::open(&self.path)
-            .map_err(|source| self.error("graph database open failed", source))
+        Connection::open(&self.path).map_err(|source| self.error(source))
     }
 
-    fn error(&self, _message: &'static str, source: rusqlite::Error) -> GumgumError {
+    fn error(&self, source: rusqlite::Error) -> GumgumError {
         GumgumError::structured_kind(
             Subsystem::Config,
             ErrorCode::Io,
@@ -1675,8 +1621,8 @@ mod tests {
                 operation_id: None,
                 status: ReconcileEventStatus::Planned,
                 target: "provider/secrets.platform".to_owned(),
-                action: "ensure provider".to_owned(),
-                message: "planned provider reconcile".to_owned(),
+                action: "ensure_provider".to_owned(),
+                message: serde_json::json!({"description":"ensure_provider"}).to_string(),
             })
             .unwrap();
         let second = store
@@ -1685,8 +1631,8 @@ mod tests {
                 operation_id: None,
                 status: ReconcileEventStatus::Executed,
                 target: "provider/secrets.platform".to_owned(),
-                action: "ensure provider".to_owned(),
-                message: "provider reconciled".to_owned(),
+                action: "ensure_provider".to_owned(),
+                message: serde_json::json!({"actions":["provider_configured"]}).to_string(),
             })
             .unwrap();
 

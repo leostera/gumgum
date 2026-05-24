@@ -139,7 +139,7 @@ mod tests {
             operation_id: Some("op_123".to_owned()),
             target: "deployment/api".to_owned(),
             action: "deploy.apply".to_owned(),
-            message: "applied deployment".to_owned(),
+            message: serde_json::json!({"actions":["deployment_applied"]}).to_string(),
             created_at: "2026-05-22T00:00:00Z".to_owned(),
         });
 
