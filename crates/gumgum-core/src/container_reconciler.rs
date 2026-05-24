@@ -160,13 +160,17 @@ impl ContainerReconciler {
         let Some(route) = request.route.as_deref() else {
             return Ok(Vec::new());
         };
+        let mut labels = vec![
+            "gumgum.managed=deployment".to_owned(),
+            format!("caddy={route}"),
+        ];
+        if let Some(environment) = deployment_environment(&request.worker) {
+            labels.push(format!("gumgum.environment={environment}"));
+        }
         Self::remove_stale_containers(
             docker,
             request,
-            vec![
-                "gumgum.managed=deployment".to_owned(),
-                format!("caddy={route}"),
-            ],
+            labels,
             "remove stale deployment container for route",
         )
         .await
@@ -268,6 +272,13 @@ mod tests {
                 "gumgum.worker=api-preview".to_owned()
             ]
         );
+    }
+
+    #[test]
+    fn deployment_environment_extracts_preview_and_prod() {
+        assert_eq!(deployment_environment("api-preview"), Some("preview"));
+        assert_eq!(deployment_environment("api-prod"), Some("prod"));
+        assert_eq!(deployment_environment("api"), None);
     }
 
     #[test]
