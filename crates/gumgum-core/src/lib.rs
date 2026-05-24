@@ -956,6 +956,13 @@ mod presentation_boundary_tests {
             concat!("verify health", " check and routes"),
             concat!("read deployed", " worker"),
             concat!("plan route", " mapping"),
+            concat!("workspace manifest", " is valid"),
+            concat!("worker manifest", " is valid"),
+            concat!("project.name", " must"),
+            concat!("worker.name", " must"),
+            concat!("secret binding", " must"),
+            concat!("dashboard", " must declare"),
+            concat!("manifest validation", " failed"),
         ];
         let mut violations = Vec::new();
         collect_print_violations(&src, &forbidden, &mut violations);

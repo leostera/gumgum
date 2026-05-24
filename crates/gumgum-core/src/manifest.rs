@@ -18,7 +18,7 @@ pub enum ManifestError {
         source: toml::de::Error,
     },
     #[error("manifest.validation_failed")]
-    Validation(String),
+    Validation(ManifestValidationIssue),
 }
 
 impl From<ManifestError> for GumgumError {
@@ -40,12 +40,12 @@ impl From<ManifestError> for GumgumError {
             .likely_cause(format!("{path}: {source}"))
             .next_command(format!("gumgum schema validate {path}"))
             .build(),
-            ManifestError::Validation(message) => GumgumError::structured_kind(
+            ManifestError::Validation(issue) => GumgumError::structured_kind(
                 Subsystem::Schema,
                 ErrorCode::ManifestValidationFailed,
                 ErrorKind::ManifestValidationFailed,
             )
-            .likely_cause(message)
+            .likely_cause(issue.machine_code())
             .next_command("gumgum schema explain")
             .build(),
         }
@@ -301,7 +301,13 @@ pub struct ValidationReport {
     pub ok: bool,
     pub path: String,
     pub manifest_kind: ManifestKind,
-    pub message: String,
+    pub status: ValidationStatus,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationStatus {
+    Valid,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -309,6 +315,52 @@ pub struct ValidationReport {
 pub enum ManifestKind {
     Workspace,
     Worker,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManifestValidationIssue {
+    ManifestKindMissing,
+    ProjectNameEmpty,
+    ProjectNameIsDomain,
+    ProjectDomainEmpty,
+    WorkerNameEmpty,
+    ProjectNamespaceEmpty,
+    ZoneNameEmpty,
+    SecretNameMissing,
+    SecretBindingMissing,
+    PrometheusMetricsPathRelative,
+    GrafanaSourcesEmpty,
+    DashboardNameMissing,
+    DashboardPathMissing,
+    QueueIdMissing,
+    QueueBindingMissing,
+    ObjectIdMissing,
+}
+
+impl ManifestValidationIssue {
+    pub fn machine_code(self) -> &'static str {
+        match self {
+            ManifestValidationIssue::ManifestKindMissing => "manifest.kind.missing",
+            ManifestValidationIssue::ProjectNameEmpty => "project.name.empty",
+            ManifestValidationIssue::ProjectNameIsDomain => "project.name.is_domain",
+            ManifestValidationIssue::ProjectDomainEmpty => "project.domain.empty",
+            ManifestValidationIssue::WorkerNameEmpty => "worker.name.empty",
+            ManifestValidationIssue::ProjectNamespaceEmpty => "project.namespace.empty",
+            ManifestValidationIssue::ZoneNameEmpty => "zone.name.empty",
+            ManifestValidationIssue::SecretNameMissing => "secret.name.missing",
+            ManifestValidationIssue::SecretBindingMissing => "secret.binding.missing",
+            ManifestValidationIssue::PrometheusMetricsPathRelative => {
+                "observability.prometheus_metrics.relative"
+            }
+            ManifestValidationIssue::GrafanaSourcesEmpty => "observability.grafana.sources.empty",
+            ManifestValidationIssue::DashboardNameMissing => "dashboard.name.missing",
+            ManifestValidationIssue::DashboardPathMissing => "dashboard.path.missing",
+            ManifestValidationIssue::QueueIdMissing => "queue.id.missing",
+            ManifestValidationIssue::QueueBindingMissing => "queue.binding.missing",
+            ManifestValidationIssue::ObjectIdMissing => "object.id.missing",
+        }
+    }
 }
 
 pub fn validate_path(path: &Path) -> Result<ValidationReport> {
@@ -469,7 +521,7 @@ pub fn validate_str(raw: &str, path: &str) -> std::result::Result<ValidationRepo
             ok: true,
             path: path.to_owned(),
             manifest_kind: ManifestKind::Workspace,
-            message: "workspace manifest is valid".to_owned(),
+            status: ValidationStatus::Valid,
         });
     }
 
@@ -484,29 +536,29 @@ pub fn validate_str(raw: &str, path: &str) -> std::result::Result<ValidationRepo
             ok: true,
             path: path.to_owned(),
             manifest_kind: ManifestKind::Worker,
-            message: "worker manifest is valid".to_owned(),
+            status: ValidationStatus::Valid,
         });
     }
 
     Err(ManifestError::Validation(
-        "manifest must contain either [workspace] or [worker]".to_owned(),
+        ManifestValidationIssue::ManifestKindMissing,
     ))
 }
 
 fn validate_workspace(manifest: &WorkspaceManifest) -> std::result::Result<(), ManifestError> {
     if manifest.project.name.trim().is_empty() {
         return Err(ManifestError::Validation(
-            "project.name must not be empty".to_owned(),
+            ManifestValidationIssue::ProjectNameEmpty,
         ));
     }
     if manifest.project.name.contains('.') {
         return Err(ManifestError::Validation(
-            "project.name must be a DNS label, not a domain".to_owned(),
+            ManifestValidationIssue::ProjectNameIsDomain,
         ));
     }
     if manifest.project.domain.trim().is_empty() {
         return Err(ManifestError::Validation(
-            "project.domain must not be empty".to_owned(),
+            ManifestValidationIssue::ProjectDomainEmpty,
         ));
     }
     Ok(())
@@ -515,20 +567,20 @@ fn validate_workspace(manifest: &WorkspaceManifest) -> std::result::Result<(), M
 fn validate_worker(manifest: &WorkerManifest) -> std::result::Result<(), ManifestError> {
     if manifest.worker.name.trim().is_empty() {
         return Err(ManifestError::Validation(
-            "worker.name must not be empty".to_owned(),
+            ManifestValidationIssue::WorkerNameEmpty,
         ));
     }
     if let Some(project) = &manifest.project {
         if project.namespace.trim().is_empty() {
             return Err(ManifestError::Validation(
-                "project.namespace must not be empty".to_owned(),
+                ManifestValidationIssue::ProjectNamespaceEmpty,
             ));
         }
     }
     for zone in &manifest.zone {
         if zone.name.trim().is_empty() {
             return Err(ManifestError::Validation(
-                "zone.name must not be empty".to_owned(),
+                ManifestValidationIssue::ZoneNameEmpty,
             ));
         }
     }
@@ -546,12 +598,12 @@ fn validate_secret_bindings(bindings: &[SecretBinding]) -> std::result::Result<(
     for secret in bindings {
         if secret.name.trim().is_empty() {
             return Err(ManifestError::Validation(
-                "secret binding must declare name".to_owned(),
+                ManifestValidationIssue::SecretNameMissing,
             ));
         }
         if secret.binding.trim().is_empty() {
             return Err(ManifestError::Validation(
-                "secret binding must declare binding".to_owned(),
+                ManifestValidationIssue::SecretBindingMissing,
             ));
         }
     }
@@ -566,13 +618,13 @@ fn validate_observability(
     };
     if observability.enable && !observability.prometheus_metrics.starts_with('/') {
         return Err(ManifestError::Validation(
-            "observability.prometheus_metrics must be an absolute path".to_owned(),
+            ManifestValidationIssue::PrometheusMetricsPathRelative,
         ));
     }
     if let Some(grafana) = &observability.grafana {
         if matches!(grafana.sources.as_deref(), Some(path) if path.trim().is_empty()) {
             return Err(ManifestError::Validation(
-                "observability.grafana.sources must not be empty".to_owned(),
+                ManifestValidationIssue::GrafanaSourcesEmpty,
             ));
         }
     }
@@ -583,12 +635,12 @@ fn validate_dashboards(dashboards: &[Dashboard]) -> std::result::Result<(), Mani
     for dashboard in dashboards {
         if dashboard.name.trim().is_empty() {
             return Err(ManifestError::Validation(
-                "dashboard must declare name".to_owned(),
+                ManifestValidationIssue::DashboardNameMissing,
             ));
         }
         if dashboard.path.trim().is_empty() {
             return Err(ManifestError::Validation(
-                "dashboard must declare path".to_owned(),
+                ManifestValidationIssue::DashboardPathMissing,
             ));
         }
     }
@@ -596,16 +648,16 @@ fn validate_dashboards(dashboards: &[Dashboard]) -> std::result::Result<(), Mani
 }
 
 fn validate_queue_bindings(bindings: &QueueBindings) -> std::result::Result<(), ManifestError> {
-    for (binding, role) in bindings.iter_with_access() {
+    for (binding, _) in bindings.iter_with_access() {
         if binding.queue_id.trim().is_empty() {
-            return Err(ManifestError::Validation(format!(
-                "queue.{role} binding must declare queue_id"
-            )));
+            return Err(ManifestError::Validation(
+                ManifestValidationIssue::QueueIdMissing,
+            ));
         }
         if binding.binding.trim().is_empty() {
-            return Err(ManifestError::Validation(format!(
-                "queue.{role} binding must declare binding"
-            )));
+            return Err(ManifestError::Validation(
+                ManifestValidationIssue::QueueBindingMissing,
+            ));
         }
     }
     Ok(())
@@ -614,7 +666,7 @@ fn validate_queue_bindings(bindings: &QueueBindings) -> std::result::Result<(), 
 fn validate_object_bindings(
     capability: crate::Capability,
     bindings: &[ObjectBinding],
-    table: &str,
+    _table: &str,
 ) -> std::result::Result<(), ManifestError> {
     for binding in bindings {
         if binding
@@ -623,17 +675,9 @@ fn validate_object_bindings(
             .filter(|id| !id.is_empty())
             .is_none()
         {
-            return Err(ManifestError::Validation(format!(
-                "{table} binding must declare {}_id",
-                match capability {
-                    crate::Capability::Db => "db",
-                    crate::Capability::Kv => "kv",
-                    crate::Capability::Blob => "bucket",
-                    crate::Capability::Queue => "queue",
-                    crate::Capability::Secret => "secret",
-                    crate::Capability::Observability | crate::Capability::Manual => "object",
-                }
-            )));
+            return Err(ManifestError::Validation(
+                ManifestValidationIssue::ObjectIdMissing,
+            ));
         }
     }
     Ok(())
@@ -697,8 +741,10 @@ name = "user-counters"
 binding = "USER_COUNTERS"
 dns = "user-counters.kv.example.dev"
 "#;
-        let error = validate_str(raw, "gumgum.toml").unwrap_err().to_string();
-        assert!(error.contains("unknown field `dns`"));
+        assert!(matches!(
+            validate_str(raw, "gumgum.toml").unwrap_err(),
+            ManifestError::Parse { .. }
+        ));
     }
 
     #[test]
@@ -767,12 +813,10 @@ name = "api"
 enable = true
 prometheus_metrics = "metrics"
 "#;
-        let error = validate_str(raw, "gumgum.toml").unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("observability.prometheus_metrics must be an absolute path")
-        );
+        assert!(matches!(
+            validate_str(raw, "gumgum.toml").unwrap_err(),
+            ManifestError::Validation(ManifestValidationIssue::PrometheusMetricsPathRelative)
+        ));
     }
 
     #[test]
@@ -785,12 +829,10 @@ name = "api"
 enable = true
 prometheus_metrics = ""
 "#;
-        let error = validate_str(raw, "gumgum.toml").unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("observability.prometheus_metrics must be an absolute path")
-        );
+        assert!(matches!(
+            validate_str(raw, "gumgum.toml").unwrap_err(),
+            ManifestError::Validation(ManifestValidationIssue::PrometheusMetricsPathRelative)
+        ));
     }
 
     #[test]
@@ -823,8 +865,10 @@ build_context = "."
 [[queue.consumer]]
 queue_id = "visit-events"
 "#;
-        let error = validate_str(raw, "gumgum.toml").unwrap_err().to_string();
-        assert!(error.contains("missing field `binding`"));
+        assert!(matches!(
+            validate_str(raw, "gumgum.toml").unwrap_err(),
+            ManifestError::Parse { .. }
+        ));
     }
 
     #[test]
@@ -838,8 +882,10 @@ queue_id = "visit-events"
 binding = "VISIT_EVENTS_QUEUE"
 access = "write"
 "#;
-        let error = validate_str(raw, "gumgum.toml").unwrap_err().to_string();
-        assert!(error.contains("unknown field `access`"));
+        assert!(matches!(
+            validate_str(raw, "gumgum.toml").unwrap_err(),
+            ManifestError::Parse { .. }
+        ));
     }
 
     #[test]
