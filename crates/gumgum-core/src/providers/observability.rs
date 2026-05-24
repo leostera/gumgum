@@ -420,8 +420,12 @@ pub async fn apply_grafana_artifact(
         "dashboard" => {
             let folder_uid =
                 ensure_grafana_folder_path(&client, &base, &password, &folder_path).await?;
+            let mut dashboard = content;
+            if dashboard.get("uid").and_then(|uid| uid.as_str()).is_none() {
+                dashboard["uid"] = serde_json::Value::String(grafana_dashboard_uid(name));
+            }
             let mut payload = serde_json::json!({
-                "dashboard": content,
+                "dashboard": dashboard,
                 "overwrite": true,
                 "message": format!("gumgum apply {name}"),
             });
@@ -483,6 +487,13 @@ fn grafana_folder_uid(parent_uid: Option<&str>, title: &str) -> String {
     let prefix = parent_uid.unwrap_or("gumgum");
     let slug = crate::sanitize_name(title);
     format!("{prefix}-{slug}").chars().take(40).collect()
+}
+
+fn grafana_dashboard_uid(name: &str) -> String {
+    format!("gumgum-{}", crate::sanitize_name(name))
+        .chars()
+        .take(40)
+        .collect()
 }
 
 async fn grafana_datasource_uid(
@@ -655,6 +666,15 @@ mod tests {
         assert_eq!(
             grafana_folder_uid(Some(&domain), "visit-counter"),
             "gumgum-kava-fund-visit-counter"
+        );
+    }
+
+    #[test]
+    #[test]
+    fn grafana_dashboard_uid_is_stable_for_project_scoped_names() {
+        assert_eq!(
+            grafana_dashboard_uid("visit-counter / API Overview"),
+            "gumgum-visit-counter-api-overview"
         );
     }
 
