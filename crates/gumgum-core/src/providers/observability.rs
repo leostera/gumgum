@@ -1,4 +1,7 @@
-use crate::{Capability, ContainerRunSpec, CoreAction, CoreActions, DockerEngine};
+use crate::{
+    Capability, ContainerRunSpec, CoreAction, CoreActions, DockerEngine, ErrorCode, ErrorKind,
+    GumgumError, Subsystem,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -320,12 +323,12 @@ fn load_prometheus_scrapes() -> crate::Result<Vec<PrometheusScrapeTarget>> {
         return Ok(Vec::new());
     }
     let bytes = std::fs::read(&path)
-        .map_err(|error| io_error("could not read Prometheus scrape state", error))?;
+        .map_err(|error| io_error(ErrorKind::PrometheusScrapeStateReadFailed, error))?;
     serde_json::from_slice(&bytes).map_err(|error| {
-        crate::GumgumError::structured(
-            crate::Subsystem::Setup,
-            crate::ErrorCode::ManifestParseFailed,
-            "could not parse Prometheus scrape state",
+        GumgumError::structured_kind(
+            Subsystem::Setup,
+            ErrorCode::ManifestParseFailed,
+            ErrorKind::PrometheusScrapeStateParseFailed,
         )
         .likely_cause(error.to_string())
         .build()
@@ -336,49 +339,49 @@ fn save_prometheus_scrapes(targets: &[PrometheusScrapeTarget]) -> crate::Result<
     let path = prometheus_scrapes_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| io_error("could not create Prometheus state directory", error))?;
+            .map_err(|error| io_error(ErrorKind::PrometheusStateDirectoryCreateFailed, error))?;
     }
     let bytes = serde_json::to_vec_pretty(targets).map_err(|error| {
-        crate::GumgumError::structured(
-            crate::Subsystem::Setup,
-            crate::ErrorCode::Io,
-            "could not serialize Prometheus scrape state",
+        GumgumError::structured_kind(
+            Subsystem::Setup,
+            ErrorCode::Io,
+            ErrorKind::PrometheusScrapeStateSerializeFailed,
         )
         .likely_cause(error.to_string())
         .build()
     })?;
     std::fs::write(path, bytes)
-        .map_err(|error| io_error("could not write Prometheus scrape state", error))
+        .map_err(|error| io_error(ErrorKind::PrometheusScrapeStateWriteFailed, error))
 }
 
 fn ensure_alloy_config() -> crate::Result<()> {
     let path = alloy_config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| io_error("could not create Alloy config directory", error))?;
+            .map_err(|error| io_error(ErrorKind::AlloyConfigDirectoryCreateFailed, error))?;
     }
     std::fs::write(path, alloy_config())
-        .map_err(|error| io_error("could not write Alloy config", error))
+        .map_err(|error| io_error(ErrorKind::AlloyConfigWriteFailed, error))
 }
 
 fn ensure_otel_config() -> crate::Result<()> {
     let path = otel_config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| io_error("could not create OpenTelemetry config directory", error))?;
+            .map_err(|error| io_error(ErrorKind::OTelConfigDirectoryCreateFailed, error))?;
     }
     std::fs::write(path, otel_config())
-        .map_err(|error| io_error("could not write OpenTelemetry config", error))
+        .map_err(|error| io_error(ErrorKind::OTelConfigWriteFailed, error))
 }
 
 fn ensure_tempo_config() -> crate::Result<()> {
     let path = tempo_config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| io_error("could not create Tempo config directory", error))?;
+            .map_err(|error| io_error(ErrorKind::TempoConfigDirectoryCreateFailed, error))?;
     }
     std::fs::write(path, tempo_config())
-        .map_err(|error| io_error("could not write Tempo config", error))
+        .map_err(|error| io_error(ErrorKind::TempoConfigWriteFailed, error))
 }
 
 fn otel_config() -> String {
@@ -514,7 +517,7 @@ fn ensure_prometheus_config(targets: &[PrometheusScrapeTarget]) -> crate::Result
     let path = prometheus_config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| io_error("could not create Prometheus config directory", error))?;
+            .map_err(|error| io_error(ErrorKind::PrometheusConfigDirectoryCreateFailed, error))?;
     }
     let mut config = prometheus_config_base();
     for target in targets {
@@ -530,7 +533,7 @@ fn ensure_prometheus_config(targets: &[PrometheusScrapeTarget]) -> crate::Result
         ));
     }
     std::fs::write(path, config)
-        .map_err(|error| io_error("could not write Prometheus config", error))
+        .map_err(|error| io_error(ErrorKind::PrometheusConfigWriteFailed, error))
 }
 
 async fn reload_prometheus() -> crate::Result<()> {
@@ -619,8 +622,8 @@ fn yaml_scalar(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\'', "''")
 }
 
-fn io_error(message: &str, error: std::io::Error) -> crate::GumgumError {
-    crate::GumgumError::structured(crate::Subsystem::Setup, crate::ErrorCode::Io, message)
+fn io_error(kind: ErrorKind, error: std::io::Error) -> GumgumError {
+    GumgumError::structured_kind(Subsystem::Setup, ErrorCode::Io, kind)
         .likely_cause(error.to_string())
         .build()
 }
@@ -638,10 +641,10 @@ pub async fn apply_grafana_artifact(
         .inspect_container("gumgum-grafana")
         .await?
         .ok_or_else(|| {
-            crate::GumgumError::structured(
-                crate::Subsystem::Setup,
-                crate::ErrorCode::Io,
-                "Grafana platform container is not running",
+            GumgumError::structured_kind(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                ErrorKind::GrafanaContainerNotRunning,
             )
             .next_command("gumgum server add <host> --root-domain <domain>")
             .build()
@@ -651,10 +654,10 @@ pub async fn apply_grafana_artifact(
         .get(GUMGUM_NETWORK)
         .filter(|ip| !ip.is_empty())
         .ok_or_else(|| {
-            crate::GumgumError::structured(
-                crate::Subsystem::Setup,
-                crate::ErrorCode::Io,
-                "Grafana platform container is not attached to gumgum network",
+            GumgumError::structured_kind(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                ErrorKind::GrafanaContainerNetworkMissing,
             )
             .build()
         })?;
@@ -665,10 +668,10 @@ pub async fn apply_grafana_artifact(
                 .get("datasources")
                 .and_then(|value| value.as_array())
                 .ok_or_else(|| {
-                    crate::GumgumError::structured(
-                        crate::Subsystem::Setup,
-                        crate::ErrorCode::InvalidArgs,
-                        "Grafana datasource artifact must contain a datasources array",
+                    GumgumError::structured_kind(
+                        Subsystem::Setup,
+                        ErrorCode::InvalidArgs,
+                        ErrorKind::GrafanaDatasourceArtifactInvalid,
                     )
                     .build()
                 })?;
@@ -743,11 +746,12 @@ pub async fn apply_grafana_artifact(
                 Err(grafana_response_error(response).await)
             }
         }
-        other => Err(crate::GumgumError::structured(
-            crate::Subsystem::Setup,
-            crate::ErrorCode::InvalidArgs,
-            format!("unsupported Grafana artifact kind {other}"),
+        other => Err(GumgumError::structured_kind(
+            Subsystem::Setup,
+            ErrorCode::InvalidArgs,
+            ErrorKind::GrafanaArtifactKindUnsupported,
         )
+        .likely_cause(format!("kind={other}"))
         .build()),
     }
 }
@@ -825,11 +829,12 @@ async fn grafana_datasource_uid(
         .and_then(|uid| uid.as_str())
         .map(ToOwned::to_owned)
         .ok_or_else(|| {
-            crate::GumgumError::structured(
-                crate::Subsystem::Setup,
-                crate::ErrorCode::Io,
-                format!("Grafana datasource {name} did not include a uid"),
+            GumgumError::structured_kind(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                ErrorKind::GrafanaDatasourceUidMissing,
             )
+            .likely_cause(format!("datasource={name}"))
             .build()
         })
 }
@@ -838,25 +843,25 @@ fn grafana_path_escape(value: &str) -> String {
     value.replace(' ', "%20").replace('/', "%2F")
 }
 
-fn grafana_error(error: reqwest::Error) -> crate::GumgumError {
-    crate::GumgumError::structured(
-        crate::Subsystem::Setup,
-        crate::ErrorCode::Io,
-        "could not reach Grafana API",
+fn grafana_error(error: reqwest::Error) -> GumgumError {
+    GumgumError::structured_kind(
+        Subsystem::Setup,
+        ErrorCode::Io,
+        ErrorKind::GrafanaApiRequestFailed,
     )
     .likely_cause(error.to_string())
     .build()
 }
 
-async fn grafana_response_error(response: reqwest::Response) -> crate::GumgumError {
+async fn grafana_response_error(response: reqwest::Response) -> GumgumError {
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    crate::GumgumError::structured(
-        crate::Subsystem::Setup,
-        crate::ErrorCode::Io,
-        format!("Grafana API returned {status}"),
+    GumgumError::structured_kind(
+        Subsystem::Setup,
+        ErrorCode::Io,
+        ErrorKind::GrafanaApiReturnedError,
     )
-    .likely_cause(body)
+    .likely_cause(format!("{status}: {body}"))
     .build()
 }
 

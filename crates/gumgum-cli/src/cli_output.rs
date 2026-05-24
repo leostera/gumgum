@@ -142,6 +142,54 @@ fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
         gumgum_core::ErrorKind::MinioBucketObjectReadFailed => "could not read minio bucket object",
         gumgum_core::ErrorKind::MinioS3ApiReturnedError => "minio S3 API returned an error",
         gumgum_core::ErrorKind::BucketObjectPathInvalid => "bucket object path must be bucket/key",
+        gumgum_core::ErrorKind::PrometheusScrapeStateReadFailed => {
+            "could not read Prometheus scrape state"
+        }
+        gumgum_core::ErrorKind::PrometheusScrapeStateParseFailed => {
+            "could not parse Prometheus scrape state"
+        }
+        gumgum_core::ErrorKind::PrometheusScrapeStateSerializeFailed => {
+            "could not serialize Prometheus scrape state"
+        }
+        gumgum_core::ErrorKind::PrometheusStateDirectoryCreateFailed => {
+            "could not create Prometheus state directory"
+        }
+        gumgum_core::ErrorKind::PrometheusScrapeStateWriteFailed => {
+            "could not write Prometheus scrape state"
+        }
+        gumgum_core::ErrorKind::AlloyConfigDirectoryCreateFailed => {
+            "could not create Alloy config directory"
+        }
+        gumgum_core::ErrorKind::AlloyConfigWriteFailed => "could not write Alloy config",
+        gumgum_core::ErrorKind::OTelConfigDirectoryCreateFailed => {
+            "could not create OpenTelemetry config directory"
+        }
+        gumgum_core::ErrorKind::OTelConfigWriteFailed => "could not write OpenTelemetry config",
+        gumgum_core::ErrorKind::TempoConfigDirectoryCreateFailed => {
+            "could not create Tempo config directory"
+        }
+        gumgum_core::ErrorKind::TempoConfigWriteFailed => "could not write Tempo config",
+        gumgum_core::ErrorKind::PrometheusConfigDirectoryCreateFailed => {
+            "could not create Prometheus config directory"
+        }
+        gumgum_core::ErrorKind::PrometheusConfigWriteFailed => "could not write Prometheus config",
+        gumgum_core::ErrorKind::GrafanaContainerNotRunning => {
+            "Grafana platform container is not running"
+        }
+        gumgum_core::ErrorKind::GrafanaContainerNetworkMissing => {
+            "Grafana platform container is not attached to gumgum network"
+        }
+        gumgum_core::ErrorKind::GrafanaDatasourceArtifactInvalid => {
+            "Grafana datasource artifact must contain a datasources array"
+        }
+        gumgum_core::ErrorKind::GrafanaArtifactKindUnsupported => {
+            "unsupported Grafana artifact kind"
+        }
+        gumgum_core::ErrorKind::GrafanaDatasourceUidMissing => {
+            "Grafana datasource did not include a uid"
+        }
+        gumgum_core::ErrorKind::GrafanaApiRequestFailed => "could not reach Grafana API",
+        gumgum_core::ErrorKind::GrafanaApiReturnedError => "Grafana API returned an error",
     }
 }
 

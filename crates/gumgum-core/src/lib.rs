@@ -308,6 +308,26 @@ pub enum ErrorKind {
     MinioBucketObjectReadFailed,
     MinioS3ApiReturnedError,
     BucketObjectPathInvalid,
+    PrometheusScrapeStateReadFailed,
+    PrometheusScrapeStateParseFailed,
+    PrometheusScrapeStateSerializeFailed,
+    PrometheusStateDirectoryCreateFailed,
+    PrometheusScrapeStateWriteFailed,
+    AlloyConfigDirectoryCreateFailed,
+    AlloyConfigWriteFailed,
+    OTelConfigDirectoryCreateFailed,
+    OTelConfigWriteFailed,
+    TempoConfigDirectoryCreateFailed,
+    TempoConfigWriteFailed,
+    PrometheusConfigDirectoryCreateFailed,
+    PrometheusConfigWriteFailed,
+    GrafanaContainerNotRunning,
+    GrafanaContainerNetworkMissing,
+    GrafanaDatasourceArtifactInvalid,
+    GrafanaArtifactKindUnsupported,
+    GrafanaDatasourceUidMissing,
+    GrafanaApiRequestFailed,
+    GrafanaApiReturnedError,
 }
 
 impl ErrorKind {
@@ -395,6 +415,54 @@ impl ErrorKind {
             ErrorKind::MinioBucketObjectReadFailed => "provider.minio.bucket_object.read_failed",
             ErrorKind::MinioS3ApiReturnedError => "provider.minio.s3_api.returned_error",
             ErrorKind::BucketObjectPathInvalid => "provider.bucket_object_path.invalid",
+            ErrorKind::PrometheusScrapeStateReadFailed => {
+                "observability.prometheus_scrape_state.read_failed"
+            }
+            ErrorKind::PrometheusScrapeStateParseFailed => {
+                "observability.prometheus_scrape_state.parse_failed"
+            }
+            ErrorKind::PrometheusScrapeStateSerializeFailed => {
+                "observability.prometheus_scrape_state.serialize_failed"
+            }
+            ErrorKind::PrometheusStateDirectoryCreateFailed => {
+                "observability.prometheus_state_directory.create_failed"
+            }
+            ErrorKind::PrometheusScrapeStateWriteFailed => {
+                "observability.prometheus_scrape_state.write_failed"
+            }
+            ErrorKind::AlloyConfigDirectoryCreateFailed => {
+                "observability.alloy_config_directory.create_failed"
+            }
+            ErrorKind::AlloyConfigWriteFailed => "observability.alloy_config.write_failed",
+            ErrorKind::OTelConfigDirectoryCreateFailed => {
+                "observability.otel_config_directory.create_failed"
+            }
+            ErrorKind::OTelConfigWriteFailed => "observability.otel_config.write_failed",
+            ErrorKind::TempoConfigDirectoryCreateFailed => {
+                "observability.tempo_config_directory.create_failed"
+            }
+            ErrorKind::TempoConfigWriteFailed => "observability.tempo_config.write_failed",
+            ErrorKind::PrometheusConfigDirectoryCreateFailed => {
+                "observability.prometheus_config_directory.create_failed"
+            }
+            ErrorKind::PrometheusConfigWriteFailed => {
+                "observability.prometheus_config.write_failed"
+            }
+            ErrorKind::GrafanaContainerNotRunning => "observability.grafana.container_not_running",
+            ErrorKind::GrafanaContainerNetworkMissing => {
+                "observability.grafana.container_network_missing"
+            }
+            ErrorKind::GrafanaDatasourceArtifactInvalid => {
+                "observability.grafana.datasource_artifact_invalid"
+            }
+            ErrorKind::GrafanaArtifactKindUnsupported => {
+                "observability.grafana.artifact_kind_unsupported"
+            }
+            ErrorKind::GrafanaDatasourceUidMissing => {
+                "observability.grafana.datasource_uid_missing"
+            }
+            ErrorKind::GrafanaApiRequestFailed => "observability.grafana.api_request_failed",
+            ErrorKind::GrafanaApiReturnedError => "observability.grafana.api_returned_error",
         }
     }
 }
@@ -893,6 +961,7 @@ mod presentation_boundary_tests {
             "providers/reconciler.rs",
             "providers/postgres.rs",
             "providers/minio.rs",
+            "providers/observability.rs",
         ];
         let mut violations = Vec::new();
         for file in files {
