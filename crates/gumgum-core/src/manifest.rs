@@ -1,4 +1,4 @@
-use crate::{ErrorCode, GumgumError, Result, Subsystem};
+use crate::{ErrorCode, ErrorKind, GumgumError, Result, Subsystem};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 use thiserror::Error;
@@ -24,27 +24,28 @@ pub enum ManifestError {
 impl From<ManifestError> for GumgumError {
     fn from(value: ManifestError) -> Self {
         match value {
-            ManifestError::Read { path, source } => GumgumError::structured(
+            ManifestError::Read { path, source } => GumgumError::structured_kind(
                 Subsystem::Manifest,
                 ErrorCode::ManifestNotFound,
-                format!("could not read manifest at {path}"),
+                ErrorKind::ManifestReadFailed,
             )
-            .likely_cause(source.to_string())
+            .likely_cause(format!("{path}: {source}"))
             .next_command("gumgum init")
             .build(),
-            ManifestError::Parse { path, source } => GumgumError::structured(
+            ManifestError::Parse { path, source } => GumgumError::structured_kind(
                 Subsystem::Manifest,
                 ErrorCode::ManifestParseFailed,
-                format!("could not parse manifest at {path}"),
+                ErrorKind::ManifestParseFailed,
             )
-            .likely_cause(source.to_string())
+            .likely_cause(format!("{path}: {source}"))
             .next_command(format!("gumgum schema validate {path}"))
             .build(),
-            ManifestError::Validation(message) => GumgumError::structured(
+            ManifestError::Validation(message) => GumgumError::structured_kind(
                 Subsystem::Schema,
                 ErrorCode::ManifestValidationFailed,
-                message,
+                ErrorKind::ManifestValidationFailed,
             )
+            .likely_cause(message)
             .next_command("gumgum schema explain")
             .build(),
         }

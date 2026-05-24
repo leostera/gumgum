@@ -273,6 +273,15 @@ pub enum ErrorKind {
     GraphValueInvalid,
     ControlPlaneEventKindUnknown,
     ReconcileEventStatusUnknown,
+    ManifestReadFailed,
+    ManifestParseFailed,
+    ManifestValidationFailed,
+    HttpClientBuildFailed,
+    DaemonReachFailed,
+    DaemonReturnedError,
+    DaemonInvalidJson,
+    DockerDaemonRequestFailed,
+    DockerExecFailed,
 }
 
 impl ErrorKind {
@@ -307,6 +316,15 @@ impl ErrorKind {
             ErrorKind::GraphValueInvalid => "graph.value.invalid",
             ErrorKind::ControlPlaneEventKindUnknown => "graph.control_plane_event_kind.unknown",
             ErrorKind::ReconcileEventStatusUnknown => "graph.reconcile_event_status.unknown",
+            ErrorKind::ManifestReadFailed => "manifest.read_failed",
+            ErrorKind::ManifestParseFailed => "manifest.parse_failed",
+            ErrorKind::ManifestValidationFailed => "manifest.validation_failed",
+            ErrorKind::HttpClientBuildFailed => "api.http_client.build_failed",
+            ErrorKind::DaemonReachFailed => "api.daemon.reach_failed",
+            ErrorKind::DaemonReturnedError => "api.daemon.returned_error",
+            ErrorKind::DaemonInvalidJson => "api.daemon.invalid_json",
+            ErrorKind::DockerDaemonRequestFailed => "setup.docker.request_failed",
+            ErrorKind::DockerExecFailed => "setup.docker.exec_failed",
         }
     }
 }
@@ -793,6 +811,9 @@ mod presentation_boundary_tests {
             "process.rs",
             "graph/types.rs",
             "graph_store.rs",
+            "manifest.rs",
+            "daemon_health.rs",
+            "docker_engine.rs",
         ];
         let mut violations = Vec::new();
         for file in files {

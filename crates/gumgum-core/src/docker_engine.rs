@@ -1,4 +1,4 @@
-use crate::{ErrorCode, GumgumError, Result, Subsystem};
+use crate::{ErrorCode, ErrorKind, GumgumError, Result, Subsystem};
 use bollard::{Docker, errors::Error as DockerError};
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -380,11 +380,13 @@ impl DockerEngine {
         if inspected.exit_code == Some(0) {
             Ok(output_text)
         } else {
-            Err(
-                GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "Docker exec failed")
-                    .likely_cause(output_text.trim().to_owned())
-                    .build(),
+            Err(GumgumError::structured_kind(
+                Subsystem::Setup,
+                ErrorCode::Io,
+                ErrorKind::DockerExecFailed,
             )
+            .likely_cause(output_text.trim().to_owned())
+            .build())
         }
     }
 
@@ -442,10 +444,10 @@ fn ensure_host_bind_dirs(binds: &[String]) -> Result<()> {
 }
 
 fn docker_error(source: DockerError) -> GumgumError {
-    GumgumError::structured(
+    GumgumError::structured_kind(
         Subsystem::Setup,
         ErrorCode::Io,
-        "Docker daemon request failed",
+        ErrorKind::DockerDaemonRequestFailed,
     )
     .likely_cause(source.to_string())
     .build()

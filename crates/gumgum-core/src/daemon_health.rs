@@ -1,4 +1,4 @@
-use crate::{ErrorCode, GumgumError, Subsystem};
+use crate::{ErrorCode, ErrorKind, GumgumError, Subsystem};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -20,10 +20,10 @@ impl DaemonHealthClient {
             .timeout(Duration::from_secs(2))
             .build()
             .map_err(|source| {
-                GumgumError::structured(
+                GumgumError::structured_kind(
                     Subsystem::Api,
                     ErrorCode::Io,
-                    "failed to build HTTP client",
+                    ErrorKind::HttpClientBuildFailed,
                 )
                 .likely_cause(source.to_string())
                 .build()
@@ -32,24 +32,32 @@ impl DaemonHealthClient {
             .send()
             .await
             .map_err(|source| {
-                GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to reach gumgumd")
-                    .likely_cause(source.to_string())
-                    .next_command(format!("gumgum setup {host} --domain <domain>"))
-                    .build()
+                GumgumError::structured_kind(
+                    Subsystem::Api,
+                    ErrorCode::Io,
+                    ErrorKind::DaemonReachFailed,
+                )
+                .likely_cause(source.to_string())
+                .next_command(format!("gumgum setup {host} --domain <domain>"))
+                .build()
             })?
             .error_for_status()
             .map_err(|source| {
-                GumgumError::structured(Subsystem::Api, ErrorCode::Io, "gumgumd returned an error")
-                    .likely_cause(source.to_string())
-                    .build()
+                GumgumError::structured_kind(
+                    Subsystem::Api,
+                    ErrorCode::Io,
+                    ErrorKind::DaemonReturnedError,
+                )
+                .likely_cause(source.to_string())
+                .build()
             })?
             .json()
             .await
             .map_err(|source| {
-                GumgumError::structured(
+                GumgumError::structured_kind(
                     Subsystem::Api,
                     ErrorCode::Io,
-                    "gumgumd returned invalid JSON",
+                    ErrorKind::DaemonInvalidJson,
                 )
                 .likely_cause(source.to_string())
                 .build()
@@ -82,11 +90,13 @@ impl DaemonHealthClient {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        Err(
-            GumgumError::structured(Subsystem::Api, ErrorCode::Io, "failed to reach gumgumd")
-                .likely_cause(last_error.unwrap_or_else(|| "health check timed out".to_owned()))
-                .next_command(format!("gumgum setup {host} --domain <domain>"))
-                .build(),
+        Err(GumgumError::structured_kind(
+            Subsystem::Api,
+            ErrorCode::Io,
+            ErrorKind::DaemonReachFailed,
         )
+        .likely_cause(last_error.unwrap_or_else(|| "health check timed out".to_owned()))
+        .next_command(format!("gumgum setup {host} --domain <domain>"))
+        .build())
     }
 }

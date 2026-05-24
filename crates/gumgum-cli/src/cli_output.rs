@@ -81,6 +81,15 @@ fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
         gumgum_core::ErrorKind::ReconcileEventStatusUnknown => {
             "unknown reconciliation event status"
         }
+        gumgum_core::ErrorKind::ManifestReadFailed => "could not read manifest",
+        gumgum_core::ErrorKind::ManifestParseFailed => "could not parse manifest",
+        gumgum_core::ErrorKind::ManifestValidationFailed => "manifest validation failed",
+        gumgum_core::ErrorKind::HttpClientBuildFailed => "failed to build HTTP client",
+        gumgum_core::ErrorKind::DaemonReachFailed => "failed to reach gumgumd",
+        gumgum_core::ErrorKind::DaemonReturnedError => "gumgumd returned an error",
+        gumgum_core::ErrorKind::DaemonInvalidJson => "gumgumd returned invalid JSON",
+        gumgum_core::ErrorKind::DockerDaemonRequestFailed => "Docker daemon request failed",
+        gumgum_core::ErrorKind::DockerExecFailed => "Docker exec failed",
     }
 }
 
