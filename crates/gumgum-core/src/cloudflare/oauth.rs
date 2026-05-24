@@ -3,15 +3,70 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{CLOUDFLARE_PROVIDER, CloudflareGrant};
 
-const REQUIRED_PERMISSIONS: &[(&str, &str, &str)] = &[
-    ("Zone", "Zone Read", "All zones GumGum should manage"),
-    ("Zone", "DNS Write", "All zones GumGum should manage"),
+const REQUIRED_PERMISSIONS: &[(
+    CloudflarePermissionScope,
+    CloudflarePermissionGrant,
+    CloudflarePermissionTarget,
+)] = &[
     (
-        "Account",
-        "Cloudflare One Connector: cloudflared Write",
-        "Account used for Cloudflare Tunnel ingress",
+        CloudflarePermissionScope::Zone,
+        CloudflarePermissionGrant::ZoneRead,
+        CloudflarePermissionTarget::ManagedZones,
+    ),
+    (
+        CloudflarePermissionScope::Zone,
+        CloudflarePermissionGrant::DnsWrite,
+        CloudflarePermissionTarget::ManagedZones,
+    ),
+    (
+        CloudflarePermissionScope::Account,
+        CloudflarePermissionGrant::CloudflaredWrite,
+        CloudflarePermissionTarget::TunnelIngressAccount,
     ),
 ];
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudflarePermissionScope {
+    Zone,
+    Account,
+}
+
+impl CloudflarePermissionScope {
+    pub fn cloudflare_name(self) -> &'static str {
+        match self {
+            CloudflarePermissionScope::Zone => "Zone",
+            CloudflarePermissionScope::Account => "Account",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudflarePermissionGrant {
+    ZoneRead,
+    DnsWrite,
+    CloudflaredWrite,
+}
+
+impl CloudflarePermissionGrant {
+    pub fn cloudflare_name(self) -> &'static str {
+        match self {
+            CloudflarePermissionGrant::ZoneRead => "Zone Read",
+            CloudflarePermissionGrant::DnsWrite => "DNS Write",
+            CloudflarePermissionGrant::CloudflaredWrite => {
+                "Cloudflare One Connector: cloudflared Write"
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudflarePermissionTarget {
+    ManagedZones,
+    TunnelIngressAccount,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CloudflareTokenPrompt {
@@ -22,9 +77,9 @@ pub struct CloudflareTokenPrompt {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CloudflareTokenPermission {
-    pub scope: String,
-    pub permission: String,
-    pub applies_to: String,
+    pub scope: CloudflarePermissionScope,
+    pub permission: CloudflarePermissionGrant,
+    pub applies_to: CloudflarePermissionTarget,
 }
 
 pub fn token_prompt(zone_name: &str) -> CloudflareTokenPrompt {
@@ -35,9 +90,9 @@ pub fn token_prompt(zone_name: &str) -> CloudflareTokenPrompt {
             .iter()
             .map(
                 |(scope, permission, applies_to)| CloudflareTokenPermission {
-                    scope: (*scope).to_owned(),
-                    permission: (*permission).to_owned(),
-                    applies_to: (*applies_to).to_owned(),
+                    scope: *scope,
+                    permission: *permission,
+                    applies_to: *applies_to,
                 },
             )
             .collect(),
@@ -97,7 +152,14 @@ pub fn grant_from_api_token(zone_name: &str, token: impl Into<String>) -> Result
         expires_in: None,
         scopes: REQUIRED_PERMISSIONS
             .iter()
-            .map(|(scope, permission, applies_to)| format!("{scope} / {permission} / {applies_to}"))
+            .map(|(scope, permission, applies_to)| {
+                format!(
+                    "{}:{}:{:?}",
+                    scope.cloudflare_name(),
+                    permission.cloudflare_name(),
+                    applies_to
+                )
+            })
             .collect(),
     })
 }

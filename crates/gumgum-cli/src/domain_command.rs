@@ -4,7 +4,10 @@ use crate::{
     print_value, resolve_server,
 };
 use gumgum_api::{DomainAddRequest, DomainReport};
-use gumgum_core::{DomainProvider, IngressMode, cloudflare};
+use gumgum_core::{
+    CloudflarePermissionGrant, CloudflarePermissionScope, CloudflarePermissionTarget,
+    DomainProvider, IngressMode, cloudflare,
+};
 use serde::Serialize;
 use std::io::{self, Write};
 
@@ -122,6 +125,32 @@ pub(crate) async fn add_domain(
     Ok(report)
 }
 
+fn cloudflare_scope_text(scope: CloudflarePermissionScope) -> &'static str {
+    match scope {
+        CloudflarePermissionScope::Zone => "Zone",
+        CloudflarePermissionScope::Account => "Account",
+    }
+}
+
+fn cloudflare_permission_text(permission: CloudflarePermissionGrant) -> &'static str {
+    match permission {
+        CloudflarePermissionGrant::ZoneRead => "Zone Read",
+        CloudflarePermissionGrant::DnsWrite => "DNS Write",
+        CloudflarePermissionGrant::CloudflaredWrite => {
+            "Cloudflare One Connector: cloudflared Write"
+        }
+    }
+}
+
+fn cloudflare_target_text(target: CloudflarePermissionTarget) -> &'static str {
+    match target {
+        CloudflarePermissionTarget::ManagedZones => "All zones GumGum should manage",
+        CloudflarePermissionTarget::TunnelIngressAccount => {
+            "Account used for Cloudflare Tunnel ingress"
+        }
+    }
+}
+
 pub(crate) fn authorize_cloudflare_zone(
     zone_name: &str,
 ) -> gumgum_core::Result<gumgum_core::CloudflareGrant> {
@@ -135,7 +164,9 @@ pub(crate) fn authorize_cloudflare_zone(
     for permission in &prompt.permissions {
         eprintln!(
             "  {:<7}  {:<46}  {}",
-            permission.scope, permission.permission, permission.applies_to
+            cloudflare_scope_text(permission.scope),
+            cloudflare_permission_text(permission.permission),
+            cloudflare_target_text(permission.applies_to)
         );
     }
     eprintln!("Use Cloudflare's token builder as:");

@@ -20,7 +20,10 @@ pub mod setup_installer;
 pub use actions::{
     ActionScope, ConnectionExample, CoreAction, CoreActions, PlannedAction, SetupStep,
 };
-pub use cloudflare::{CloudflareGrant, IngressMode};
+pub use cloudflare::{
+    CloudflareGrant, CloudflarePermissionGrant, CloudflarePermissionScope,
+    CloudflarePermissionTarget, IngressMode,
+};
 pub use config_store::{ConfigScope, ConfigStore, ServerRecord};
 pub use container_reconciler::{ContainerReconciler, DeployRequest};
 pub use daemon_health::{DaemonHealthClient, DaemonPingReport};
@@ -973,6 +976,8 @@ mod presentation_boundary_tests {
             concat!("planned provider", " reconcile"),
             concat!("render_", "mermaid_graph"),
             concat!("graph ", "TD"),
+            concat!("All zones ", "GumGum should manage"),
+            concat!("Account used ", "for Cloudflare Tunnel ingress"),
             concat!("provider", " reconciled"),
             concat!("applied", " deployment"),
         ];
