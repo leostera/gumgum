@@ -130,6 +130,10 @@ impl ContainerReconciler {
                 format!("{}-ingress", request.worker),
             );
             labels.insert(
+                "caddy.request_header".to_owned(),
+                "traceparent 00-{http.vars.trace_id}-{http.vars.span_id}-01".to_owned(),
+            );
+            labels.insert(
                 "caddy.tracing.span_attributes.gumgum_worker".to_owned(),
                 request.worker.clone(),
             );
