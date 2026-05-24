@@ -283,6 +283,11 @@ fn deployment_runtime_env(
         attributes.push(format!("gumgum.domain={domain}"));
     }
     upsert_env(&mut env, "OTEL_SERVICE_NAME", request.worker.clone());
+    upsert_env(
+        &mut env,
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "http://gumgum-otel:4317".to_owned(),
+    );
     upsert_env(&mut env, "OTEL_TRACES_EXPORTER", "otlp".to_owned());
     upsert_env(&mut env, "OTEL_METRICS_EXPORTER", "none".to_owned());
     upsert_env(&mut env, "OTEL_LOGS_EXPORTER", "none".to_owned());
@@ -396,6 +401,10 @@ mod tests {
         );
 
         assert!(env.contains(&("OTEL_SERVICE_NAME".to_owned(), "api-prod".to_owned())));
+        assert!(env.contains(&(
+            "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
+            "http://gumgum-otel:4317".to_owned()
+        )));
         assert!(env.contains(&("OTEL_TRACES_EXPORTER".to_owned(), "otlp".to_owned())));
         assert!(env.iter().any(|(name, value)| {
             name == "OTEL_RESOURCE_ATTRIBUTES"

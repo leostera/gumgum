@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use super::types::{ProviderSpec, ProviderStatus};
 
 const GUMGUM_NETWORK: &str = "gumgum-network";
-const PLATFORM_FINGERPRINT_VERSION: &str = "v6";
+const PLATFORM_FINGERPRINT_VERSION: &str = "v7";
 
 pub fn spec() -> ProviderSpec {
     ProviderSpec {
@@ -218,7 +218,10 @@ fn platform_command(provider: &ProviderSpec) -> Vec<String> {
             "--web.enable-lifecycle".to_owned(),
         ],
         "gumgum-loki" => vec!["-config.file=/etc/loki/local-config.yaml".to_owned()],
-        "gumgum-tempo" => vec!["-config.file=/etc/tempo.yaml".to_owned()],
+        "gumgum-tempo" => vec![
+            "-config.file=/etc/tempo.yaml".to_owned(),
+            "-target=all".to_owned(),
+        ],
         "gumgum-alloy" => vec![
             "run".to_owned(),
             "--storage.path=/var/lib/alloy".to_owned(),
@@ -407,14 +410,6 @@ distributor:
         http:
           endpoint: 0.0.0.0:4318
 
-ingester:
-  trace_idle_period: 10s
-  max_block_duration: 5m
-
-compactor:
-  compaction:
-    block_retention: 24h
-
 storage:
   trace:
     backend: local
@@ -423,10 +418,6 @@ storage:
     wal:
       path: /tmp/tempo/wal
 
-overrides:
-  defaults:
-    metrics_generator:
-      processors: []
 "#
     .to_owned()
 }
