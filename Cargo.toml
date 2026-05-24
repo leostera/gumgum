@@ -9,7 +9,7 @@ exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"
-license = "Apache-2.0"
+license = "AGPL-3.0-only"
 repository = "https://gumgum.dev"
 rust-version = "1.86"
 

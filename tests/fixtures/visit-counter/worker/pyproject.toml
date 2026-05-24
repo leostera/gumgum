@@ -2,6 +2,7 @@
 name = "visit-counter-worker"
 version = "0.1.0"
 description = "GumGum visit-counter queue worker"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
   "boto3>=1.35.0",

@@ -2,6 +2,8 @@
 
 gumgum is a self-hosted app platform for your VPS or local machine. It gives small projects a Cloudflare-like workflow without handing the runtime to a hosted control plane: set up one server, deploy workers, attach databases/KV/buckets/queues/secrets, inspect logs and events, and publish routes from one CLI.
 
+License: GNU Affero General Public License v3.0 only (`AGPL-3.0-only`).
+
 ## Table of contents
 
 - [Why gumgum?](#why-gumgum)
@@ -34,6 +36,7 @@ gumgum is a self-hosted app platform for your VPS or local machine. It gives sma
 - [JSON output](#json-output)
 - [End-to-end example](#end-to-end-example)
 - [Command reference](#command-reference)
+- [License](#license)
 
 ## Why gumgum?
 
@@ -885,3 +888,7 @@ gumgum bucket list|create|delete|bind|unbind|ls|get|rm|cp|sync
 gumgum queue list|create|delete|bind|unbind
 gumgum secret list|create|delete|bind|unbind
 ```
+
+## License
+
+GumGum is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). See [`LICENSE`](LICENSE) for the full license text.
