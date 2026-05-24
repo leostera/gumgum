@@ -190,6 +190,21 @@ fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
         }
         gumgum_core::ErrorKind::GrafanaApiRequestFailed => "could not reach Grafana API",
         gumgum_core::ErrorKind::GrafanaApiReturnedError => "Grafana API returned an error",
+        gumgum_core::ErrorKind::SetupBinaryLocateFailed => "could not locate running gumgum binary",
+        gumgum_core::ErrorKind::SetupDaemonDirectoryCreateFailed => {
+            "could not create ~/.gumgum/daemon"
+        }
+        gumgum_core::ErrorKind::SetupBinDirectoryCreateFailed => "could not create ~/.gumgum/bin",
+        gumgum_core::ErrorKind::SetupLocalDaemonInstallFailed => "could not install local gumgumd",
+        gumgum_core::ErrorKind::SetupUserSystemdDirectoryCreateFailed => {
+            "could not create user systemd dir"
+        }
+        gumgum_core::ErrorKind::SetupLocalUserServiceWriteFailed => {
+            "could not write local user service"
+        }
+        gumgum_core::ErrorKind::SetupLocalHostnameReadFailed => "failed to read local hostname",
+        gumgum_core::ErrorKind::SetupRemoteHostnameReadFailed => "failed to read remote hostname",
+        gumgum_core::ErrorKind::SetupRemoteHostnameCommandFailed => "remote hostname failed",
     }
 }
 

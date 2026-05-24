@@ -328,6 +328,15 @@ pub enum ErrorKind {
     GrafanaDatasourceUidMissing,
     GrafanaApiRequestFailed,
     GrafanaApiReturnedError,
+    SetupBinaryLocateFailed,
+    SetupDaemonDirectoryCreateFailed,
+    SetupBinDirectoryCreateFailed,
+    SetupLocalDaemonInstallFailed,
+    SetupUserSystemdDirectoryCreateFailed,
+    SetupLocalUserServiceWriteFailed,
+    SetupLocalHostnameReadFailed,
+    SetupRemoteHostnameReadFailed,
+    SetupRemoteHostnameCommandFailed,
 }
 
 impl ErrorKind {
@@ -463,6 +472,17 @@ impl ErrorKind {
             }
             ErrorKind::GrafanaApiRequestFailed => "observability.grafana.api_request_failed",
             ErrorKind::GrafanaApiReturnedError => "observability.grafana.api_returned_error",
+            ErrorKind::SetupBinaryLocateFailed => "setup.binary.locate_failed",
+            ErrorKind::SetupDaemonDirectoryCreateFailed => "setup.daemon_directory.create_failed",
+            ErrorKind::SetupBinDirectoryCreateFailed => "setup.bin_directory.create_failed",
+            ErrorKind::SetupLocalDaemonInstallFailed => "setup.local_daemon.install_failed",
+            ErrorKind::SetupUserSystemdDirectoryCreateFailed => {
+                "setup.user_systemd_directory.create_failed"
+            }
+            ErrorKind::SetupLocalUserServiceWriteFailed => "setup.local_user_service.write_failed",
+            ErrorKind::SetupLocalHostnameReadFailed => "setup.local_hostname.read_failed",
+            ErrorKind::SetupRemoteHostnameReadFailed => "setup.remote_hostname.read_failed",
+            ErrorKind::SetupRemoteHostnameCommandFailed => "setup.remote_hostname.command_failed",
         }
     }
 }
@@ -941,41 +961,14 @@ mod presentation_boundary_tests {
     }
 
     #[test]
-    fn migrated_core_modules_do_not_construct_prose_errors() {
+    fn core_sources_do_not_construct_prose_errors() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let files = [
-            "config_store.rs",
-            "internal_db.rs",
-            "process.rs",
-            "graph/types.rs",
-            "graph_store.rs",
-            "manifest.rs",
-            "daemon_health.rs",
-            "docker_engine.rs",
-            "platform.rs",
-            "container_reconciler.rs",
-            "graph/executor.rs",
-            "cloudflare/api.rs",
-            "cloudflare/dns.rs",
-            "cloudflare/oauth.rs",
-            "providers/reconciler.rs",
-            "providers/postgres.rs",
-            "providers/minio.rs",
-            "providers/observability.rs",
-        ];
+        let forbidden = [concat!("GumgumError", "::structured(")];
         let mut violations = Vec::new();
-        for file in files {
-            let path = src.join(file);
-            let contents = std::fs::read_to_string(&path).expect("read migrated core module");
-            for (index, line) in contents.lines().enumerate() {
-                if line.contains("GumgumError::structured(") {
-                    violations.push(format!("{}:{}: {}", path.display(), index + 1, line.trim()));
-                }
-            }
-        }
+        collect_print_violations(&src, &forbidden, &mut violations);
         assert!(
             violations.is_empty(),
-            "migrated gumgum-core modules must use symbolic ErrorKind values, not prose errors:\n{}",
+            "gumgum-core must use symbolic ErrorKind values, not prose error constructors:\n{}",
             violations.join("\n")
         );
     }

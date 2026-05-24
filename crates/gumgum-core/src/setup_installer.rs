@@ -1,5 +1,6 @@
 use crate::{
-    ErrorCode, GumgumError, IngressMode, Subsystem, run_setup_command_streaming, sanitize_name,
+    ErrorCode, ErrorKind, GumgumError, IngressMode, Subsystem, run_setup_command_streaming,
+    sanitize_name,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
@@ -60,48 +61,19 @@ impl GumgumInstaller {
     }
 
     pub async fn install_local_user_service(quiet: bool) -> crate::Result<()> {
-        let gumgum = std::env::current_exe().map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "could not locate running gumgum binary",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
-        let home = std::env::var("HOME").map_err(|source| {
-            GumgumError::structured(Subsystem::Setup, ErrorCode::Io, "could not read HOME")
-                .likely_cause(source.to_string())
-                .build()
-        })?;
+        let gumgum = std::env::current_exe()
+            .map_err(|source| setup_io_error(ErrorKind::SetupBinaryLocateFailed, source))?;
+        let home = std::env::var("HOME")
+            .map_err(|source| setup_io_error(ErrorKind::HomeReadFailed, source))?;
         fs::create_dir_all(format!("{home}/.gumgum/daemon")).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "could not create ~/.gumgum/daemon",
-            )
-            .likely_cause(source.to_string())
-            .build()
+            setup_io_error(ErrorKind::SetupDaemonDirectoryCreateFailed, source)
         })?;
-        fs::create_dir_all(format!("{home}/.gumgum/bin")).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "could not create ~/.gumgum/bin",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+        fs::create_dir_all(format!("{home}/.gumgum/bin"))
+            .map_err(|source| setup_io_error(ErrorKind::SetupBinDirectoryCreateFailed, source))?;
         let installed_gumgum = PathBuf::from(format!("{home}/.gumgum/bin/gumgum"));
         if gumgum != installed_gumgum {
             fs::copy(&gumgum, &installed_gumgum).map_err(|source| {
-                GumgumError::structured(
-                    Subsystem::Setup,
-                    ErrorCode::Io,
-                    "could not install local gumgumd",
-                )
-                .likely_cause(source.to_string())
-                .build()
+                setup_io_error(ErrorKind::SetupLocalDaemonInstallFailed, source)
             })?;
         }
         run_setup_command_streaming(
@@ -112,27 +84,13 @@ impl GumgumInstaller {
         )
         .await?;
         fs::create_dir_all(format!("{home}/.config/systemd/user")).map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "could not create user systemd dir",
-            )
-            .likely_cause(source.to_string())
-            .build()
+            setup_io_error(ErrorKind::SetupUserSystemdDirectoryCreateFailed, source)
         })?;
         fs::write(
             format!("{home}/.gumgum/daemon/gumgumd.service"),
             user_systemd_service(),
         )
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "could not write local user service",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+        .map_err(|source| setup_io_error(ErrorKind::SetupLocalUserServiceWriteFailed, source))?;
         run_setup_command_streaming(
             TokioCommand::new("ln")
                 .arg("-sf")
@@ -220,15 +178,7 @@ async fn local_hostname() -> crate::Result<String> {
     let output = TokioCommand::new("hostname")
         .output()
         .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "failed to read local hostname",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+        .map_err(|source| setup_io_error(ErrorKind::SetupLocalHostnameReadFailed, source))?;
     if !output.status.success() {
         return Ok("localhost".to_owned());
     }
@@ -243,26 +193,24 @@ async fn remote_hostname(target: &str) -> crate::Result<String> {
         .arg("hostname")
         .output()
         .await
-        .map_err(|source| {
-            GumgumError::structured(
-                Subsystem::Setup,
-                ErrorCode::Io,
-                "failed to read remote hostname",
-            )
-            .likely_cause(source.to_string())
-            .build()
-        })?;
+        .map_err(|source| setup_io_error(ErrorKind::SetupRemoteHostnameReadFailed, source))?;
     if !output.status.success() {
-        return Err(GumgumError::structured(
+        return Err(GumgumError::structured_kind(
             Subsystem::Setup,
             ErrorCode::Io,
-            "remote hostname failed",
+            ErrorKind::SetupRemoteHostnameCommandFailed,
         )
         .build());
     }
     Ok(sanitize_name(
         String::from_utf8_lossy(&output.stdout).trim(),
     ))
+}
+
+fn setup_io_error(kind: ErrorKind, source: impl std::fmt::Display) -> GumgumError {
+    GumgumError::structured_kind(Subsystem::Setup, ErrorCode::Io, kind)
+        .likely_cause(source.to_string())
+        .build()
 }
 
 fn ssh_target(user: Option<&str>, host: &str) -> String {
