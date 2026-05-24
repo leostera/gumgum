@@ -474,7 +474,7 @@ async fn ensure_grafana_folder_path(
             .send()
             .await
             .map_err(grafana_error)?;
-        if response.status().is_success() || response.status().as_u16() == 409 {
+        if response.status().is_success() || matches!(response.status().as_u16(), 409 | 412) {
             parent_uid = Some(uid);
         } else {
             return Err(grafana_response_error(response).await);
@@ -667,6 +667,13 @@ mod tests {
             grafana_folder_uid(Some(&domain), "visit-counter"),
             "gumgum-kava-fund-visit-counter"
         );
+    }
+
+    #[test]
+    #[test]
+    fn grafana_folder_create_existing_statuses_are_idempotent() {
+        assert!(matches!(409, 409 | 412));
+        assert!(matches!(412, 409 | 412));
     }
 
     #[test]
