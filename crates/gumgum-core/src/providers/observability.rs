@@ -670,7 +670,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn grafana_dashboard_uid_is_stable_for_project_scoped_names() {
         assert_eq!(
             grafana_dashboard_uid("visit-counter / API Overview"),
