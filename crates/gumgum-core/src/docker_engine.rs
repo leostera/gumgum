@@ -435,15 +435,7 @@ fn ensure_host_bind_dirs(binds: &[String]) -> Result<()> {
             continue;
         };
         if host.starts_with("/gumgum/volumes/") {
-            std::fs::create_dir_all(host).map_err(|source| {
-                GumgumError::structured(
-                    Subsystem::Setup,
-                    ErrorCode::Io,
-                    format!("could not create host volume directory {host}"),
-                )
-                .likely_cause(source.to_string())
-                .build()
-            })?;
+            let _ = std::fs::create_dir_all(host);
         }
     }
     Ok(())
