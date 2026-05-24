@@ -135,6 +135,10 @@ impl GumgumError {
                 next_commands,
             } => ErrorReport {
                 ok: false,
+                error: ErrorDescriptor {
+                    subsystem: *subsystem,
+                    code: *code,
+                },
                 subsystem: *subsystem,
                 code: *code,
                 message: message.clone(),
@@ -215,8 +219,15 @@ pub enum ErrorCode {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ErrorDescriptor {
+    pub subsystem: Subsystem,
+    pub code: ErrorCode,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ErrorReport {
     pub ok: bool,
+    pub error: ErrorDescriptor,
     pub subsystem: Subsystem,
     pub code: ErrorCode,
     pub message: String,
@@ -257,7 +268,14 @@ pub struct DoctorReport {
 pub struct DoctorCheck {
     pub name: String,
     pub ok: bool,
-    pub message: String,
+    pub status: DoctorCheckStatus,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DoctorCheckStatus {
+    Passed,
+    Failed,
 }
 
 pub mod presentation_graph;
@@ -678,7 +696,7 @@ mod presentation_boundary_tests {
     }
 
     #[test]
-    fn status_report_uses_symbolic_status_not_rendered_message() {
+    fn core_status_reports_use_symbolic_status_not_rendered_messages() {
         let lib = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
             .expect("read lib.rs");
         let status_block = lib
@@ -688,6 +706,14 @@ mod presentation_boundary_tests {
             .expect("StatusReport block exists");
         assert!(status_block.contains("pub status: StatusMessage"));
         assert!(!status_block.contains("message: String"));
+
+        let doctor_block = lib
+            .split("pub struct DoctorCheck")
+            .nth(1)
+            .and_then(|tail| tail.split("#[derive").next())
+            .expect("DoctorCheck block exists");
+        assert!(doctor_block.contains("pub status: DoctorCheckStatus"));
+        assert!(!doctor_block.contains("message: String"));
     }
 
     fn collect_print_violations(path: &Path, forbidden: &[&str], violations: &mut Vec<String>) {
