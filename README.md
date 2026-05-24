@@ -65,7 +65,7 @@ gumgum can manage:
 - MinIO/S3 buckets and bucket objects on host volumes under `/gumgum/volumes/providers/*/minio`
 - Redpanda queues/topics on host volumes under `/gumgum/volumes/providers/*/redpanda`
 - platform secrets and observability services
-- Prometheus scraping, host metrics, Docker/container metrics, Grafana dashboards, Loki, Tempo, and OTEL collector plumbing
+- Prometheus scraping, host metrics, Docker/container metrics, Grafana dashboards, Loki logs, Tempo traces, and OTEL collector plumbing
 - worker environment bindings
 - logs, events, grouped event summaries, rollback metadata, and publish previews
 
@@ -388,14 +388,16 @@ GumGum boots a singleton platform stack on each server, separate from per-enviro
 | Service | Container | Purpose |
 | --- | --- | --- |
 | Vaultwarden | `gumgum-vaultwarden` | platform-scoped secret service |
-| OpenTelemetry Collector | `gumgum-otel` | OTLP ingress for traces/metrics plumbing |
+| OpenTelemetry Collector | `gumgum-otel` | OTLP ingress and forwarding to Tempo |
 | Prometheus | `gumgum-prometheus` | app/platform/host/container metrics |
-| Grafana | `gumgum-grafana` | dashboards and datasources at `grafana.<server-domain>` |
+| Grafana | `gumgum-grafana` | dashboards, logs, traces, and datasources at `grafana.<server-domain>` |
 | Loki | `gumgum-loki` | log backend |
 | Tempo | `gumgum-tempo` | trace backend |
+| Grafana Alloy | `gumgum-alloy` | Docker log shipping to Loki |
 | node-exporter | `gumgum-node-exporter` | host metrics |
 | cAdvisor | `gumgum-cadvisor` | Docker/container metrics |
 | Docker socket proxy | `gumgum-docker-proxy` | read-only Docker discovery for Prometheus |
+| Caddy | `gumgum-caddy` | TLS ingress, route labels, and ingress trace spans |
 
 Declare app metrics, required secrets, Grafana datasource files, and dashboard files in a worker manifest:
 
@@ -421,6 +423,8 @@ When deployed, GumGum:
 - injects declared secret bindings and OTEL environment into workers
 - configures Prometheus scrapes for declared metrics endpoints
 - labels app containers for Docker service discovery (`prometheus.scrape=true`, `prometheus.port`, `prometheus.path`, `prometheus.label_*`)
+- ships GumGum-managed Docker logs to Loki with `project`, `domain`, `environment`, `worker`, and platform labels
+- enables Tempo traces from the Caddy ingress span through instrumented workers and logical provider operations
 - applies Grafana datasources and dashboards through the daemon
 - stores Grafana dashboards under `<top-level-domain>` → `<project>` folders
 
@@ -430,9 +434,9 @@ Grafana dashboards should include a top-level `GUMGUM_ENV` variable for switchin
 visit_counter_requests_total{environment="$GUMGUM_ENV"}
 ```
 
-`gumgum status` includes platform provider health. A healthy server with the current default stack reports `Providers: 12/12 running`.
+`gumgum status` includes platform provider health. A healthy server with the current default stack reports `Providers: 10/10 running`.
 
-Stateful platform services use host volume paths under `/gumgum/volumes/platform/*` for durability across container and machine restarts: Grafana, Prometheus, Loki, Tempo, Vaultwarden, and Caddy all keep their data outside the container filesystem.
+Stateful platform services use host volume paths under `/gumgum/volumes/platform/*` for durability across container and machine restarts: Grafana, Prometheus, Loki, Tempo, Alloy, Vaultwarden, and Caddy all keep their data outside the container filesystem.
 
 ## Deploy
 
@@ -458,6 +462,12 @@ Deploy the prod environment:
 
 ```bash
 gumgum deploy --env prod
+```
+
+Deployments are rolling by default. GumGum starts a new revision-specific container, waits for its health check to pass, lets Caddy discover the new route labels, and then removes stale containers for that worker/route. Running containers therefore use stable GumGum labels but revision-suffixed Docker names, for example:
+
+```text
+gumgum-prod-dev-leostera-visit-counter-api-d6fcec95161ecc48
 ```
 
 Delete desired deployment state for a worker:
@@ -494,7 +504,7 @@ Default deploy routes use the server/control-plane domain:
 ```toml
 [project]
 name = "visit-counter"
-domain = "visit-counter.leostera.dev"
+domain = "kava.fund"
 server = "starbase2"
 ```
 
@@ -531,6 +541,13 @@ Show logs for the current project or workspace:
 ```bash
 gumgum logs
 gumgum logs --tail 200
+```
+
+The CLI can still read Docker logs directly, and the platform also ships GumGum-managed Docker logs into Loki. In Grafana Explore, useful Loki selectors include:
+
+```logql
+{gumgum_managed="deployment", project="visit-counter"}
+{environment="prod", worker="api-prod"}
 ```
 
 Show logs for one worker:
@@ -576,6 +593,19 @@ gumgum env --qualified
 ```dotenv
 MY_APP_API_DATABASE_URL=...
 MY_APP_API_CACHE_URL=...
+```
+
+Trace data is sent to Tempo through the OpenTelemetry Collector. Instrumented apps can use standard OTEL environment variables projected by GumGum; Caddy emits the ingress span and propagates W3C trace context upstream. In Grafana Traces, a visit-counter request should show a chain like:
+
+```text
+gumgum-caddy api-prod-ingress
+api-prod GET /
+api-prod redis increment user counter
+api-prod minio put visit request
+api-prod redpanda produce visit event
+visit-counter-worker-prod visit-counter.process_message
+visit-counter-worker-prod minio get visit request
+visit-counter-worker-prod postgres insert visit
 ```
 
 Show control-plane events:
@@ -766,9 +796,11 @@ The `examples/visit-counter` workspace demonstrates:
 - DB/KV/bucket/queue resources
 - platform-scoped secrets and observability declarations
 - Prometheus metrics from both API and worker
+- Loki logs labelled by project/domain/environment/worker
+- Tempo traces spanning Caddy → API → Redis/MinIO/Redpanda logical operations → worker → MinIO/Postgres logical operations
 - Grafana datasource/dashboard application under `<domain>` → `<project>` folders
 - resource bindings
-- deploy
+- rolling deploys with revision-suffixed containers
 - logs and environment inspection
 - events and grouped events
 - rollback previews
@@ -797,7 +829,7 @@ gumgum events --grouped
 gumgum --dry-run publish
 ```
 
-The API worker uses `record = "@"`, so prod serves the project domain itself, for example `https://visit-counter.leostera.dev/`, while preview serves the project route under the server domain.
+The API worker uses `record = "@"`, so prod serves the project domain itself, for example `https://kava.fund/`, while preview serves the project route under the server domain, for example `https://visit-counter.leostera.dev/`.
 
 ## Command reference
 
