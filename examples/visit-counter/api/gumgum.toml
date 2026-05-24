@@ -6,7 +6,7 @@ name = "api-http"
 protocol = "http"
 port = 3000
 public = true
-record = "@"
+record = "visit-counter"
 
 [[kv]]
 kv_id = "user-counters"
