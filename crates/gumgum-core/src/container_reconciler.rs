@@ -1,6 +1,6 @@
 use crate::{
-    ContainerRunSpec, ContainerSnapshot, DockerEngine, ErrorCode, GraphStore, GumgumError,
-    Subsystem,
+    ContainerRunSpec, ContainerSnapshot, CoreAction, CoreActions, DockerEngine, ErrorCode,
+    GraphStore, GumgumError, Subsystem,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
@@ -26,7 +26,7 @@ impl ContainerReconciler {
         Self { graph_path }
     }
 
-    pub async fn reconcile(&self, request: &DeployRequest) -> crate::Result<(bool, Vec<String>)> {
+    pub async fn reconcile(&self, request: &DeployRequest) -> crate::Result<(bool, CoreActions)> {
         let mut actions = Vec::new();
         let docker = DockerEngine::local()?;
         let binding_env = self.binding_env(&request.worker)?;
@@ -46,9 +46,9 @@ impl ContainerReconciler {
                 .await?
                 .is_some_and(|container| deployment_container_matches(&container, request, &labels))
             {
-                actions.push(format!(
-                    "container {container_name} already matches desired image, route, and bindings"
-                ));
+                actions.push(CoreAction::DeploymentContainerMatches {
+                    container: container_name.clone(),
+                });
                 docker.start_container(&container_name).await?;
                 let before_cleanup = actions.len();
                 actions.extend(
@@ -61,7 +61,9 @@ impl ContainerReconciler {
             }
         }
 
-        actions.push(format!("pull {}", request.image));
+        actions.push(CoreAction::ImagePulled {
+            image: request.image.clone(),
+        });
         docker.pull_image(&request.image).await?;
         let shared_network = if docker
             .container_running("gumgum-caddy")
@@ -76,15 +78,19 @@ impl ContainerReconciler {
         let network = env_network.as_deref().unwrap_or(shared_network);
         if let Some(env_network) = &env_network {
             if docker.ensure_network(env_network).await? {
-                actions.push(format!("create environment network {env_network}"));
+                actions.push(CoreAction::NetworkCreated {
+                    network: env_network.clone(),
+                });
             }
         }
         if !runtime_env.is_empty() {
-            actions.push(format!("project {} env var(s)", runtime_env.len()));
+            actions.push(CoreAction::DeploymentEnvironmentProjected {
+                vars: runtime_env.len(),
+            });
         }
-        actions.push(format!(
-            "start new deployment container {desired_container}"
-        ));
+        actions.push(CoreAction::DeploymentContainerStarted {
+            container: desired_container.clone(),
+        });
         let _ = docker.remove_container_force(&desired_container).await;
         docker
             .create_and_start_container(ContainerRunSpec {
@@ -102,16 +108,19 @@ impl ContainerReconciler {
             .await?;
         if network != shared_network && docker.network_exists(shared_network).await.unwrap_or(false)
         {
-            actions.push(format!("connect {desired_container} to {shared_network}"));
+            actions.push(CoreAction::ContainerConnectedToNetwork {
+                container: desired_container.clone(),
+                network: shared_network.to_owned(),
+            });
             docker
                 .connect_container_to_network(&desired_container, shared_network)
                 .await?;
         }
         Self::wait_for_container_health(&docker, &desired_container, request.port, &request.health)
             .await?;
-        actions.push(format!(
-            "new deployment container {desired_container} is healthy; removing old containers"
-        ));
+        actions.push(CoreAction::DeploymentContainerHealthy {
+            container: desired_container.clone(),
+        });
         actions.extend(
             Self::remove_stale_worker_containers(&docker, request, &desired_container).await?,
         );
@@ -125,7 +134,7 @@ impl ContainerReconciler {
         docker: &DockerEngine,
         request: &DeployRequest,
         keep_container: &str,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<CoreActions> {
         Self::remove_stale_containers(
             docker,
             request,
@@ -140,7 +149,7 @@ impl ContainerReconciler {
         docker: &DockerEngine,
         request: &DeployRequest,
         keep_container: &str,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<CoreActions> {
         let Some(route) = request.route.as_deref() else {
             return Ok(Vec::new());
         };
@@ -166,14 +175,16 @@ impl ContainerReconciler {
         _request: &DeployRequest,
         keep_container: &str,
         labels: Vec<String>,
-        action_prefix: &str,
-    ) -> crate::Result<Vec<String>> {
+        _action_prefix: &str,
+    ) -> crate::Result<CoreActions> {
         let mut actions = Vec::new();
         for container in docker.list_container_names_by_label(&labels).await? {
             if container == keep_container {
                 continue;
             }
-            actions.push(format!("{action_prefix} {container}"));
+            actions.push(CoreAction::DeploymentContainerRemoved {
+                container: container.clone(),
+            });
             docker.remove_container_force(&container).await?;
         }
         Ok(actions)

@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 
-use crate::{ContainerRunSpec, DockerEngine, Result};
+use crate::{ContainerRunSpec, CoreAction, CoreActions, DockerEngine, Result};
 
 const CLOUDFLARED_CONTAINER: &str = "gumgum-cloudflared";
 const CLOUDFLARED_IMAGE: &str = "cloudflare/cloudflared:latest";
 const GUMGUM_NETWORK: &str = "gumgum-network";
 
-pub async fn ensure_cloudflared(token: &str) -> Result<Vec<String>> {
+pub async fn ensure_cloudflared(token: &str) -> Result<CoreActions> {
     let docker = DockerEngine::local()?;
     if cloudflared_running_on_gumgum_network(&docker).await? {
-        return Ok(vec![format!(
-            "ensure Cloudflare connector container {CLOUDFLARED_CONTAINER}"
-        )]);
+        return Ok(vec![CoreAction::CloudflareConnectorEnsured {
+            container: CLOUDFLARED_CONTAINER.to_owned(),
+        }]);
     }
 
     let _ = docker.remove_container_force(CLOUDFLARED_CONTAINER).await;
@@ -35,9 +35,9 @@ pub async fn ensure_cloudflared(token: &str) -> Result<Vec<String>> {
         })
         .await?;
 
-    Ok(vec![format!(
-        "started Cloudflare connector container {CLOUDFLARED_CONTAINER}"
-    )])
+    Ok(vec![CoreAction::CloudflareConnectorStarted {
+        container: CLOUDFLARED_CONTAINER.to_owned(),
+    }])
 }
 
 async fn cloudflared_running_on_gumgum_network(docker: &DockerEngine) -> Result<bool> {

@@ -1,4 +1,6 @@
-use crate::{CloudflareGrant, DomainProvider, DomainRecord, IngressMode, Result};
+use crate::{
+    CloudflareGrant, CoreAction, CoreActions, DomainProvider, DomainRecord, IngressMode, Result,
+};
 
 use super::api::CloudflareClient;
 
@@ -6,7 +8,7 @@ pub async fn ensure_published_route(
     domains: &[DomainRecord],
     grant: &CloudflareGrant,
     hostname: &str,
-) -> Result<Vec<String>> {
+) -> Result<CoreActions> {
     let Some(domain) = matching_domain(domains, hostname) else {
         return Err(crate::GumgumError::structured(
             crate::Subsystem::Config,
@@ -26,13 +28,15 @@ pub async fn ensure_published_route(
             actions.append(&mut super::tunnel::ensure_cloudflared(&route.tunnel_token).await?);
             Ok(actions)
         }
-        (DomainProvider::Manual, _) => Ok(vec![format!(
-            "manual DNS required for {hostname} under {}",
-            domain.name
-        )]),
-        (DomainProvider::Cloudflare, IngressMode::Direct) => Ok(vec![format!(
-            "Cloudflare direct DNS for {hostname} is not implemented yet"
-        )]),
+        (DomainProvider::Manual, _) => Ok(vec![CoreAction::ManualDnsRequired {
+            hostname: hostname.to_owned(),
+            domain: domain.name.clone(),
+        }]),
+        (DomainProvider::Cloudflare, IngressMode::Direct) => {
+            Ok(vec![CoreAction::CloudflareDirectDnsUnsupported {
+                hostname: hostname.to_owned(),
+            }])
+        }
     }
 }
 
@@ -40,11 +44,11 @@ pub async fn delete_published_route(
     domains: &[DomainRecord],
     grant: &CloudflareGrant,
     hostname: &str,
-) -> Result<Vec<String>> {
+) -> Result<CoreActions> {
     let Some(domain) = matching_domain(domains, hostname) else {
-        return Ok(vec![format!(
-            "no managed domain matches stale route {hostname}; DNS was not changed"
-        )]);
+        return Ok(vec![CoreAction::NoManagedDomainForStaleRoute {
+            hostname: hostname.to_owned(),
+        }]);
     };
     match (domain.provider, domain.ingress) {
         (DomainProvider::Cloudflare, _) => {
@@ -52,10 +56,10 @@ pub async fn delete_published_route(
                 .delete_route_dns(&domain.name, hostname)
                 .await
         }
-        (DomainProvider::Manual, _) => Ok(vec![format!(
-            "manual DNS cleanup required for stale route {hostname} under {}",
-            domain.name
-        )]),
+        (DomainProvider::Manual, _) => Ok(vec![CoreAction::ManualDnsCleanupRequired {
+            hostname: hostname.to_owned(),
+            domain: domain.name.clone(),
+        }]),
     }
 }
 

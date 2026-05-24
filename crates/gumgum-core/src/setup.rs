@@ -1,24 +1,28 @@
-use crate::{DaemonStatus, StatusReport};
+use crate::{CoreAction, DaemonStatus, SetupStep, StatusReport};
 
-pub fn setup_actions(local: bool) -> Vec<String> {
-    if local {
-        return vec![
-            "create ~/.gumgum/bin and ~/.gumgum/daemon".to_owned(),
-            "install running gumgum binary into ~/.gumgum/bin".to_owned(),
-            "write gumgumd user-systemd service".to_owned(),
-            "enable and restart gumgumd".to_owned(),
-            "check http://127.0.0.1:7777/healthz".to_owned(),
-        ];
-    }
-
-    vec![
-        "ssh into host".to_owned(),
-        "run curl -fsSL https://get.gumgum.dev | sh".to_owned(),
-        "run ~/.gumgum/bin/gumgum setup on the host".to_owned(),
-        "exit ssh".to_owned(),
-        "save server locally".to_owned(),
-        "check http://<host>:7777/healthz".to_owned(),
-    ]
+pub fn setup_actions(local: bool) -> Vec<CoreAction> {
+    let steps = if local {
+        vec![
+            SetupStep::CreateLocalDirectories,
+            SetupStep::InstallRunningBinary,
+            SetupStep::WriteUserSystemdService,
+            SetupStep::EnableRestartDaemon,
+            SetupStep::CheckLocalHealth,
+        ]
+    } else {
+        vec![
+            SetupStep::SshIntoHost,
+            SetupStep::RunRemoteInstaller,
+            SetupStep::RunRemoteSetup,
+            SetupStep::ExitSsh,
+            SetupStep::SaveServerLocally,
+            SetupStep::CheckRemoteHealth,
+        ]
+    };
+    steps
+        .into_iter()
+        .map(|step| CoreAction::SetupStep { step })
+        .collect()
 }
 
 pub fn not_configured_status() -> StatusReport {

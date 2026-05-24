@@ -14,7 +14,9 @@ use serde::Serialize;
 use std::{path::PathBuf, process::Stdio, time::Duration};
 use tokio::process::Command as TokioCommand;
 
-use crate::{deploy_executor::DeployExecutor, server_client::ServerClient};
+use crate::{
+    deploy_executor::DeployExecutor, presentation::action_texts, server_client::ServerClient,
+};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct GrafanaArtifactPlan {
@@ -549,7 +551,7 @@ async fn apply_deploy_via_daemon(
             ErrorCode::Io,
             format!("gumgumd failed to reconcile deployment {}", request.worker),
         )
-        .likely_cause(report.actions.join("; "))
+        .likely_cause(action_texts(&report.actions).join("; "))
         .next_command(format!("gumgum logs {} --host {host}", request.worker))
         .build())
     }
@@ -1130,7 +1132,7 @@ mod deploy_hardening_tests {
             worker: "api@preview".to_owned(),
             materialized: false,
             changed: false,
-            actions: vec!["deployment was not present".to_owned()],
+            actions: vec![gumgum_core::CoreAction::CliMessage { message: "deployment was not present".to_owned() }],
             reconciliation_steps: Vec::new(),
             typed_events: vec![event.clone()],
             message: "deployment was not present".to_owned(),

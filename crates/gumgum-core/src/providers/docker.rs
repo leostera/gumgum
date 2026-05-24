@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{ContainerRunSpec, DockerEngine};
+use crate::{ContainerRunSpec, CoreAction, CoreActions, DockerEngine};
 
 use super::types::ProviderSpec;
 
@@ -32,24 +32,23 @@ pub(crate) async fn running(container: &str) -> bool {
     }
 }
 
-pub(crate) fn created_provider_actions(provider: &ProviderSpec) -> Vec<String> {
-    vec![format!(
-        "created {} provider container {}",
-        provider.provider, provider.container
-    )]
+pub(crate) fn created_provider_actions(provider: &ProviderSpec) -> CoreActions {
+    vec![CoreAction::ProviderContainerCreated {
+        provider: provider.provider.clone(),
+        container: provider.container.clone(),
+    }]
 }
 
 pub(crate) async fn start_existing(
     provider: &ProviderSpec,
     _message: &str,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     DockerEngine::local()?
         .start_container(&provider.container)
         .await?;
-    Ok(vec![format!(
-        "started existing {} provider",
-        provider.provider
-    )])
+    Ok(vec![CoreAction::ProviderContainerStarted {
+        provider: provider.provider.clone(),
+    }])
 }
 
 fn provider_environment_label(provider: &ProviderSpec) -> Option<String> {
@@ -103,7 +102,7 @@ pub(crate) async fn create_provider_container(
     provider: &ProviderSpec,
     env: Vec<(String, String)>,
     command: Vec<String>,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let docker = DockerEngine::local()?;
     docker.pull_image(&provider.image).await?;
     let mut labels = HashMap::from([

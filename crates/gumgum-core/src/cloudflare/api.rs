@@ -1,4 +1,4 @@
-use crate::{CloudflareGrant, ErrorCode, GumgumError, Result, Subsystem};
+use crate::{CloudflareGrant, CoreAction, CoreActions, ErrorCode, GumgumError, Result, Subsystem};
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -29,22 +29,23 @@ impl CloudflareClient {
         let tunnel = self.ensure_tunnel(&account_id, "gumgum").await?;
         self.ensure_tunnel_config(&account_id, &tunnel.id, hostname)
             .await?;
-        self.upsert_cname(
-            &zone.id,
-            hostname,
-            &format!("{}.cfargotunnel.com", tunnel.id),
-        )
-        .await?;
+        let cname_target = format!("{}.cfargotunnel.com", tunnel.id);
+        self.upsert_cname(&zone.id, hostname, &cname_target).await?;
         let tunnel_token = self.tunnel_token(&account_id, &tunnel.id).await?;
         Ok(CloudflareRoute {
             tunnel_token,
             actions: vec![
-                format!("ensure Cloudflare tunnel {}", tunnel.name),
-                format!("ensure Cloudflare tunnel route {hostname} -> {CADDY_SERVICE}"),
-                format!(
-                    "ensure Cloudflare DNS CNAME {hostname} -> {}.cfargotunnel.com",
-                    tunnel.id
-                ),
+                CoreAction::CloudflareTunnelEnsured {
+                    tunnel: tunnel.name,
+                },
+                CoreAction::CloudflareTunnelRouteEnsured {
+                    hostname: hostname.to_owned(),
+                    service: CADDY_SERVICE.to_owned(),
+                },
+                CoreAction::CloudflareDnsCnameEnsured {
+                    hostname: hostname.to_owned(),
+                    target: cname_target,
+                },
             ],
         })
     }
@@ -139,18 +140,18 @@ impl CloudflareClient {
         ))
     }
 
-    pub async fn delete_route_dns(&self, zone_name: &str, hostname: &str) -> Result<Vec<String>> {
+    pub async fn delete_route_dns(&self, zone_name: &str, hostname: &str) -> Result<CoreActions> {
         let zone = self.zone(zone_name).await?;
         match self.delete_cname(&zone.id, hostname).await? {
-            DeleteCnameResult::Deleted => {
-                Ok(vec![format!("delete Cloudflare DNS CNAME {hostname}")])
-            }
-            DeleteCnameResult::Absent => Ok(vec![format!(
-                "Cloudflare DNS CNAME {hostname} was already absent"
-            )]),
-            DeleteCnameResult::Unmanaged => Ok(vec![format!(
-                "Cloudflare DNS CNAME {hostname} was not deleted because it is not marked managed-by=gumgum"
-            )]),
+            DeleteCnameResult::Deleted => Ok(vec![CoreAction::CloudflareDnsCnameDeleted {
+                hostname: hostname.to_owned(),
+            }]),
+            DeleteCnameResult::Absent => Ok(vec![CoreAction::CloudflareDnsCnameAbsent {
+                hostname: hostname.to_owned(),
+            }]),
+            DeleteCnameResult::Unmanaged => Ok(vec![CoreAction::CloudflareDnsCnameUnmanaged {
+                hostname: hostname.to_owned(),
+            }]),
         }
     }
 
@@ -256,7 +257,7 @@ impl CloudflareClient {
 }
 
 pub struct CloudflareRoute {
-    pub actions: Vec<String>,
+    pub actions: CoreActions,
     pub tunnel_token: String,
 }
 

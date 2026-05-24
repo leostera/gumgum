@@ -1,4 +1,4 @@
-use crate::{progress, server_client::ServerClient};
+use crate::{presentation::action_text, progress, server_client::ServerClient};
 use gumgum_api::{BindingReport, BindingRequest, ObjectReport, ObjectRequest, ServerRecord};
 use gumgum_core::{Capability, ObjectBinding, QueueBinding, SecretBinding, WorkerManifest};
 
@@ -96,7 +96,7 @@ fn object_status(report: &ObjectReport) -> &'static str {
     } else if report
         .provider_actions
         .iter()
-        .any(|action| action.contains("already"))
+        .any(|action| action_text(action).contains("already"))
     {
         "ok"
     } else {
@@ -110,7 +110,7 @@ fn binding_status(report: &BindingReport) -> &'static str {
     } else if report
         .binding_actions
         .iter()
-        .any(|action| action.contains("already"))
+        .any(|action| action_text(action).contains("already"))
     {
         "ok"
     } else {

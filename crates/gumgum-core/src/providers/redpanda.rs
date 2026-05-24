@@ -1,4 +1,4 @@
-use crate::{Capability, DockerEngine, sanitize_name};
+use crate::{Capability, CoreAction, CoreActions, DockerEngine, sanitize_name};
 
 use super::docker::{
     create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
@@ -16,11 +16,20 @@ pub fn spec() -> ProviderSpec {
     }
 }
 
-pub(crate) fn actions(safe_name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
     vec![
-        "ensure redpanda.main provider is running".to_owned(),
-        format!("ensure topic {safe_name} exists"),
-        format!("publish DNS {dns} to redpanda.main"),
+        CoreAction::ProviderConfigured {
+            capability: Capability::Queue,
+            provider: "redpanda.main".to_owned(),
+        },
+        CoreAction::QueueTopicEnsured {
+            topic: safe_name.to_owned(),
+            provider: "redpanda.main".to_owned(),
+        },
+        CoreAction::DnsPublished {
+            dns: dns.to_owned(),
+            provider: "redpanda.main".to_owned(),
+        },
     ]
 }
 
@@ -31,27 +40,39 @@ pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<String> {
     ]
 }
 
-pub(crate) async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+pub(crate) async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<CoreActions> {
     let provider = &plan.provider;
     let mut actions = ensure_provider(provider).await?;
     let topic = sanitize_name(&plan.name);
     ensure_topic(provider, &topic).await?;
-    actions.push(format!("ensured topic {topic} on {}", provider.provider));
-    actions.push(format!("published DNS {} to redpanda.main", plan.dns));
+    actions.push(CoreAction::QueueTopicEnsured {
+        topic: topic.clone(),
+        provider: provider.provider.clone(),
+    });
+    actions.push(CoreAction::DnsPublished {
+        dns: plan.dns.clone(),
+        provider: "redpanda.main".to_owned(),
+    });
     Ok(actions)
 }
 
-pub(crate) async fn delete(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+pub(crate) async fn delete(plan: &ObjectProviderPlan) -> crate::Result<CoreActions> {
     let provider = &plan.provider;
     let mut actions = ensure_provider(provider).await?;
     let topic = sanitize_name(&plan.name);
     delete_topic(provider, &topic).await?;
-    actions.push(format!("deleted topic {topic} from {}", provider.provider));
-    actions.push(format!("removed DNS {} from redpanda.main", plan.dns));
+    actions.push(CoreAction::QueueTopicDeleted {
+        topic: topic.clone(),
+        provider: provider.provider.clone(),
+    });
+    actions.push(CoreAction::DnsRemoved {
+        dns: plan.dns.clone(),
+        provider: "redpanda.main".to_owned(),
+    });
     Ok(actions)
 }
 
-pub(crate) async fn ensure_provider(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
+pub(crate) async fn ensure_provider(provider: &ProviderSpec) -> crate::Result<CoreActions> {
     ensure_network().await?;
     if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
         return start_existing(provider, "could not start redpanda provider").await;
@@ -134,7 +155,7 @@ mod tests {
         assert_eq!(plan.provider.provider, "redpanda.main");
         assert!(
             plan.actions
-                .contains(&"ensure topic visit-events exists".to_owned())
+                .iter().any(|action| matches!(action, crate::CoreAction::QueueTopicEnsured { topic, .. } if topic == "visit-events"))
         );
     }
 }

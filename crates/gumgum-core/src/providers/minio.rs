@@ -1,4 +1,6 @@
-use crate::{Capability, ErrorCode, GumgumError, Subsystem, sanitize_name};
+use crate::{
+    Capability, CoreAction, CoreActions, ErrorCode, GumgumError, Subsystem, sanitize_name,
+};
 use hmac::{Hmac, KeyInit, Mac};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use sha2::{Digest, Sha256};
@@ -34,11 +36,20 @@ pub fn spec() -> ProviderSpec {
     }
 }
 
-pub(crate) fn actions(safe_name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
     vec![
-        "ensure minio.main provider is running".to_owned(),
-        format!("ensure bucket {safe_name} exists"),
-        format!("publish DNS {dns} to minio.main"),
+        CoreAction::ProviderConfigured {
+            capability: Capability::Blob,
+            provider: "minio.main".to_owned(),
+        },
+        CoreAction::BucketEnsured {
+            bucket: safe_name.to_owned(),
+            provider: "minio.main".to_owned(),
+        },
+        CoreAction::DnsPublished {
+            dns: dns.to_owned(),
+            provider: "minio.main".to_owned(),
+        },
     ]
 }
 
@@ -52,36 +63,45 @@ pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<String> {
 pub(crate) async fn ensure(
     plan: &ObjectProviderPlan,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let provider = &plan.provider;
     let mut actions = ensure_provider(provider, credentials.clone()).await?;
     let bucket = sanitize_name(&plan.name);
     ensure_bucket(provider, &bucket, &credentials).await?;
-    actions.push(format!("ensured bucket {bucket} on {}", provider.provider));
-    actions.push(format!("published DNS {} to minio.main", plan.dns));
+    actions.push(CoreAction::BucketEnsured {
+        bucket: bucket.clone(),
+        provider: provider.provider.clone(),
+    });
+    actions.push(CoreAction::DnsPublished {
+        dns: plan.dns.clone(),
+        provider: "minio.main".to_owned(),
+    });
     Ok(actions)
 }
 
 pub(crate) async fn delete(
     plan: &ObjectProviderPlan,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let provider = &plan.provider;
     let mut actions = ensure_provider(provider, credentials.clone()).await?;
     let bucket = sanitize_name(&plan.name);
     delete_bucket(provider, &bucket, &credentials).await?;
-    actions.push(format!(
-        "deleted bucket {bucket} from {}",
-        provider.provider
-    ));
-    actions.push(format!("removed DNS {} from minio.main", plan.dns));
+    actions.push(CoreAction::BucketDeleted {
+        bucket: bucket.clone(),
+        provider: provider.provider.clone(),
+    });
+    actions.push(CoreAction::DnsRemoved {
+        dns: plan.dns.clone(),
+        provider: "minio.main".to_owned(),
+    });
     Ok(actions)
 }
 
 pub(crate) async fn ensure_provider(
     provider: &ProviderSpec,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     ensure_network().await?;
     if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
         return start_existing(provider, "could not start minio provider").await;
@@ -236,7 +256,7 @@ pub async fn put_object(
     path: &str,
     content: Vec<u8>,
     credentials: &ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let bucket = sanitize_name(bucket);
     let endpoint = minio_endpoint().await?;
     s3_request(S3Request {
@@ -250,14 +270,18 @@ pub async fn put_object(
         extra_headers: Vec::new(),
     })
     .await?;
-    Ok(vec![format!("uploaded {bucket}/{path} to minio.main")])
+    Ok(vec![CoreAction::BucketObjectUploaded {
+        bucket,
+        path: path.to_owned(),
+        provider: "minio.main".to_owned(),
+    }])
 }
 
 pub async fn remove_object(
     bucket: &str,
     path: &str,
     credentials: &ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let bucket = sanitize_name(bucket);
     let endpoint = minio_endpoint().await?;
     s3_request(S3Request {
@@ -271,14 +295,18 @@ pub async fn remove_object(
         extra_headers: Vec::new(),
     })
     .await?;
-    Ok(vec![format!("removed {bucket}/{path} from minio.main")])
+    Ok(vec![CoreAction::BucketObjectRemoved {
+        bucket,
+        path: path.to_owned(),
+        provider: "minio.main".to_owned(),
+    }])
 }
 
 pub async fn copy_object(
     source: &str,
     destination: &str,
     credentials: &ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let (source_bucket, source_key) = split_remote_object(source)?;
     let (destination_bucket, destination_key) = split_remote_object(destination)?;
     let endpoint = minio_endpoint().await?;
@@ -297,16 +325,18 @@ pub async fn copy_object(
         )],
     })
     .await?;
-    Ok(vec![format!(
-        "copied {source} to {destination} in minio.main"
-    )])
+    Ok(vec![CoreAction::BucketObjectCopied {
+        source: source.to_owned(),
+        destination: destination.to_owned(),
+        provider: "minio.main".to_owned(),
+    }])
 }
 
 pub async fn sync_objects(
     source: &str,
     destination: &str,
     credentials: &ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let (source_bucket, source_prefix) = split_remote_object(source)?;
     let objects = list_objects(&source_bucket, Some(&source_prefix), credentials).await?;
     let (_, destination_prefix) = split_remote_object(destination)?;
@@ -319,9 +349,11 @@ pub async fn sync_objects(
         copy_object(&format!("{source_bucket}/{object}"), &target, credentials).await?;
         let _ = &destination_prefix;
     }
-    Ok(vec![format!(
-        "synced {source} to {destination} in minio.main"
-    )])
+    Ok(vec![CoreAction::BucketObjectsSynced {
+        source: source.to_owned(),
+        destination: destination.to_owned(),
+        provider: "minio.main".to_owned(),
+    }])
 }
 
 async fn minio_endpoint() -> crate::Result<String> {

@@ -1,4 +1,4 @@
-use crate::{Capability, sanitize_name};
+use crate::{Capability, CoreAction, CoreActions, sanitize_name};
 
 use super::types::{ObjectProviderPlan, ProviderSpec};
 
@@ -84,7 +84,7 @@ fn object_environment(safe_name: &str) -> Option<&str> {
         .or_else(|| safe_name.strip_suffix("-prod").map(|_| "prod"))
 }
 
-fn provider_actions(capability: Capability, safe_name: &str, dns: &str) -> Vec<String> {
+fn provider_actions(capability: Capability, safe_name: &str, dns: &str) -> CoreActions {
     match capability {
         Capability::Db => super::postgres::actions(safe_name, dns),
         Capability::Kv => super::redis::actions(safe_name, dns),
@@ -92,8 +92,9 @@ fn provider_actions(capability: Capability, safe_name: &str, dns: &str) -> Vec<S
         Capability::Queue => super::redpanda::actions(safe_name, dns),
         Capability::Secret => super::secret::actions(safe_name, dns),
         Capability::Observability => super::observability::actions(safe_name, dns),
-        Capability::Manual => {
-            vec!["manual provider requires operator-managed backing service".to_owned()]
-        }
+        Capability::Manual => vec![CoreAction::ProviderConfigured {
+            capability,
+            provider: capability.provider().to_owned(),
+        }],
     }
 }

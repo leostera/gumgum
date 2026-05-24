@@ -1,3 +1,4 @@
+use crate::presentation::action_text;
 use axum::{
     Json, Router,
     body::Body,
@@ -17,11 +18,11 @@ use gumgum_api::{
     ProviderCredentialsReport, ProviderStatusReport, RollbackReport, RollbackRequest,
 };
 use gumgum_core::{
-    ConfigStore, DesiredDeploy, DesiredProvider, DomainRecord, ErrorCode, GlobalObject,
-    GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore, GumgumError,
-    LocalPlatform, PlatformEvent, PlatformStep, ProviderReconciler, Subsystem, WorkerBinding,
-    affected_subgraph, internal_db, not_configured_status, object_dns, object_provider_plan,
-    render_mermaid_graph,
+    ActionScope, ConfigStore, CoreAction, DesiredDeploy, DesiredProvider, DomainRecord, ErrorCode,
+    GlobalObject, GraphActionExecutor, GraphActionPlanner, GraphExecutionContext, GraphStore,
+    GumgumError, LocalPlatform, PlatformEvent, PlatformStep, ProviderReconciler, Subsystem,
+    WorkerBinding, affected_subgraph, internal_db, not_configured_status, object_dns,
+    object_provider_plan, render_mermaid_graph,
 };
 use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::{process::Command as TokioCommand, sync::mpsc};
@@ -32,6 +33,19 @@ pub(crate) struct DaemonState {
 }
 
 pub(crate) struct DaemonApp;
+
+fn cli_action(message: impl Into<String>) -> CoreAction {
+    CoreAction::CliMessage {
+        message: message.into(),
+    }
+}
+
+fn reconcile_failed(scope: ActionScope, error: &GumgumError) -> CoreAction {
+    CoreAction::ReconcileFailed {
+        scope,
+        error: error.to_report().message,
+    }
+}
 
 fn print_platform_event(event: PlatformEvent) {
     match event {
@@ -217,11 +231,11 @@ async fn status() -> Json<gumgum_core::StatusReport> {
 }
 
 async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<DomainReport> {
-    let mut actions = vec![format!(
+    let mut actions = vec![cli_action(format!(
         "record domain {} with {} provider",
         request.name,
         request.provider.as_str()
-    )];
+    ))];
     let store = match ConfigStore::from_home_env() {
         Ok(store) => store,
         Err(error) => {
@@ -230,7 +244,7 @@ async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<Domain
                 name: request.name,
                 provider: request.provider,
                 ingress: request.ingress,
-                actions: vec![error.to_report().message],
+                actions: vec![cli_action(error.to_report().message)],
                 message: "domain was not saved".to_owned(),
             });
         }
@@ -246,47 +260,47 @@ async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<Domain
                     name: request.name,
                     provider: request.provider,
                     ingress: request.ingress,
-                    actions: vec![format!(
+                    actions: vec![cli_action(format!(
                         "Cloudflare zone verification failed: {}",
                         error.to_report().message
-                    )],
+                    ))],
                     message: "Cloudflare grant was not saved".to_owned(),
                 });
             }
-            actions.push(format!(
+            actions.push(cli_action(format!(
                 "verified Cloudflare zone access for {} using provided grant",
                 request.name
-            ));
+            )));
             if let Err(error) = store.save_cloudflare_grant(&grant) {
                 return Json(DomainReport {
                     ok: false,
                     name: request.name,
                     provider: request.provider,
                     ingress: request.ingress,
-                    actions: vec![error.to_report().message],
+                    actions: vec![cli_action(error.to_report().message)],
                     message: "Cloudflare grant was not saved".to_owned(),
                 });
             }
-            actions.push("saved Cloudflare grant on server".to_owned());
+            actions.push(cli_action("saved Cloudflare grant on server"));
         } else if let Ok(Some(grant)) = store.load_cloudflare_grant() {
             match gumgum_core::cloudflare::api::CloudflareClient::new(&grant)
                 .validate_zone_access(&request.name)
                 .await
             {
-                Ok(()) => actions.push(format!(
+                Ok(()) => actions.push(cli_action(format!(
                     "verified Cloudflare zone access for {} using saved grant",
                     request.name
-                )),
+                ))),
                 Err(error) => {
                     return Json(DomainReport {
                         ok: false,
                         name: request.name,
                         provider: request.provider,
                         ingress: request.ingress,
-                        actions: vec![format!(
+                        actions: vec![cli_action(format!(
                             "Cloudflare zone verification failed: {}",
                             error.to_report().message
-                        )],
+                        ))],
                         message: "domain was not saved".to_owned(),
                     });
                 }
@@ -297,7 +311,7 @@ async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<Domain
                 name: request.name,
                 provider: request.provider,
                 ingress: request.ingress,
-                actions: vec!["Cloudflare grant is required".to_owned()],
+                actions: vec![cli_action("Cloudflare grant is required")],
                 message: "domain was not saved".to_owned(),
             });
         }
@@ -309,7 +323,9 @@ async fn daemon_add_domain(Json(request): Json<DomainAddRequest>) -> Json<Domain
     };
     let ok = store.save_domain(record).is_ok();
     if request.ingress == gumgum_core::IngressMode::Cloudflare {
-        actions.push("Cloudflare tunnel ingress will be converged for this domain".to_owned());
+        actions.push(cli_action(
+            "Cloudflare tunnel ingress will be converged for this domain",
+        ));
     }
     Json(DomainReport {
         ok,
@@ -416,11 +432,9 @@ async fn daemon_delete_object(
             connection_examples: Vec::new(),
             provider_actions: existing_bindings
                 .iter()
-                .map(|binding| {
-                    format!(
-                        "still bound to worker {} as {}",
-                        binding.worker, binding.binding
-                    )
+                .map(|binding| CoreAction::AlreadyBound {
+                    worker: binding.worker.clone(),
+                    binding: binding.binding.clone(),
                 })
                 .collect(),
             reconciliation_steps: Vec::new(),
@@ -442,7 +456,9 @@ async fn daemon_delete_object(
     };
     let (provider_actions, typed_events) = if request.preview {
         (
-            vec!["preview only; no objects changed".to_owned()],
+            vec![CoreAction::PreviewOnly {
+                scope: ActionScope::Objects,
+            }],
             Vec::new(),
         )
     } else {
@@ -460,10 +476,7 @@ async fn daemon_delete_object(
         {
             Ok(report) => (report.actions, report.typed_events),
             Err(error) => (
-                vec![format!(
-                    "object delete reconcile failed: {}",
-                    error.to_report().message
-                )],
+                vec![reconcile_failed(ActionScope::Objects, &error)],
                 Vec::new(),
             ),
         }
@@ -575,7 +588,9 @@ async fn daemon_create_object(
     }
     let (provider_actions, typed_events) = if request.preview {
         (
-            vec!["preview only; no objects changed".to_owned()],
+            vec![CoreAction::PreviewOnly {
+                scope: ActionScope::Objects,
+            }],
             Vec::new(),
         )
     } else {
@@ -592,17 +607,14 @@ async fn daemon_create_object(
         {
             Ok(report) => (report.actions, report.typed_events),
             Err(error) => (
-                vec![format!(
-                    "provider reconcile failed: {}",
-                    error.to_report().message
-                )],
+                vec![reconcile_failed(ActionScope::Provider, &error)],
                 Vec::new(),
             ),
         }
     };
     let reconcile_ok = !provider_actions
         .iter()
-        .any(|action| action.starts_with("provider reconcile failed:"));
+        .any(|action| action_text(action).starts_with("provider reconcile failed:"));
     Json(ObjectReport {
         ok: ok && reconcile_ok,
         kind: capability_name,
@@ -653,12 +665,9 @@ fn missing_provider_credentials_report(
         kind,
         name,
         dns,
-        provider,
+        provider: provider.clone(),
         connection_examples,
-        provider_actions: vec![
-            "provider credentials are required before creating this object".to_owned(),
-            "configure ~/.gumgum/providers/minio-main/credentials.json or run provider credential setup when available".to_owned(),
-        ],
+        provider_actions: vec![CoreAction::ProviderCredentialsRequired { provider }],
         reconciliation_steps: Vec::new(),
         typed_events: Vec::new(),
         message: "provider credentials are not configured".to_owned(),
@@ -951,7 +960,9 @@ async fn daemon_delete_binding(
     };
     let (binding_actions, typed_events) = if request.preview {
         (
-            vec!["preview only; no bindings changed".to_owned()],
+            vec![CoreAction::PreviewOnly {
+                scope: ActionScope::Bindings,
+            }],
             Vec::new(),
         )
     } else {
@@ -966,10 +977,7 @@ async fn daemon_delete_binding(
         {
             Ok(report) => (report.actions, report.typed_events),
             Err(error) => (
-                vec![format!(
-                    "binding delete reconcile failed: {}",
-                    error.to_report().message
-                )],
+                vec![reconcile_failed(ActionScope::Bindings, &error)],
                 Vec::new(),
             ),
         }
@@ -1019,7 +1027,9 @@ async fn daemon_create_binding(
     };
     let (binding_actions, typed_events) = if request.preview {
         (
-            vec!["preview only; no bindings changed".to_owned()],
+            vec![CoreAction::PreviewOnly {
+                scope: ActionScope::Bindings,
+            }],
             Vec::new(),
         )
     } else {
@@ -1034,10 +1044,7 @@ async fn daemon_create_binding(
         {
             Ok(report) => (report.actions, report.typed_events),
             Err(error) => (
-                vec![format!(
-                    "binding reconcile failed: {}",
-                    error.to_report().message
-                )],
+                vec![reconcile_failed(ActionScope::Bindings, &error)],
                 Vec::new(),
             ),
         }
@@ -1137,11 +1144,13 @@ async fn daemon_delete_revision(
         deleted,
         actions: if deleted {
             vec![
-                format!("deleted deployment revision {revision_id}"),
-                "no containers or desired deployments changed".to_owned(),
+                cli_action(format!("deleted deployment revision {revision_id}")),
+                cli_action("no containers or desired deployments changed"),
             ]
         } else {
-            vec![format!("deployment revision {revision_id} not found")]
+            vec![cli_action(format!(
+                "deployment revision {revision_id} not found"
+            ))]
         },
         message: if deleted {
             format!("deleted deployment revision {revision_id}")
@@ -1186,7 +1195,9 @@ async fn daemon_bucket_object_action(
                 objects: Vec::new(),
                 content: None,
                 content_base64: None,
-                actions: vec!["configure minio.main provider credentials".to_owned()],
+                actions: vec![CoreAction::ProviderCredentialsRequired {
+                    provider: "minio.main".to_owned(),
+                }],
                 message: "minio provider credentials are not configured".to_owned(),
             });
         }
@@ -1199,7 +1210,7 @@ async fn daemon_bucket_object_action(
                 objects: Vec::new(),
                 content: None,
                 content_base64: None,
-                actions: vec![error.to_string()],
+                actions: vec![cli_action(error.to_string())],
                 message: "could not load minio provider credentials".to_owned(),
             });
         }
@@ -1321,7 +1332,7 @@ async fn daemon_bucket_object_action(
         objects: Vec::new(),
         content: None,
         content_base64: None,
-        actions: vec![error.to_string()],
+        actions: vec![cli_action(error.to_string())],
         message: "bucket object operation failed".to_owned(),
     }))
 }
@@ -1425,15 +1436,12 @@ async fn daemon_rollback(
                     .await;
                     actions
                 }
-                Err(error) => vec![format!(
-                    "rollback reconcile failed: {}; desired deploy was not changed",
-                    error.to_report().message
-                )],
+                Err(error) => vec![reconcile_failed(ActionScope::Deployment, &error)],
             };
             if let Some(warning) = route_warning {
-                actions.insert(0, warning);
+                actions.insert(0, cli_action(warning));
             }
-            actions.insert(0, format!("rollback to {image}"));
+            actions.insert(0, cli_action(format!("rollback to {image}")));
             actions
         };
         Json(rollback_report_from_revision(
@@ -1450,12 +1458,14 @@ async fn daemon_rollback(
     }
 }
 
-fn rollback_preview_actions(image: &str, route_warning: Option<String>) -> Vec<String> {
-    let mut actions = vec![format!("would rollback to {image}")];
+fn rollback_preview_actions(image: &str, route_warning: Option<String>) -> Vec<CoreAction> {
+    let mut actions = vec![cli_action(format!("would rollback to {image}"))];
     if let Some(warning) = route_warning {
-        actions.push(warning);
+        actions.push(cli_action(warning));
     }
-    actions.push("preview only; no containers changed".to_owned());
+    actions.push(CoreAction::PreviewOnly {
+        scope: ActionScope::Deployment,
+    });
     actions
 }
 
@@ -1480,7 +1490,7 @@ fn rollback_report_from_revision(
     worker: String,
     preview: bool,
     revision: gumgum_core::DeploymentRevision,
-    actions: Vec<String>,
+    actions: Vec<CoreAction>,
 ) -> RollbackReport {
     RollbackReport {
         ok: true,
@@ -1511,10 +1521,10 @@ fn rollback_unavailable_report(worker: String, revision_id: Option<i64>) -> Roll
         route: None,
         port: None,
         health: None,
-        actions: vec![match revision_id {
+        actions: vec![cli_action(match revision_id {
             Some(id) => format!("revision {id} not found"),
             None => "no previous image recorded".to_owned(),
-        }],
+        })],
         message: match revision_id {
             Some(id) => format!("deployment revision {id} not found"),
             None => "no previous deployment image recorded".to_owned(),
@@ -1544,7 +1554,7 @@ async fn daemon_delete_deploy(
             worker: request.worker,
             materialized: false,
             changed: false,
-            actions: vec!["deployment was not present".to_owned()],
+            actions: vec![cli_action("deployment was not present")],
             reconciliation_steps: Vec::new(),
             typed_events: vec![gumgum_core::GumgumEvent::DeploymentFailed {
                 worker: logical_deployment_worker(&worker).to_owned(),
@@ -1567,7 +1577,9 @@ async fn daemon_delete_deploy(
             .unwrap_or(false)
     };
     let actions = if request.preview {
-        vec!["preview only; no deployments changed".to_owned()]
+        vec![CoreAction::PreviewOnly {
+            scope: ActionScope::Deployment,
+        }]
     } else {
         GraphActionExecutor::execute_steps(
             &reconciliation_steps,
@@ -1577,12 +1589,7 @@ async fn daemon_delete_deploy(
             },
         )
         .await
-        .unwrap_or_else(|error| {
-            vec![format!(
-                "deployment delete reconcile failed: {}",
-                error.to_report().message
-            )]
-        })
+        .unwrap_or_else(|error| vec![reconcile_failed(ActionScope::Deployment, &error)])
     };
     let ok = request.preview || deleted;
     let message = if request.preview {
@@ -1720,9 +1727,9 @@ async fn daemon_deploy_report(
                         worker: request.worker,
                         materialized: false,
                         changed: false,
-                        actions: vec![format!(
+                        actions: vec![cli_action(format!(
                             "publish DNS failed: no managed domain matches published route {route} (add the domain to this server before deploying a published route)"
-                        )],
+                        ))],
                         reconciliation_steps: Vec::new(),
                         typed_events: vec![gumgum_core::GumgumEvent::DeploymentFailed {
                             worker: logical_deployment_worker(&worker).to_owned(),
@@ -1739,10 +1746,10 @@ async fn daemon_deploy_report(
                         worker: request.worker,
                         materialized: false,
                         changed: false,
-                        actions: vec![format!(
+                        actions: vec![cli_action(format!(
                             "publish DNS failed: {}",
                             error.to_report().message
-                        )],
+                        ))],
                         reconciliation_steps: Vec::new(),
                         typed_events: vec![gumgum_core::GumgumEvent::DeploymentFailed {
                             worker: logical_deployment_worker(&worker).to_owned(),
@@ -1791,13 +1798,13 @@ async fn daemon_deploy_report(
     {
         Ok(report) => (report.actions, report.typed_events),
         Err(error) => (
-            vec![format!("reconcile failed: {}", error.to_report().message)],
+            vec![reconcile_failed(ActionScope::Reconcile, &error)],
             Vec::new(),
         ),
     };
     let reconcile_ok = !actions
         .iter()
-        .any(|action| action.starts_with("reconcile failed:"));
+        .any(|action| action_text(action).starts_with("reconcile failed:"));
     let materialize_changed = if reconcile_ok {
         let deploy_for_db = request_for_db.clone();
         match tokio::task::spawn_blocking(move || store.materialize_deploy(&deploy_for_db)).await {
@@ -1805,7 +1812,7 @@ async fn daemon_deploy_report(
             _ => None,
         }
     } else {
-        actions.push("desired deployment was not changed".to_owned());
+        actions.push(cli_action("desired deployment was not changed"));
         None
     };
     let materialized = materialize_changed.is_some();
@@ -1841,10 +1848,10 @@ async fn daemon_deploy_report(
                                                 .likely_cause
                                                 .map(|cause| format!(" ({cause})"))
                                                 .unwrap_or_default();
-                                            actions.push(format!(
+                                            actions.push(cli_action(format!(
                                                 "publish DNS cleanup failed: {}{}",
                                                 report.message, cause
-                                            ));
+                                            )));
                                         }
                                     }
                                 }
@@ -1857,30 +1864,35 @@ async fn daemon_deploy_report(
                                 .likely_cause
                                 .map(|cause| format!(" ({cause})"))
                                 .unwrap_or_default();
-                            actions
-                                .push(format!("publish DNS failed: {}{}", report.message, cause));
+                            actions.push(cli_action(format!(
+                                "publish DNS failed: {}{}",
+                                report.message, cause
+                            )));
                         }
                     }
                 }
                 Ok((_domains, None)) => {
                     publish_ok = false;
-                    actions.push(format!(
+                    actions.push(cli_action(format!(
                         "publish DNS failed for {route}; no Cloudflare grant saved on server"
-                    ));
+                    )));
                 }
                 Err(error) => {
                     publish_ok = false;
-                    actions.push(format!("publish DNS failed: {}", error.to_report().message));
+                    actions.push(cli_action(format!(
+                        "publish DNS failed: {}",
+                        error.to_report().message
+                    )));
                 }
             }
         }
     }
     let changed = materialize_changed.unwrap_or(false)
         || actions.iter().any(|action| {
-            action.starts_with("pull ")
-                || action.starts_with("recreate ")
-                || action.starts_with("project ")
-                || action.starts_with("ensure Cloudflare")
+            action_text(action).starts_with("pull ")
+                || action_text(action).starts_with("recreate ")
+                || action_text(action).starts_with("project ")
+                || action_text(action).starts_with("ensure Cloudflare")
         });
     let ok = materialized && reconcile_ok && publish_ok;
     let message = if !reconcile_ok {
@@ -1922,7 +1934,7 @@ fn deploy_apply_typed_events(
     image_and_route: Option<(&str, Option<&str>)>,
     reconciliation_steps: &[gumgum_core::GraphExecutionStep],
     execution_typed_events: &[gumgum_core::GumgumEvent],
-    actions: &[String],
+    actions: &[CoreAction],
     ok: bool,
     message: &str,
 ) -> Vec<gumgum_core::GumgumEvent> {
@@ -1944,7 +1956,7 @@ fn deploy_apply_typed_events(
     let action_message = if actions.is_empty() {
         message.to_owned()
     } else {
-        actions.join("; ")
+        serde_json::to_string(actions).unwrap_or_else(|_| message.to_owned())
     };
     if execution_typed_events.is_empty() {
         for step in reconciliation_steps {
@@ -2121,7 +2133,7 @@ mod tests {
             Some(("registry/api:rev1", Some("api.example.test"))),
             &[step],
             &execution_events,
-            &["configured manual provider manual.main".to_owned()],
+            &[CoreAction::ProviderConfigured { capability: gumgum_core::Capability::Manual, provider: "manual.main".to_owned() }],
             true,
             "desired deployment materialized and reconciled",
         );
@@ -2162,7 +2174,7 @@ mod tests {
             Some(("registry/api:rev1", Some("api.example.test"))),
             &[step],
             &[],
-            &["configured manual provider manual.main".to_owned()],
+            &[CoreAction::ProviderConfigured { capability: gumgum_core::Capability::Manual, provider: "manual.main".to_owned() }],
             true,
             "desired deployment materialized and reconciled",
         );
@@ -2289,7 +2301,7 @@ mod tests {
             object_report
                 .provider_actions
                 .iter()
-                .any(|action| action == "preview only; no objects changed")
+                .any(|action| matches!(action, CoreAction::PreviewOnly { scope: ActionScope::Objects }))
         );
 
         let Json(binding_report) = daemon_create_binding(
@@ -2310,7 +2322,7 @@ mod tests {
             binding_report
                 .binding_actions
                 .iter()
-                .any(|action| action == "preview only; no bindings changed")
+                .any(|action| matches!(action, CoreAction::PreviewOnly { scope: ActionScope::Bindings }))
         );
 
         let store = GraphStore::new(path.clone());
@@ -2369,10 +2381,10 @@ mod tests {
         assert!(binding_report.ok);
         assert_eq!(binding_report.message, "binding delete preview");
         assert!(!binding_report.reconciliation_steps.is_empty());
-        assert_eq!(
-            binding_report.binding_actions,
-            vec!["preview only; no bindings changed"]
-        );
+        assert!(matches!(
+            binding_report.binding_actions.as_slice(),
+            [CoreAction::PreviewOnly { scope: ActionScope::Bindings }]
+        ));
 
         let Json(object_report) = daemon_delete_object(
             State(state),
@@ -2391,10 +2403,11 @@ mod tests {
             "object has active bindings; unbind it before deleting"
         );
         assert!(object_report.reconciliation_steps.is_empty());
-        assert_eq!(
-            object_report.provider_actions,
-            vec!["still bound to worker api as VISIT_EVENTS_QUEUE"]
-        );
+        assert!(matches!(
+            object_report.provider_actions.as_slice(),
+            [CoreAction::AlreadyBound { worker, binding }]
+                if worker == "api" && binding == "VISIT_EVENTS_QUEUE"
+        ));
         assert_eq!(
             GraphStore::new(path.clone())
                 .list_reconcile_events(20)
@@ -2525,7 +2538,7 @@ mod tests {
             report
                 .provider_actions
                 .iter()
-                .any(|action| action.contains("provider credentials are required"))
+                .any(|action| matches!(action, CoreAction::ProviderCredentialsRequired { .. }))
         );
     }
 
@@ -2586,7 +2599,7 @@ mod tests {
             "api".to_owned(),
             false,
             revision(42),
-            vec!["rollback to registry/api:1".to_owned()],
+            vec![cli_action("rollback to registry/api:1")],
         );
 
         assert!(report.ok);
@@ -2597,7 +2610,7 @@ mod tests {
         assert_eq!(report.route.as_deref(), Some("api.example.test"));
         assert_eq!(report.port, Some(3000));
         assert_eq!(report.health.as_deref(), Some("/healthz"));
-        assert_eq!(report.actions, vec!["rollback to registry/api:1"]);
+        assert_eq!(crate::presentation::action_texts(&report.actions), vec!["rollback to registry/api:1"]);
     }
 
     #[test]
@@ -2606,7 +2619,7 @@ mod tests {
 
         assert!(!report.ok);
         assert_eq!(report.revision_id, Some(99));
-        assert_eq!(report.actions, vec!["revision 99 not found"]);
+        assert_eq!(crate::presentation::action_texts(&report.actions), vec!["revision 99 not found"]);
         assert_eq!(report.message, "deployment revision 99 not found");
     }
 
@@ -2637,9 +2650,9 @@ mod tests {
             report
                 .actions
                 .iter()
-                .any(|action| action == "preview only; no containers changed")
+                .any(|action| matches!(action, CoreAction::PreviewOnly { scope: ActionScope::Deployment }))
         );
-        assert!(report.actions.iter().any(|action| action
+        assert!(crate::presentation::action_texts(&report.actions).iter().any(|action| action
             == "warning: rollback would change route from api-v3.example.test to api.example.test"));
         let _ = std::fs::remove_file(path);
     }

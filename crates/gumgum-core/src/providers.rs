@@ -90,12 +90,12 @@ mod tests {
         assert!(
             plan.actions
                 .iter()
-                .any(|action| action == "ensure postgres.main provider is running")
+                .any(|action| matches!(action, crate::CoreAction::ProviderConfigured { provider, .. } if provider == "postgres.main"))
         );
         assert!(
             plan.actions
                 .iter()
-                .any(|action| action == "ensure database visits exists")
+                .any(|action| matches!(action, crate::CoreAction::DatabaseCreated { database } if database == "visits"))
         );
     }
 
@@ -109,7 +109,7 @@ mod tests {
         assert!(
             plan.actions
                 .iter()
-                .any(|action| action == "ensure redis.main provider is running")
+                .any(|action| matches!(action, crate::CoreAction::ProviderConfigured { provider, .. } if provider == "redis.main"))
         );
     }
 
@@ -125,7 +125,7 @@ mod tests {
         assert!(
             plan.actions
                 .iter()
-                .any(|action| action == "reserve Redis key prefix user-counters:")
+                .any(|action| matches!(action, crate::CoreAction::RedisPrefixReserved { prefix } if prefix == "user-counters"))
         );
     }
 
@@ -206,14 +206,15 @@ mod tests {
         assert_eq!(plan.provider.container, "gumgum-provider-minio-main");
         assert_eq!(plan.provider.image, "minio/minio:latest");
         assert_eq!(plan.provider.port, 9000);
-        assert_eq!(
-            docker::created_provider_actions(&plan.provider),
-            vec!["created minio.main provider container gumgum-provider-minio-main"]
-        );
+        assert!(matches!(
+            docker::created_provider_actions(&plan.provider).as_slice(),
+            [crate::CoreAction::ProviderContainerCreated { provider, container }]
+                if provider == "minio.main" && container == "gumgum-provider-minio-main"
+        ));
         assert!(
             plan.actions
                 .iter()
-                .any(|action| action == "ensure bucket uploads exists")
+                .any(|action| matches!(action, crate::CoreAction::BucketEnsured { bucket, .. } if bucket == "uploads"))
         );
     }
 
@@ -230,7 +231,7 @@ mod tests {
         assert!(
             plan.actions
                 .iter()
-                .any(|action| action == "ensure topic visit-events exists")
+                .any(|action| matches!(action, crate::CoreAction::QueueTopicEnsured { topic, .. } if topic == "visit-events"))
         );
     }
 
@@ -246,7 +247,7 @@ mod tests {
         assert!(
             plan.actions
                 .iter()
-                .any(|action| action == "ensure bucket visit-requests exists")
+                .any(|action| matches!(action, crate::CoreAction::BucketEnsured { bucket, .. } if bucket == "visit-requests"))
         );
     }
 
@@ -259,7 +260,7 @@ mod tests {
         assert!(
             vaultwarden::actions("stripe-api-key", "stripe.secret.example.test")
                 .iter()
-                .any(|action| action.contains("secrets.platform"))
+                .any(|action| matches!(action, crate::CoreAction::ProviderConfigured { provider, .. } if provider == "secrets.platform"))
         );
         assert!(
             vaultwarden::connection_examples("stripe-api-key", "stripe.secret.example.test")
@@ -278,12 +279,10 @@ mod tests {
         let actions = secret::provider_actions(&plan);
 
         assert_eq!(plan.provider.provider, "secrets.platform");
-        assert!(
-            actions
-                .iter()
-                .any(|action| action.contains("no secret value stored"))
-        );
-        assert!(!actions.iter().any(|action| action.contains("sk_live")));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::CoreAction::ProviderObjectDesiredRemoved { capability: Capability::Secret, .. }
+        )));
     }
 
     #[test]
@@ -303,7 +302,7 @@ mod tests {
         assert!(
             plan.actions
                 .iter()
-                .any(|action| action.contains("ensure bucket user-uploads exists"))
+                .any(|action| matches!(action, crate::CoreAction::BucketEnsured { bucket, .. } if bucket == "user-uploads"))
         );
         assert!(
             plan.connection_examples

@@ -2,6 +2,7 @@
 
 use crate::deploy_command::{DeployOutput, DeployReport, WorkspaceDeployReport};
 use gumgum_api::ObjectReport;
+use gumgum_core::{ActionScope, CoreAction, SetupStep};
 
 pub(crate) struct Presenter;
 
@@ -41,7 +42,7 @@ impl Presenter {
         println!("Worker: {}", report.worker);
         println!("{}", report.message);
         for action in &report.actions {
-            println!("  - {action}");
+            println!("  - {}", action_text(action));
         }
     }
 
@@ -251,5 +252,205 @@ fn connection_examples(kind: &str, name: &str, dns: &str) -> Vec<String> {
             format!("RedisInsight host={dns} port=6379 database=0"),
         ],
         _ => Vec::new(),
+    }
+}
+
+pub(crate) fn action_text(action: &CoreAction) -> String {
+    match action {
+        CoreAction::CliMessage { message } => message.clone(),
+        CoreAction::SetupStep { step } => match step {
+            SetupStep::CreateLocalDirectories => {
+                "create ~/.gumgum/bin and ~/.gumgum/daemon".to_owned()
+            }
+            SetupStep::InstallRunningBinary => {
+                "install running gumgum binary into ~/.gumgum/bin".to_owned()
+            }
+            SetupStep::WriteUserSystemdService => "write gumgumd user-systemd service".to_owned(),
+            SetupStep::EnableRestartDaemon => "enable and restart gumgumd".to_owned(),
+            SetupStep::CheckLocalHealth => "check http://127.0.0.1:7777/healthz".to_owned(),
+            SetupStep::SshIntoHost => "ssh into host".to_owned(),
+            SetupStep::RunRemoteInstaller => {
+                "run curl -fsSL https://get.gumgum.dev | sh".to_owned()
+            }
+            SetupStep::RunRemoteSetup => "run ~/.gumgum/bin/gumgum setup on the host".to_owned(),
+            SetupStep::ExitSsh => "exit ssh".to_owned(),
+            SetupStep::SaveServerLocally => "save server locally".to_owned(),
+            SetupStep::CheckRemoteHealth => "check http://<host>:7777/healthz".to_owned(),
+        },
+        CoreAction::PreviewOnly { scope } => {
+            format!("preview only; no {} changed", scope_noun(*scope))
+        }
+        CoreAction::AlreadyBound { worker, binding } => {
+            format!("still bound to worker {worker} as {binding}")
+        }
+        CoreAction::ProviderCredentialsRequired { provider } => {
+            format!("provider credentials are required for {provider}")
+        }
+        CoreAction::ReconcileFailed { scope, error } => {
+            format!("{} reconcile failed: {error}", scope_noun(*scope))
+        }
+        CoreAction::Planned { target, action } => format!("planned {action} for {target}"),
+        CoreAction::ProviderConfigured {
+            capability,
+            provider,
+        } => format!("configured {capability} provider {provider}"),
+        CoreAction::ProviderObjectDesiredRemoved { capability, name } => format!(
+            "removed desired {capability} object {name}; provider cleanup is not implemented yet"
+        ),
+        CoreAction::ProviderContainerCreated {
+            provider,
+            container,
+        } => format!("created {provider} provider container {container}"),
+        CoreAction::ProviderContainerStarted { provider } => {
+            format!("started existing {provider} provider")
+        }
+        CoreAction::ProviderContainerRecreated { provider } => {
+            format!("recreated {provider} provider with configured password")
+        }
+        CoreAction::PlatformServiceCreated {
+            provider,
+            container,
+        } => format!("created platform service {container} ({provider})"),
+        CoreAction::PlatformServiceStarted { container } => format!("started existing {container}"),
+        CoreAction::PlatformSecretServiceCreated {
+            provider,
+            container,
+        } => format!("created platform secret service {container} ({provider})"),
+        CoreAction::DnsPublished { dns, provider } => format!("published DNS {dns} to {provider}"),
+        CoreAction::DnsRemoved { dns, provider } => format!("removed DNS {dns} from {provider}"),
+        CoreAction::DatabaseRoleEnsured { role } => format!("ensured database role {role}"),
+        CoreAction::DatabaseAlreadyExists { database } => {
+            format!("database {database} already exists")
+        }
+        CoreAction::DatabaseCreated { database } => format!("created database {database}"),
+        CoreAction::DatabaseGranted { database, role } => {
+            format!("granted database {database} to role {role}")
+        }
+        CoreAction::DatabaseDropped { database } => format!("dropped database {database}"),
+        CoreAction::DatabaseAlreadyAbsent { database } => {
+            format!("database {database} was already absent")
+        }
+        CoreAction::RedisPrefixReserved { prefix } => {
+            format!("reserved Redis key prefix {prefix}:")
+        }
+        CoreAction::RedisPrefixReleased { prefix } => {
+            format!("released Redis key prefix {prefix}:")
+        }
+        CoreAction::BucketEnsured { bucket, provider } => {
+            format!("ensured bucket {bucket} on {provider}")
+        }
+        CoreAction::BucketDeleted { bucket, provider } => {
+            format!("deleted bucket {bucket} from {provider}")
+        }
+        CoreAction::BucketObjectUploaded {
+            bucket,
+            path,
+            provider,
+        } => format!("uploaded {bucket}/{path} to {provider}"),
+        CoreAction::BucketObjectRemoved {
+            bucket,
+            path,
+            provider,
+        } => format!("removed {bucket}/{path} from {provider}"),
+        CoreAction::BucketObjectCopied {
+            source,
+            destination,
+            provider,
+        } => format!("copied {source} to {destination} in {provider}"),
+        CoreAction::BucketObjectsSynced {
+            source,
+            destination,
+            provider,
+        } => format!("synced {source} to {destination} in {provider}"),
+        CoreAction::QueueTopicEnsured { topic, provider } => {
+            format!("ensured topic {topic} on {provider}")
+        }
+        CoreAction::QueueTopicDeleted { topic, provider } => {
+            format!("deleted topic {topic} from {provider}")
+        }
+        CoreAction::PrometheusScrapeConfigured {
+            worker,
+            environment,
+            container,
+            port,
+            metrics_path,
+        } => format!(
+            "configured Prometheus scrape for {worker}@{environment} at {container}:{port}{metrics_path}"
+        ),
+        CoreAction::GrafanaDatasourceCreated { name } => {
+            format!("created Grafana datasource {name}")
+        }
+        CoreAction::GrafanaDatasourceUpdated { name } => {
+            format!("updated Grafana datasource {name}")
+        }
+        CoreAction::GrafanaDashboardApplied { name } => format!("applied Grafana dashboard {name}"),
+        CoreAction::DeploymentContainerMatches { container } => {
+            format!("container {container} already matches desired image, route, and bindings")
+        }
+        CoreAction::ImagePulled { image } => format!("pull {image}"),
+        CoreAction::NetworkCreated { network } => format!("create environment network {network}"),
+        CoreAction::DeploymentEnvironmentProjected { vars } => format!("project {vars} env var(s)"),
+        CoreAction::DeploymentContainerStarted { container } => {
+            format!("start new deployment container {container}")
+        }
+        CoreAction::ContainerConnectedToNetwork { container, network } => {
+            format!("connect {container} to {network}")
+        }
+        CoreAction::DeploymentContainerHealthy { container } => {
+            format!("new deployment container {container} is healthy; removing old containers")
+        }
+        CoreAction::DeploymentContainerRemoved { container } => {
+            format!("removed deployment container {container}")
+        }
+        CoreAction::CloudflareDnsCnameDeleted { hostname } => {
+            format!("delete Cloudflare DNS CNAME {hostname}")
+        }
+        CoreAction::CloudflareDnsCnameAbsent { hostname } => {
+            format!("Cloudflare DNS CNAME {hostname} was already absent")
+        }
+        CoreAction::CloudflareDnsCnameUnmanaged { hostname } => format!(
+            "Cloudflare DNS CNAME {hostname} was not deleted because it is not marked managed-by=gumgum"
+        ),
+        CoreAction::CloudflareConnectorEnsured { container } => {
+            format!("ensure Cloudflare connector container {container}")
+        }
+        CoreAction::CloudflareConnectorStarted { container } => {
+            format!("started Cloudflare connector container {container}")
+        }
+        CoreAction::CloudflareTunnelEnsured { tunnel } => {
+            format!("ensure Cloudflare tunnel {tunnel}")
+        }
+        CoreAction::CloudflareTunnelRouteEnsured { hostname, service } => {
+            format!("ensure Cloudflare tunnel route {hostname} -> {service}")
+        }
+        CoreAction::CloudflareDnsCnameEnsured { hostname, target } => {
+            format!("ensure Cloudflare DNS CNAME {hostname} -> {target}")
+        }
+        CoreAction::ManualDnsRequired { hostname, domain } => {
+            format!("manual DNS required for {hostname} under {domain}")
+        }
+        CoreAction::ManualDnsCleanupRequired { hostname, domain } => {
+            format!("manual DNS cleanup required for stale route {hostname} under {domain}")
+        }
+        CoreAction::CloudflareDirectDnsUnsupported { hostname } => {
+            format!("Cloudflare direct DNS for {hostname} is not implemented yet")
+        }
+        CoreAction::NoManagedDomainForStaleRoute { hostname } => {
+            format!("no managed domain matches stale route {hostname}; DNS was not changed")
+        }
+    }
+}
+
+pub(crate) fn action_texts(actions: &[CoreAction]) -> Vec<String> {
+    actions.iter().map(action_text).collect()
+}
+
+fn scope_noun(scope: ActionScope) -> &'static str {
+    match scope {
+        ActionScope::Objects => "objects",
+        ActionScope::Bindings => "bindings",
+        ActionScope::Deployment => "deployments",
+        ActionScope::Provider => "provider",
+        ActionScope::Reconcile => "reconcile",
     }
 }

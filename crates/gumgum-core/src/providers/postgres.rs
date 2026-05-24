@@ -1,7 +1,7 @@
 use super::docker::{
     create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
 };
-use crate::{Capability, DockerEngine, sanitize_name};
+use crate::{Capability, CoreAction, CoreActions, DockerEngine, sanitize_name};
 
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
 
@@ -16,11 +16,19 @@ pub fn spec() -> ProviderSpec {
     }
 }
 
-pub(crate) fn actions(safe_name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
     vec![
-        "ensure postgres.main provider is running".to_owned(),
-        format!("ensure database {safe_name} exists"),
-        format!("publish DNS {dns} to postgres.main"),
+        CoreAction::ProviderConfigured {
+            capability: Capability::Db,
+            provider: "postgres.main".to_owned(),
+        },
+        CoreAction::DatabaseCreated {
+            database: safe_name.to_owned(),
+        },
+        CoreAction::DnsPublished {
+            dns: dns.to_owned(),
+            provider: "postgres.main".to_owned(),
+        },
     ]
 }
 
@@ -34,16 +42,20 @@ pub(crate) fn connection_examples(name: &str, dns: &str) -> Vec<String> {
 pub(crate) async fn ensure_object(
     plan: &ObjectProviderPlan,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let mut actions = ensure(&plan.provider, credentials.clone()).await?;
     let database = sanitize_name(&plan.name);
     let owner = sanitize_name(&plan.name);
     if let Some(password) = &plan.object_password {
         ensure_role(&plan.provider, &credentials, &owner, password).await?;
-        actions.push(format!("ensured database role {owner}"));
+        actions.push(CoreAction::DatabaseRoleEnsured {
+            role: owner.clone(),
+        });
     }
     if database_exists(&plan.provider, &credentials, &database).await? {
-        actions.push(format!("database {database} already exists"));
+        actions.push(CoreAction::DatabaseAlreadyExists {
+            database: database.clone(),
+        });
     } else {
         create_database(
             &plan.provider,
@@ -52,36 +64,51 @@ pub(crate) async fn ensure_object(
             plan.object_password.as_deref().map(|_| owner.as_str()),
         )
         .await?;
-        actions.push(format!("created database {database}"));
+        actions.push(CoreAction::DatabaseCreated {
+            database: database.clone(),
+        });
     }
     if plan.object_password.is_some() {
         grant_database(&plan.provider, &credentials, &database, &owner).await?;
-        actions.push(format!("granted database {database} to role {owner}"));
+        actions.push(CoreAction::DatabaseGranted {
+            database: database.clone(),
+            role: owner.clone(),
+        });
     }
-    actions.push(format!("published DNS {} to postgres.main", plan.dns));
+    actions.push(CoreAction::DnsPublished {
+        dns: plan.dns.clone(),
+        provider: "postgres.main".to_owned(),
+    });
     Ok(actions)
 }
 
 pub(crate) async fn delete_object(
     plan: &ObjectProviderPlan,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let mut actions = ensure(&plan.provider, credentials.clone()).await?;
     let database = sanitize_name(&plan.name);
     if database_exists(&plan.provider, &credentials, &database).await? {
         drop_database(&plan.provider, &credentials, &database).await?;
-        actions.push(format!("dropped database {database}"));
+        actions.push(CoreAction::DatabaseDropped {
+            database: database.clone(),
+        });
     } else {
-        actions.push(format!("database {database} was already absent"));
+        actions.push(CoreAction::DatabaseAlreadyAbsent {
+            database: database.clone(),
+        });
     }
-    actions.push(format!("removed DNS {} from postgres.main", plan.dns));
+    actions.push(CoreAction::DnsRemoved {
+        dns: plan.dns.clone(),
+        provider: "postgres.main".to_owned(),
+    });
     Ok(actions)
 }
 
 pub(crate) async fn ensure(
     provider: &ProviderSpec,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     ensure_network().await?;
     let actions = if inspect(&provider.container).await && !provider_needs_recreate(provider).await
     {
@@ -348,14 +375,18 @@ mod tests {
 
     #[test]
     fn postgres_object_actions_include_database_and_dns() {
-        assert_eq!(
-            actions("visit-counter", "visits.db.leostera.dev"),
-            vec![
-                "ensure postgres.main provider is running",
-                "ensure database visit-counter exists",
-                "publish DNS visits.db.leostera.dev to postgres.main",
-            ]
-        );
+        let actions = actions("visit-counter", "visits.db.leostera.dev");
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                crate::CoreAction::ProviderConfigured { provider, .. },
+                crate::CoreAction::DatabaseCreated { database },
+                crate::CoreAction::DnsPublished { dns, provider: dns_provider },
+            ] if provider == "postgres.main"
+                && database == "visit-counter"
+                && dns == "visits.db.leostera.dev"
+                && dns_provider == "postgres.main"
+        ));
     }
 
     #[test]

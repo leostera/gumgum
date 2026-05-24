@@ -1,4 +1,4 @@
-use gumgum_core::{Capability, CloudflareGrant, DomainProvider, IngressMode};
+use gumgum_core::{Capability, CloudflareGrant, CoreAction, DomainProvider, IngressMode};
 pub use gumgum_core::{
     DeploymentRevision, GraphEdge, GraphExecutionStep, GraphNode, GumgumEvent, ProviderConfig,
     ProviderStatus, ReconcileEvent, ServerRecord,
@@ -13,7 +13,7 @@ pub struct SetupPlan {
     pub user: Option<String>,
     pub root_domain: String,
     pub test_domain: String,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -25,7 +25,7 @@ pub struct SetupReport {
     pub test_domain: String,
     pub service: String,
     pub health_url: String,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -49,7 +49,7 @@ pub struct DomainReport {
     pub name: String,
     pub provider: DomainProvider,
     pub ingress: IngressMode,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     pub message: String,
 }
 
@@ -92,7 +92,7 @@ pub struct DeployApplyReport {
     pub worker: String,
     pub materialized: bool,
     pub changed: bool,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reconciliation_steps: Vec<GraphExecutionStep>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -112,7 +112,7 @@ pub struct GrafanaArtifactRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GrafanaArtifactReport {
     pub ok: bool,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     pub message: String,
 }
 
@@ -128,7 +128,7 @@ pub struct PrometheusScrapeRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PrometheusScrapeReport {
     pub ok: bool,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     pub message: String,
 }
 
@@ -163,7 +163,7 @@ pub struct BucketObjectReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_base64: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     pub message: String,
 }
 
@@ -210,7 +210,7 @@ pub struct ObjectReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connection_examples: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub provider_actions: Vec<String>,
+    pub provider_actions: Vec<CoreAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reconciliation_steps: Vec<GraphExecutionStep>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -246,7 +246,7 @@ pub struct BindingReport {
     pub worker: String,
     pub binding: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub binding_actions: Vec<String>,
+    pub binding_actions: Vec<CoreAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reconciliation_steps: Vec<GraphExecutionStep>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -285,7 +285,7 @@ pub struct ProviderConfigureReport {
     pub ok: bool,
     pub config: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reconciliation_steps: Vec<GraphExecutionStep>,
     pub message: String,
@@ -312,7 +312,7 @@ pub struct ProviderCredentialsInitReport {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProviderBootReport {
     pub ok: bool,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     pub providers: Vec<ProviderStatus>,
     pub message: String,
 }
@@ -373,7 +373,7 @@ pub struct RollbackReport {
     pub port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<String>,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     pub message: String,
 }
 
@@ -393,6 +393,6 @@ pub struct DeploymentRevisionDeleteReport {
     pub worker: String,
     pub revision_id: i64,
     pub deleted: bool,
-    pub actions: Vec<String>,
+    pub actions: Vec<CoreAction>,
     pub message: String,
 }

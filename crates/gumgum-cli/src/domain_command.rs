@@ -1,4 +1,8 @@
-use crate::{DomainAddArgs, DomainArgs, DomainCommand, print_value, resolve_server};
+use crate::{
+    DomainAddArgs, DomainArgs, DomainCommand,
+    presentation::{action_text, action_texts},
+    print_value, resolve_server,
+};
 use gumgum_api::{DomainAddRequest, DomainReport};
 use gumgum_core::{DomainProvider, IngressMode, cloudflare};
 use serde::Serialize;
@@ -32,17 +36,23 @@ pub(crate) async fn add_domain(
     let server = resolve_server(args.server)?;
     let provider: DomainProvider = args.provider.into();
     let ingress: IngressMode = args.ingress.into();
-    let mut actions = vec![format!(
-        "record domain {} on server {} with {} provider",
-        args.name,
-        server.name,
-        provider.as_str()
-    )];
+    let mut actions = vec![gumgum_core::CoreAction::CliMessage {
+        message: format!(
+            "record domain {} on server {} with {} provider",
+            args.name,
+            server.name,
+            provider.as_str()
+        ),
+    }];
     if provider == DomainProvider::Cloudflare {
-        actions.push(format!("authorize Cloudflare for {}", args.name));
+        actions.push(gumgum_core::CoreAction::CliMessage {
+            message: format!("authorize Cloudflare for {}", args.name),
+        });
     }
     if ingress == IngressMode::Cloudflare {
-        actions.push("configure Cloudflare tunnel ingress".to_owned());
+        actions.push(gumgum_core::CoreAction::CliMessage {
+            message: "configure Cloudflare tunnel ingress".to_owned(),
+        });
     }
     if dry_run {
         return Ok(DomainReport {
@@ -66,19 +76,18 @@ pub(crate) async fn add_domain(
     if !report.ok
         && provider == DomainProvider::Cloudflare
         && report.actions.iter().any(|action| {
-            action == "Cloudflare grant is required"
-                || action.starts_with("Cloudflare zone verification failed:")
+            let text = action_text(action);
+            text == "Cloudflare grant is required"
+                || text.starts_with("Cloudflare zone verification failed:")
         })
     {
         if !json {
             for action in &report.actions {
-                println!("→ {action}");
+                println!("→ {}", action_text(action));
             }
-            if report
-                .actions
-                .iter()
-                .any(|action| action.starts_with("Cloudflare zone verification failed:"))
-            {
+            if report.actions.iter().any(|action| {
+                action_text(action).starts_with("Cloudflare zone verification failed:")
+            }) {
                 println!(
                     "The saved Cloudflare token cannot see {}. Create or update a token that includes this domain, then paste it below.",
                     args.name
@@ -101,12 +110,12 @@ pub(crate) async fn add_domain(
             gumgum_core::ErrorCode::Io,
             report.message,
         )
-        .likely_cause(report.actions.join("; "))
+        .likely_cause(action_texts(&report.actions).join("; "))
         .build());
     }
     if !json {
         for action in &report.actions {
-            println!("→ {action}");
+            println!("→ {}", action_text(action));
         }
         println!("{}", report.message);
     }

@@ -1,4 +1,4 @@
-use crate::{Capability, ContainerRunSpec, DockerEngine};
+use crate::{Capability, ContainerRunSpec, CoreAction, CoreActions, DockerEngine};
 use std::collections::HashMap;
 
 use super::docker::{ensure_network, start_existing};
@@ -20,11 +20,16 @@ pub(crate) fn handles_config(config: &ProviderConfig) -> bool {
         && matches!(config.kind.as_str(), "vaultwarden" | "bitwarden")
 }
 
-pub fn actions(safe_name: &str, _dns: &str) -> Vec<String> {
+pub fn actions(safe_name: &str, _dns: &str) -> CoreActions {
     vec![
-        "ensure secrets.platform provider is running".to_owned(),
-        format!("map secret {safe_name} through secrets.platform"),
-        "do not materialize secret values in the graph".to_owned(),
+        CoreAction::ProviderConfigured {
+            capability: Capability::Secret,
+            provider: "secrets.platform".to_owned(),
+        },
+        CoreAction::ProviderObjectDesiredRemoved {
+            capability: Capability::Secret,
+            name: safe_name.to_owned(),
+        },
     ]
 }
 
@@ -35,7 +40,7 @@ pub fn connection_examples(name: &str, _dns: &str) -> Vec<String> {
     ]
 }
 
-pub(crate) async fn ensure() -> crate::Result<Vec<String>> {
+pub(crate) async fn ensure() -> crate::Result<CoreActions> {
     let provider = spec();
     ensure_network().await?;
     if let Some(existing) = DockerEngine::local()?
@@ -81,10 +86,10 @@ pub(crate) async fn ensure() -> crate::Result<Vec<String>> {
             entrypoint: Vec::new(),
         })
         .await?;
-    Ok(vec![format!(
-        "created platform secret service {} ({})",
-        provider.container, provider.provider
-    )])
+    Ok(vec![CoreAction::PlatformSecretServiceCreated {
+        provider: provider.provider,
+        container: provider.container,
+    }])
 }
 
 pub(crate) async fn status() -> ProviderStatus {

@@ -1,4 +1,4 @@
-use crate::Capability;
+use crate::{Capability, CoreAction, CoreActions};
 #[cfg(test)]
 use crate::{ErrorCode, GumgumError, Subsystem};
 
@@ -7,14 +7,14 @@ use super::types::{ObjectProviderPlan, ProviderConfig, ProviderCredentials, Prov
 pub struct ProviderReconciler;
 
 impl ProviderReconciler {
-    pub async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+    pub async fn ensure(plan: &ObjectProviderPlan) -> crate::Result<CoreActions> {
         Self::ensure_with_credentials(plan, None).await
     }
 
     pub async fn ensure_with_credentials(
         plan: &ObjectProviderPlan,
         credentials: Option<ProviderCredentials>,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<CoreActions> {
         match plan.capability {
             Capability::Db => {
                 super::postgres::ensure_object(
@@ -46,7 +46,7 @@ impl ProviderReconciler {
     pub async fn delete_with_credentials(
         plan: &ObjectProviderPlan,
         credentials: Option<ProviderCredentials>,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<CoreActions> {
         match plan.capability {
             Capability::Db => {
                 super::postgres::delete_object(
@@ -64,31 +64,31 @@ impl ProviderReconciler {
                 .await
             }
             Capability::Queue => super::redpanda::delete(plan).await,
-            _ => Ok(vec![format!(
-                "removed desired {} object {}; provider cleanup is not implemented yet",
-                plan.capability, plan.name
-            )]),
+            _ => Ok(vec![CoreAction::ProviderObjectDesiredRemoved {
+                capability: plan.capability,
+                name: plan.name.clone(),
+            }]),
         }
     }
 
     pub async fn boot_defaults(
         _credentials: &[(String, ProviderCredentials)],
         root_domain: &str,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<CoreActions> {
         let mut actions = Vec::new();
         actions.extend(super::vaultwarden::ensure().await?);
         actions.extend(super::observability::ensure_platform_stack(root_domain).await?);
         Ok(actions)
     }
 
-    pub async fn ensure_configured_provider(config: &ProviderConfig) -> crate::Result<Vec<String>> {
+    pub async fn ensure_configured_provider(config: &ProviderConfig) -> crate::Result<CoreActions> {
         if super::vaultwarden::handles_config(config) {
             return super::vaultwarden::ensure().await;
         }
-        Ok(vec![format!(
-            "configured {} provider {}",
-            config.capability, config.provider
-        )])
+        Ok(vec![CoreAction::ProviderConfigured {
+            capability: config.capability,
+            provider: config.provider.clone(),
+        }])
     }
 
     pub async fn statuses() -> Vec<ProviderStatus> {

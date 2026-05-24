@@ -1,4 +1,4 @@
-use crate::{Capability, sanitize_name};
+use crate::{Capability, CoreAction, CoreActions, sanitize_name};
 
 use super::types::{ObjectProviderPlan, ProviderSpec};
 
@@ -13,11 +13,16 @@ pub fn spec() -> ProviderSpec {
     }
 }
 
-pub(crate) fn actions(safe_name: &str, _dns: &str) -> Vec<String> {
+pub(crate) fn actions(safe_name: &str, _dns: &str) -> CoreActions {
     vec![
-        "configure the platform secret provider secrets.platform".to_owned(),
-        format!("map secret {safe_name} from the configured secret provider"),
-        "do not materialize secret values in the graph".to_owned(),
+        CoreAction::ProviderConfigured {
+            capability: Capability::Secret,
+            provider: "secrets.platform".to_owned(),
+        },
+        CoreAction::ProviderObjectDesiredRemoved {
+            capability: Capability::Secret,
+            name: safe_name.to_owned(),
+        },
     ]
 }
 
@@ -28,14 +33,15 @@ pub(crate) fn connection_examples(name: &str, _dns: &str) -> Vec<String> {
     ]
 }
 
-pub(crate) fn provider_actions(plan: &ObjectProviderPlan) -> Vec<String> {
+pub(crate) fn provider_actions(plan: &ObjectProviderPlan) -> CoreActions {
     vec![
-        "secret provider is external; no secret value stored in GumGum graph".to_owned(),
-        format!(
-            "mapped secret {} through {}",
-            sanitize_name(&plan.name),
-            plan.provider.provider
-        ),
-        "configure Vaultwarden or 1Password credentials before runtime resolution".to_owned(),
+        CoreAction::ProviderConfigured {
+            capability: Capability::Secret,
+            provider: plan.provider.provider.clone(),
+        },
+        CoreAction::ProviderObjectDesiredRemoved {
+            capability: Capability::Secret,
+            name: sanitize_name(&plan.name),
+        },
     ]
 }

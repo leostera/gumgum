@@ -1,4 +1,4 @@
-use crate::{Capability, ContainerRunSpec, DockerEngine};
+use crate::{Capability, ContainerRunSpec, CoreAction, CoreActions, DockerEngine};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -21,10 +21,16 @@ pub fn spec() -> ProviderSpec {
     }
 }
 
-pub(crate) fn actions(_safe_name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn actions(_safe_name: &str, dns: &str) -> CoreActions {
     vec![
-        "ensure observability.platform provider is running".to_owned(),
-        format!("publish DNS {dns} to observability.platform"),
+        CoreAction::ProviderConfigured {
+            capability: Capability::Observability,
+            provider: "observability.platform".to_owned(),
+        },
+        CoreAction::DnsPublished {
+            dns: dns.to_owned(),
+            provider: "observability.platform".to_owned(),
+        },
     ]
 }
 
@@ -32,7 +38,7 @@ pub(crate) fn connection_examples(_name: &str, dns: &str) -> Vec<String> {
     vec![format!("OTEL_EXPORTER_OTLP_ENDPOINT=http://{dns}:4317")]
 }
 
-pub(crate) async fn ensure_platform_stack(root_domain: &str) -> crate::Result<Vec<String>> {
+pub(crate) async fn ensure_platform_stack(root_domain: &str) -> crate::Result<CoreActions> {
     let mut actions = Vec::new();
     for provider in platform_specs(root_domain) {
         actions.extend(ensure_platform_container(&provider, root_domain).await?);
@@ -43,7 +49,7 @@ pub(crate) async fn ensure_platform_stack(root_domain: &str) -> crate::Result<Ve
 async fn ensure_platform_container(
     provider: &ProviderSpec,
     root_domain: &str,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let docker = DockerEngine::local()?;
     docker.ensure_network(GUMGUM_NETWORK).await?;
     if provider.container == "gumgum-prometheus" {
@@ -64,16 +70,18 @@ async fn ensure_platform_container(
         let desired_fingerprint = platform_fingerprint(&desired);
         if existing.labels.get("gumgum.platform.fingerprint") == Some(&desired_fingerprint) {
             docker.start_container(&provider.container).await?;
-            return Ok(vec![format!("started existing {}", provider.container)]);
+            return Ok(vec![CoreAction::PlatformServiceStarted {
+                container: provider.container.clone(),
+            }]);
         }
         docker.remove_container_force(&provider.container).await?;
     }
     docker.pull_image(&provider.image).await?;
     docker.create_and_start_container(desired).await?;
-    Ok(vec![format!(
-        "created platform service {} ({})",
-        provider.container, provider.provider
-    )])
+    Ok(vec![CoreAction::PlatformServiceCreated {
+        provider: provider.provider.clone(),
+        container: provider.container.clone(),
+    }])
 }
 
 fn platform_run_spec(provider: &ProviderSpec, root_domain: &str) -> ContainerRunSpec {
@@ -248,7 +256,7 @@ pub async fn configure_prometheus_scrape(
     container: &str,
     port: u16,
     metrics_path: &str,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let mut targets = load_prometheus_scrapes()?;
     let target = PrometheusScrapeTarget {
         worker: worker.to_owned(),
@@ -267,10 +275,13 @@ pub async fn configure_prometheus_scrape(
     save_prometheus_scrapes(&targets)?;
     ensure_prometheus_config(&targets)?;
     reload_prometheus().await?;
-    Ok(vec![format!(
-        "configured Prometheus scrape for {}@{} at {}:{}{}",
-        target.worker, target.environment, target.container, target.port, target.metrics_path
-    )])
+    Ok(vec![CoreAction::PrometheusScrapeConfigured {
+        worker: target.worker,
+        environment: target.environment,
+        container: target.container,
+        port: target.port,
+        metrics_path: target.metrics_path,
+    }])
 }
 
 fn prometheus_state_dir() -> PathBuf {
@@ -617,7 +628,7 @@ pub async fn apply_grafana_artifact(
     name: &str,
     folder_path: &[String],
     content: serde_json::Value,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let password = std::env::var("GUMGUM_GRAFANA_ADMIN_PASSWORD")
         .unwrap_or_else(|_| "gumgum-local-dev".to_owned());
     let client = reqwest::Client::new();
@@ -673,7 +684,9 @@ pub async fn apply_grafana_artifact(
                     .await
                     .map_err(grafana_error)?;
                 if response.status().is_success() {
-                    actions.push(format!("created Grafana datasource {datasource_name}"));
+                    actions.push(CoreAction::GrafanaDatasourceCreated {
+                        name: datasource_name.to_owned(),
+                    });
                 } else if response.status().as_u16() == 409 {
                     let uid =
                         grafana_datasource_uid(&client, &base, &password, datasource_name).await?;
@@ -685,7 +698,9 @@ pub async fn apply_grafana_artifact(
                         .await
                         .map_err(grafana_error)?;
                     if update.status().is_success() {
-                        actions.push(format!("updated Grafana datasource {datasource_name}"));
+                        actions.push(CoreAction::GrafanaDatasourceUpdated {
+                            name: datasource_name.to_owned(),
+                        });
                     } else {
                         return Err(grafana_response_error(update).await);
                     }
@@ -719,7 +734,9 @@ pub async fn apply_grafana_artifact(
                 .await
                 .map_err(grafana_error)?;
             if response.status().is_success() {
-                Ok(vec![format!("applied Grafana dashboard {name}")])
+                Ok(vec![CoreAction::GrafanaDashboardApplied {
+                    name: name.to_owned(),
+                }])
             } else {
                 Err(grafana_response_error(response).await)
             }

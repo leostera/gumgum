@@ -291,7 +291,7 @@ pub struct GraphExecutionContext {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GraphExecutionReport {
-    pub actions: Vec<String>,
+    pub actions: crate::CoreActions,
     pub typed_events: Vec<crate::GumgumEvent>,
 }
 
@@ -301,7 +301,7 @@ impl GraphActionExecutor {
     pub async fn execute_steps(
         steps: &[GraphExecutionStep],
         context: GraphExecutionContext,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<crate::CoreActions> {
         Ok(Self::execute_steps_report(steps, context).await?.actions)
     }
 
@@ -314,19 +314,22 @@ impl GraphActionExecutor {
 
     pub async fn execute_provider_steps(
         steps: &[GraphExecutionStep],
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<crate::CoreActions> {
         Self::execute_steps(steps, GraphExecutionContext::default()).await
     }
 
     pub async fn execute_provider(
         name: &str,
         capability: Capability,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<crate::CoreActions> {
         match (name, capability) {
             ("secrets.platform", Capability::Secret) => {
                 crate::providers::vaultwarden::ensure().await
             }
-            _ => Ok(vec![format!("configured {capability} provider {name}")]),
+            _ => Ok(vec![crate::CoreAction::ProviderConfigured {
+                capability,
+                provider: name.to_owned(),
+            }]),
         }
     }
 
@@ -334,7 +337,7 @@ impl GraphActionExecutor {
         steps: &[GraphExecutionStep],
         plan: &ObjectProviderPlan,
         credentials: Option<ProviderCredentials>,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<crate::CoreActions> {
         Self::execute_steps(
             steps,
             GraphExecutionContext {
@@ -352,7 +355,7 @@ impl GraphActionExecutor {
     pub async fn execute_object_plan(
         plan: &ObjectProviderPlan,
         credentials: Option<ProviderCredentials>,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<crate::CoreActions> {
         crate::providers::ProviderReconciler::ensure_with_credentials(plan, credentials).await
     }
 }
@@ -392,7 +395,7 @@ impl GraphExecutionSession {
             report.typed_events.push(planned_event);
             match self.execute_step(step).await {
                 Ok(step_actions) => {
-                    let message = step_actions.join("; ");
+                    let message = serde_json::to_string(&step_actions).unwrap_or_default();
                     self.record(crate::ReconcileEventStatus::Executed, step, message.clone())?;
                     let executed_event = step.executed_event(self.operation_id.clone(), message);
                     self.emit_event(executed_event.clone());
@@ -418,7 +421,10 @@ impl GraphExecutionSession {
         }
     }
 
-    async fn execute_step(&mut self, step: &GraphExecutionStep) -> crate::Result<Vec<String>> {
+    async fn execute_step(
+        &mut self,
+        step: &GraphExecutionStep,
+    ) -> crate::Result<crate::CoreActions> {
         #[cfg(test)]
         if self.context.fail_next_step {
             self.context.fail_next_step = false;
@@ -442,7 +448,10 @@ impl GraphExecutionSession {
                     )
                     .await
                 } else {
-                    Ok(vec![format!("planned {}", step.description)])
+                    Ok(vec![crate::CoreAction::Planned {
+                        target: step.target.event_target(),
+                        action: step.action.event_action(),
+                    }])
                 }
             }
             GraphExecutionTarget::ObjectProviderRemoval { .. } => {
@@ -453,16 +462,20 @@ impl GraphExecutionSession {
                     )
                     .await
                 } else {
-                    Ok(vec![format!("planned {}", step.description)])
+                    Ok(vec![crate::CoreAction::Planned {
+                        target: step.target.event_target(),
+                        action: step.action.event_action(),
+                    }])
                 }
             }
             GraphExecutionTarget::ContainerRuntime { .. }
             | GraphExecutionTarget::DeployRuntime { .. } => self.execute_deploy_step(step).await,
             GraphExecutionTarget::WorkerRuntime { .. }
             | GraphExecutionTarget::Gateway { .. }
-            | GraphExecutionTarget::GraphStore { .. } => {
-                Ok(vec![format!("planned {}", step.description)])
-            }
+            | GraphExecutionTarget::GraphStore { .. } => Ok(vec![crate::CoreAction::Planned {
+                target: step.target.event_target(),
+                action: step.action.event_action(),
+            }]),
             GraphExecutionTarget::Removal { .. } => self.execute_removal_step(step).await,
         }
     }
@@ -470,32 +483,47 @@ impl GraphExecutionSession {
     async fn execute_deploy_step(
         &mut self,
         step: &GraphExecutionStep,
-    ) -> crate::Result<Vec<String>> {
+    ) -> crate::Result<crate::CoreActions> {
         if self.container_runtime_seen {
-            return Ok(vec![
-                "container runtime already reconciled for this graph execution".to_owned(),
-            ]);
+            return Ok(vec![crate::CoreAction::Planned {
+                target: step.target.event_target(),
+                action: step.action.event_action(),
+            }]);
         }
         self.container_runtime_seen = true;
         if let Some(graph_path) = &self.context.graph_path {
             let Some(request) = step.target.deploy_request() else {
-                return Ok(vec![format!("planned {}", step.description)]);
+                return Ok(vec![crate::CoreAction::Planned {
+                    target: step.target.event_target(),
+                    action: step.action.event_action(),
+                }]);
             };
             let (changed, mut deploy_actions) = crate::ContainerReconciler::new(graph_path.clone())
                 .reconcile(&request)
                 .await?;
             if !changed && deploy_actions.is_empty() {
-                deploy_actions.push("container already matches desired state".to_owned());
+                deploy_actions.push(crate::CoreAction::DeploymentContainerMatches {
+                    container: request.container.clone(),
+                });
             }
             Ok(deploy_actions)
         } else {
-            Ok(vec![format!("planned {}", step.description)])
+            Ok(vec![crate::CoreAction::Planned {
+                target: step.target.event_target(),
+                action: step.action.event_action(),
+            }])
         }
     }
 
-    async fn execute_removal_step(&self, step: &GraphExecutionStep) -> crate::Result<Vec<String>> {
+    async fn execute_removal_step(
+        &self,
+        step: &GraphExecutionStep,
+    ) -> crate::Result<crate::CoreActions> {
         let GraphExecutionTarget::Removal { id, container } = &step.target else {
-            return Ok(vec![format!("planned {}", step.description)]);
+            return Ok(vec![crate::CoreAction::Planned {
+                target: step.target.event_target(),
+                action: step.action.event_action(),
+            }]);
         };
         let docker = crate::DockerEngine::local()?;
         let mut containers = Vec::new();
@@ -515,12 +543,15 @@ impl GraphExecutionSession {
         containers.sort();
         containers.dedup();
         if containers.is_empty() {
-            return Ok(vec![format!("planned {}", step.description)]);
+            return Ok(vec![crate::CoreAction::Planned {
+                target: step.target.event_target(),
+                action: step.action.event_action(),
+            }]);
         }
         let mut actions = Vec::new();
         for container in containers {
             docker.remove_container_force(&container).await?;
-            actions.push(format!("removed deployment container {container}"));
+            actions.push(crate::CoreAction::DeploymentContainerRemoved { container });
         }
         Ok(actions)
     }
@@ -807,7 +838,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(actions, vec!["configured manual provider manual.main"]);
+        assert!(matches!(actions.as_slice(), [crate::CoreAction::ProviderConfigured { provider, .. }] if provider == "manual.main"));
     }
 
     #[tokio::test]
@@ -865,10 +896,10 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(
-            report.actions,
-            vec!["configured manual provider manual.main"]
-        );
+        assert!(matches!(
+            report.actions.as_slice(),
+            [crate::CoreAction::ProviderConfigured { provider, .. }] if provider == "manual.main"
+        ));
         assert_eq!(report.typed_events.len(), 2);
         assert!(matches!(
             report.typed_events[0],
@@ -879,7 +910,7 @@ mod tests {
             report.typed_events[1],
             crate::GumgumEvent::ReconcileStepExecuted { ref target, ref message, .. }
                 if target == "provider/manual.main"
-                    && message == "configured manual provider manual.main"
+                    && message.contains("provider_configured")
         ));
     }
 
@@ -940,7 +971,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(actions, vec!["configured manual provider manual.main"]);
+        assert!(matches!(actions.as_slice(), [crate::CoreAction::ProviderConfigured { provider, .. }] if provider == "manual.main"));
         let events = crate::GraphStore::new(graph_path.clone())
             .list_reconcile_events(10)
             .unwrap();
@@ -1020,11 +1051,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            actions
-                .iter()
-                .any(|action| action.contains("no secret value stored"))
-        );
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::CoreAction::ProviderObjectDesiredRemoved { capability: Capability::Secret, .. }
+        )));
     }
 
     #[tokio::test]
@@ -1044,8 +1074,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(actions[0], "configured manual provider manual.main");
-        assert!(actions[1].contains("planned ensure route api.example.test"));
+        assert!(matches!(
+            actions.first(),
+            Some(crate::CoreAction::ProviderConfigured { provider, .. }) if provider == "manual.main"
+        ));
+        assert!(matches!(
+            actions.get(1),
+            Some(crate::CoreAction::Planned { target, .. }) if target == "route/api.example.test"
+        ));
     }
 
     #[test]
@@ -1131,7 +1167,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(actions[0].contains("planned ensure deploy runtime for api"));
+        assert!(matches!(actions.first(), Some(crate::CoreAction::Planned { target, .. }) if target == "deployment/api"));
     }
 
     #[tokio::test]
@@ -1145,10 +1181,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            actions,
-            vec!["planned ensure deploy runtime for api runs image ghcr.io/acme/api:v1"]
-        );
+        assert!(matches!(
+            actions.as_slice(),
+            [crate::CoreAction::Planned { target, .. }] if target == "deployment/api"
+        ));
     }
 
     #[tokio::test]
@@ -1169,10 +1205,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(actions.len(), 1);
-        assert_eq!(
-            actions[0],
-            "planned ensure deploy runtime for api runs image ghcr.io/acme/api:v1"
-        );
+        assert!(matches!(
+            actions.first(),
+            Some(crate::CoreAction::Planned { target, .. }) if target == "deployment/api"
+        ));
     }
 
     #[test]

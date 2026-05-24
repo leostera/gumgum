@@ -16,7 +16,7 @@ use gumgum_core::{Capability, ErrorCode, GumgumError, Subsystem, load_worker_pat
 use serde::Serialize;
 use std::path::PathBuf;
 
-use crate::server_client::ServerClient;
+use crate::{presentation::action_text, server_client::ServerClient};
 
 pub(crate) async fn object_command(
     kind: &str,
@@ -358,7 +358,7 @@ fn print_bucket_object_report(report: &gumgum_api::BucketObjectReport) {
         return;
     }
     for action in &report.actions {
-        println!("{action}");
+        println!("{}", action_text(action));
     }
     println!("{}", report.message);
 }

@@ -8,7 +8,7 @@ use gumgum_core::{
 };
 use serde::Serialize;
 
-use crate::server_client::ServerClient;
+use crate::{presentation::action_text, server_client::ServerClient};
 
 #[derive(Debug, Serialize)]
 struct InfoReport {
@@ -209,7 +209,12 @@ fn revision_delete_lines(report: &DeploymentRevisionDeleteReport) -> Vec<String>
     }];
     if !report.actions.is_empty() {
         lines.push("Actions:".to_owned());
-        lines.extend(report.actions.iter().map(|action| format!("  - {action}")));
+        lines.extend(
+            report
+                .actions
+                .iter()
+                .map(|action| format!("  - {}", action_text(action))),
+        );
     }
     lines
 }
@@ -298,7 +303,12 @@ fn rollback_lines(report: &RollbackReport) -> Vec<String> {
     }
     if !report.actions.is_empty() {
         lines.push("Actions:".to_owned());
-        lines.extend(report.actions.iter().map(|action| format!("  - {action}")));
+        lines.extend(
+            report
+                .actions
+                .iter()
+                .map(|action| format!("  - {}", action_text(action))),
+        );
     }
     lines
 }
@@ -318,7 +328,7 @@ mod tests {
             route: Some("api.example.test".to_owned()),
             port: Some(3000),
             health: Some("/healthz".to_owned()),
-            actions: vec!["rollback to registry/api:1".to_owned()],
+            actions: vec![gumgum_core::CoreAction::CliMessage { message: "rollback to registry/api:1".to_owned() }],
             message: "rollback applied".to_owned(),
         };
 
@@ -346,8 +356,8 @@ mod tests {
             revision_id: 8,
             deleted: true,
             actions: vec![
-                "deleted deployment revision 8".to_owned(),
-                "no containers or desired deployments changed".to_owned(),
+                gumgum_core::CoreAction::CliMessage { message: "deleted deployment revision 8".to_owned() },
+                gumgum_core::CoreAction::CliMessage { message: "no containers or desired deployments changed".to_owned() },
             ],
             message: "deleted deployment revision 8".to_owned(),
         };
@@ -419,7 +429,7 @@ mod tests {
             route: None,
             port: None,
             health: None,
-            actions: vec!["preview only; no containers changed".to_owned()],
+            actions: vec![gumgum_core::CoreAction::PreviewOnly { scope: gumgum_core::ActionScope::Deployment }],
             message: "rollback preview".to_owned(),
         };
 
@@ -439,7 +449,7 @@ mod tests {
             route: None,
             port: None,
             health: None,
-            actions: vec!["no previous image recorded".to_owned()],
+            actions: vec![gumgum_core::CoreAction::CliMessage { message: "no previous image recorded".to_owned() }],
             message: "no previous deployment image recorded".to_owned(),
         };
 

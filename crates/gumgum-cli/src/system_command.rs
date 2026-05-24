@@ -2,7 +2,10 @@ use crate::{
     ServerCommand, ServerSubcommand, ServerUpgradeArgs, StatusArgs, config_command,
     print_config_report, print_value, progress,
 };
-use crate::{domain_command::authorize_cloudflare_zone, server_client::ServerClient};
+use crate::{
+    domain_command::authorize_cloudflare_zone, presentation::action_texts,
+    server_client::ServerClient,
+};
 use gumgum_api::{
     DaemonVersionReport, DomainAddRequest, GraphReport, PingReport, ProviderStatusReport,
     ServerListReport,
@@ -211,7 +214,7 @@ async fn add_server(
     let client = ServerClient::new(setup.host.clone());
     let provider_report = client.boot_default_providers().await?;
     let mut actions = server_add_actions(&setup, false);
-    actions.extend(provider_report.actions);
+    actions.extend(action_texts(&provider_report.actions));
     if setup.ingress == gumgum_core::IngressMode::Cloudflare {
         progress(
             quiet,
@@ -226,7 +229,7 @@ async fn add_server(
                 cloudflare_grant: Some(grant),
             })
             .await?;
-        actions.extend(domain_report.actions);
+        actions.extend(action_texts(&domain_report.actions));
     }
     Ok(ServerMutationReport {
         ok: true,
@@ -272,7 +275,7 @@ fn server_add_actions(setup: &SetupTarget, dry_run: bool) -> Vec<String> {
     if dry_run {
         actions.push("preview only; no install, config, or provider changes".to_owned());
     }
-    actions.extend(setup_actions(setup.local));
+    actions.extend(action_texts(&setup_actions(setup.local)));
     if setup.ingress == gumgum_core::IngressMode::Cloudflare {
         actions.push(format!(
             "authorize Cloudflare for {} and configure Cloudflare ingress",

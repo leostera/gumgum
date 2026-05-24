@@ -1,7 +1,7 @@
 use super::docker::{
     create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
 };
-use crate::{Capability, DockerEngine, sanitize_name};
+use crate::{Capability, CoreAction, CoreActions, DockerEngine, sanitize_name};
 
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
 
@@ -16,11 +16,19 @@ pub fn spec() -> ProviderSpec {
     }
 }
 
-pub(crate) fn actions(safe_name: &str, dns: &str) -> Vec<String> {
+pub(crate) fn actions(safe_name: &str, dns: &str) -> CoreActions {
     vec![
-        "ensure redis.main provider is running".to_owned(),
-        format!("reserve Redis key prefix {safe_name}:"),
-        format!("publish DNS {dns} to redis.main"),
+        CoreAction::ProviderConfigured {
+            capability: Capability::Kv,
+            provider: "redis.main".to_owned(),
+        },
+        CoreAction::RedisPrefixReserved {
+            prefix: safe_name.to_owned(),
+        },
+        CoreAction::DnsPublished {
+            dns: dns.to_owned(),
+            provider: "redis.main".to_owned(),
+        },
     ]
 }
 
@@ -34,23 +42,33 @@ pub(crate) fn connection_examples(_name: &str, dns: &str) -> Vec<String> {
 pub(crate) async fn ensure_object(
     plan: &ObjectProviderPlan,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     let mut actions = ensure_with_credentials(&plan.provider, credentials).await?;
     let prefix = sanitize_name(&plan.name);
-    actions.push(format!("reserved Redis key prefix {prefix}:"));
-    actions.push(format!("published DNS {} to redis.main", plan.dns));
+    actions.push(CoreAction::RedisPrefixReserved {
+        prefix: prefix.clone(),
+    });
+    actions.push(CoreAction::DnsPublished {
+        dns: plan.dns.clone(),
+        provider: "redis.main".to_owned(),
+    });
     Ok(actions)
 }
 
-pub(crate) async fn delete_object(plan: &ObjectProviderPlan) -> crate::Result<Vec<String>> {
+pub(crate) async fn delete_object(plan: &ObjectProviderPlan) -> crate::Result<CoreActions> {
     let mut actions = ensure(&plan.provider).await?;
     let prefix = sanitize_name(&plan.name);
-    actions.push(format!("released Redis key prefix {prefix}:"));
-    actions.push(format!("removed DNS {} from redis.main", plan.dns));
+    actions.push(CoreAction::RedisPrefixReleased {
+        prefix: prefix.clone(),
+    });
+    actions.push(CoreAction::DnsRemoved {
+        dns: plan.dns.clone(),
+        provider: "redis.main".to_owned(),
+    });
     Ok(actions)
 }
 
-pub(crate) async fn ensure(provider: &ProviderSpec) -> crate::Result<Vec<String>> {
+pub(crate) async fn ensure(provider: &ProviderSpec) -> crate::Result<CoreActions> {
     ensure_network().await?;
     if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
         return start_existing(provider, "could not start redis provider").await;
@@ -66,7 +84,7 @@ pub(crate) async fn ensure(provider: &ProviderSpec) -> crate::Result<Vec<String>
 pub(crate) async fn ensure_with_credentials(
     provider: &ProviderSpec,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     ensure_network().await?;
     if inspect(&provider.container).await && !provider_needs_recreate(provider).await {
         let mut actions = start_existing(provider, "could not start redis provider").await?;
@@ -74,10 +92,9 @@ pub(crate) async fn ensure_with_credentials(
             DockerEngine::local()?
                 .remove_container_force(&provider.container)
                 .await?;
-            actions.push(format!(
-                "recreated {} provider with configured password",
-                provider.provider
-            ));
+            actions.push(CoreAction::ProviderContainerRecreated {
+                provider: provider.provider.clone(),
+            });
             actions.extend(create_redis_provider_container(provider, credentials).await?);
         }
         return Ok(actions);
@@ -93,7 +110,7 @@ pub(crate) async fn ensure_with_credentials(
 async fn create_redis_provider_container(
     provider: &ProviderSpec,
     credentials: ProviderCredentials,
-) -> crate::Result<Vec<String>> {
+) -> crate::Result<CoreActions> {
     create_provider_container(
         provider,
         Vec::new(),
@@ -171,7 +188,7 @@ mod tests {
         assert_eq!(plan.provider.provider, "redis.main");
         assert!(
             plan.actions
-                .contains(&"reserve Redis key prefix user-counters:".to_owned())
+                .iter().any(|action| matches!(action, crate::CoreAction::RedisPrefixReserved { prefix } if prefix == "user-counters"))
         );
     }
 }
