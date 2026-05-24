@@ -74,7 +74,7 @@ status_smoke() {
   if [[ -n "$ARTIFACT_DIR" ]]; then cp "$status_file" "$ARTIFACT_DIR/status.txt"; fi
 
   require_contains "$status_file" "gumgumd: healthy"
-  require_contains "$status_file" "Providers: 9/9 running"
+  require_contains "$status_file" "Providers: 11/11 running"
   if grep -Fq "provider warning" "$status_file"; then
     fail "status emitted provider warning"
   fi
@@ -86,7 +86,8 @@ status_smoke() {
 
   for container in \
     gumgum-vaultwarden gumgum-otel gumgum-prometheus gumgum-grafana \
-    gumgum-loki gumgum-tempo gumgum-caddy gumgum-cloudflared; do
+    gumgum-loki gumgum-tempo gumgum-node-exporter gumgum-cadvisor \
+    gumgum-caddy gumgum-cloudflared; do
     require_contains "$docker_file" "$container"
   done
   require_contains "$docker_file" "0.0.0.0:80->80/tcp"

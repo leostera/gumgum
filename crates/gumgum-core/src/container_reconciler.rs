@@ -87,7 +87,15 @@ impl ContainerReconciler {
         ]);
         if let Some(environment) = expected_environment {
             labels.insert("gumgum.environment".to_owned(), environment.to_owned());
+            labels.insert(
+                "prometheus.label_environment".to_owned(),
+                environment.to_owned(),
+            );
         }
+        labels.insert("prometheus.scrape".to_owned(), "true".to_owned());
+        labels.insert("prometheus.port".to_owned(), request.port.to_string());
+        labels.insert("prometheus.path".to_owned(), "/_/metrics".to_owned());
+        labels.insert("prometheus.label_worker".to_owned(), request.worker.clone());
         if let Some(route) = &request.route {
             labels.insert("caddy".to_owned(), route.clone());
             labels.insert(

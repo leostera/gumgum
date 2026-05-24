@@ -134,10 +134,19 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
         "gumgum-grafana" => vec!["gumgum-grafana-data:/var/lib/grafana".to_owned()],
         "gumgum-prometheus" => vec![
             "gumgum-prometheus-data:/prometheus".to_owned(),
+            "/var/run/docker.sock:/var/run/docker.sock:ro".to_owned(),
             format!(
                 "{}:/etc/prometheus/prometheus.yml:ro",
                 prometheus_config_path().display()
             ),
+        ],
+        "gumgum-node-exporter" => vec!["/:/host:ro,rslave".to_owned()],
+        "gumgum-cadvisor" => vec![
+            "/:/rootfs:ro".to_owned(),
+            "/var/run:/var/run:ro".to_owned(),
+            "/sys:/sys:ro".to_owned(),
+            "/var/lib/docker:/var/lib/docker:ro".to_owned(),
+            "/dev/disk:/dev/disk:ro".to_owned(),
         ],
         "gumgum-loki" => vec!["gumgum-loki-data:/loki".to_owned()],
         _ => Vec::new(),
@@ -162,7 +171,7 @@ fn platform_fingerprint_parts(
     parts.sort();
     let mut hasher = DefaultHasher::new();
     parts.hash(&mut hasher);
-    format!("v3:{:016x}", hasher.finish())
+    format!("v4:{:016x}", hasher.finish())
 }
 
 fn platform_command(provider: &ProviderSpec) -> Vec<String> {
@@ -180,6 +189,7 @@ fn platform_command(provider: &ProviderSpec) -> Vec<String> {
             "-storage.trace.local.path=/tmp/tempo/traces".to_owned(),
             "-auth.enabled=false".to_owned(),
         ],
+        "gumgum-node-exporter" => vec!["--path.rootfs=/host".to_owned()],
         _ => Vec::new(),
     }
 }
@@ -283,7 +293,7 @@ fn ensure_prometheus_config(targets: &[PrometheusScrapeTarget]) -> crate::Result
         std::fs::create_dir_all(parent)
             .map_err(|error| io_error("could not create Prometheus config directory", error))?;
     }
-    let mut config = "global:\n  scrape_interval: 15s\nscrape_configs:\n  - job_name: gumgum-platform\n    static_configs:\n      - targets: ['gumgum-prometheus:9090']\n".to_owned();
+    let mut config = prometheus_config_base();
     for target in targets {
         config.push_str(&format!(
             "  - job_name: gumgum-{}-{}\n    metrics_path: '{}'\n    static_configs:\n      - targets: ['{}:{}']\n        labels:\n          worker: '{}'\n          environment: '{}'\n",
@@ -322,6 +332,64 @@ async fn reload_prometheus() -> crate::Result<()> {
     } else {
         Err(grafana_response_error(response).await)
     }
+}
+
+fn prometheus_config_base() -> String {
+    r#"global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+scrape_configs:
+  - job_name: gumgum-platform
+    static_configs:
+      - targets: ['gumgum-prometheus:9090']
+
+  - job_name: gumgum-host
+    static_configs:
+      - targets: ['gumgum-node-exporter:9100']
+
+  - job_name: gumgum-containers
+    static_configs:
+      - targets: ['gumgum-cadvisor:8080']
+
+  - job_name: gumgum-docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_prometheus_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+        regex: /(.+)
+        replacement: '$1'
+      - source_labels: [__meta_docker_container_label_gumgum_managed]
+        target_label: gumgum_managed
+      - source_labels: [__meta_docker_container_label_gumgum_environment]
+        target_label: environment
+      - source_labels: [__meta_docker_container_label_gumgum_worker]
+        target_label: worker
+      - source_labels: [__meta_docker_container_label_gumgum_platform_service]
+        target_label: platform_service
+      - source_labels: [__meta_docker_container_label_prometheus_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__meta_docker_container_label_prometheus_port, __meta_docker_network_ip]
+        action: replace
+        target_label: __address__
+        regex: ([^;]+);(.+)
+        replacement: '$2:$1'
+      - source_labels: [__meta_docker_network_ip, __meta_docker_port_private]
+        action: replace
+        target_label: __address__
+        regex: ([^;]+);(.+)
+        replacement: '$1:$2'
+      - action: labelmap
+        regex: __meta_docker_container_label_prometheus_label_(.+)
+        replacement: '$1'
+"#
+    .to_owned()
 }
 
 fn yaml_scalar(value: &str) -> String {
@@ -606,6 +674,22 @@ fn platform_specs(_root_domain: &str) -> Vec<ProviderSpec> {
             port: 3200,
             protocol: "http".to_owned(),
         },
+        ProviderSpec {
+            capability: Capability::Observability,
+            provider: "node-exporter.platform".to_owned(),
+            container: "gumgum-node-exporter".to_owned(),
+            image: "prom/node-exporter:latest".to_owned(),
+            port: 9100,
+            protocol: "http".to_owned(),
+        },
+        ProviderSpec {
+            capability: Capability::Observability,
+            provider: "cadvisor.platform".to_owned(),
+            container: "gumgum-cadvisor".to_owned(),
+            image: "gcr.io/cadvisor/cadvisor:latest".to_owned(),
+            port: 8080,
+            protocol: "http".to_owned(),
+        },
     ]
 }
 
@@ -624,8 +708,24 @@ mod tests {
         assert!(specs.iter().any(|spec| spec.container == "gumgum-grafana"));
         assert!(specs.iter().any(|spec| spec.container == "gumgum-loki"));
         assert!(specs.iter().any(|spec| spec.container == "gumgum-tempo"));
+        assert!(
+            specs
+                .iter()
+                .any(|spec| spec.container == "gumgum-node-exporter")
+        );
+        assert!(specs.iter().any(|spec| spec.container == "gumgum-cadvisor"));
         assert!(specs.iter().all(|spec| !spec.container.contains("preview")));
         assert!(specs.iter().all(|spec| !spec.container.contains("prod")));
+    }
+
+    #[test]
+    fn prometheus_config_includes_host_container_and_docker_discovery_jobs() {
+        let config = prometheus_config_base();
+        assert!(config.contains("job_name: gumgum-host"));
+        assert!(config.contains("job_name: gumgum-containers"));
+        assert!(config.contains("job_name: gumgum-docker"));
+        assert!(config.contains("unix:///var/run/docker.sock"));
+        assert!(config.contains("__meta_docker_container_label_prometheus_scrape"));
     }
 
     #[test]
@@ -702,6 +802,10 @@ mod tests {
             spec.binds
                 .iter()
                 .any(|bind| bind.ends_with(":/etc/prometheus/prometheus.yml:ro"))
+        );
+        assert!(
+            spec.binds
+                .contains(&"/var/run/docker.sock:/var/run/docker.sock:ro".to_owned())
         );
         assert!(spec.command.contains(&"--web.enable-lifecycle".to_owned()));
     }
