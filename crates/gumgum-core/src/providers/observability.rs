@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use super::types::{ProviderSpec, ProviderStatus};
 
 const GUMGUM_NETWORK: &str = "gumgum-network";
-const PLATFORM_FINGERPRINT_VERSION: &str = "v5";
+const PLATFORM_FINGERPRINT_VERSION: &str = "v6";
 
 pub fn spec() -> ProviderSpec {
     ProviderSpec {
@@ -49,6 +49,12 @@ async fn ensure_platform_container(
     if provider.container == "gumgum-prometheus" {
         let targets = load_prometheus_scrapes()?;
         ensure_prometheus_config(&targets)?;
+    }
+    if provider.container == "gumgum-otel" {
+        ensure_otel_config()?;
+    }
+    if provider.container == "gumgum-tempo" {
+        ensure_tempo_config()?;
     }
     if provider.container == "gumgum-alloy" {
         ensure_alloy_config()?;
@@ -149,6 +155,10 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
                 prometheus_config_path().display()
             ),
         ],
+        "gumgum-otel" => vec![format!(
+            "{}:/etc/otelcol-contrib/config.yaml:ro",
+            otel_config_path().display()
+        )],
         "gumgum-alloy" => vec![
             "/var/run/docker.sock:/var/run/docker.sock:ro".to_owned(),
             "/gumgum/volumes/platform/alloy:/var/lib/alloy".to_owned(),
@@ -167,7 +177,10 @@ fn platform_binds(provider: &ProviderSpec) -> Vec<String> {
             "/dev/disk:/dev/disk:ro".to_owned(),
         ],
         "gumgum-loki" => vec!["/gumgum/volumes/platform/loki:/loki".to_owned()],
-        "gumgum-tempo" => vec!["/gumgum/volumes/platform/tempo:/tmp/tempo".to_owned()],
+        "gumgum-tempo" => vec![
+            "/gumgum/volumes/platform/tempo:/tmp/tempo".to_owned(),
+            format!("{}:/etc/tempo.yaml:ro", tempo_config_path().display()),
+        ],
         _ => Vec::new(),
     }
 }
@@ -205,13 +218,7 @@ fn platform_command(provider: &ProviderSpec) -> Vec<String> {
             "--web.enable-lifecycle".to_owned(),
         ],
         "gumgum-loki" => vec!["-config.file=/etc/loki/local-config.yaml".to_owned()],
-        "gumgum-tempo" => vec![
-            "-target=all".to_owned(),
-            "-server.http-listen-port=3200".to_owned(),
-            "-storage.trace.backend=local".to_owned(),
-            "-storage.trace.local.path=/tmp/tempo/traces".to_owned(),
-            "-auth.enabled=false".to_owned(),
-        ],
+        "gumgum-tempo" => vec!["-config.file=/etc/tempo.yaml".to_owned()],
         "gumgum-alloy" => vec![
             "run".to_owned(),
             "--storage.path=/var/lib/alloy".to_owned(),
@@ -279,6 +286,14 @@ fn alloy_config_path() -> PathBuf {
     prometheus_state_dir().join("alloy.river")
 }
 
+fn otel_config_path() -> PathBuf {
+    prometheus_state_dir().join("otel-collector.yaml")
+}
+
+fn tempo_config_path() -> PathBuf {
+    prometheus_state_dir().join("tempo.yaml")
+}
+
 fn prometheus_scrapes_path() -> PathBuf {
     prometheus_state_dir().join("prometheus-scrapes.json")
 }
@@ -328,6 +343,92 @@ fn ensure_alloy_config() -> crate::Result<()> {
     }
     std::fs::write(path, alloy_config())
         .map_err(|error| io_error("could not write Alloy config", error))
+}
+
+fn ensure_otel_config() -> crate::Result<()> {
+    let path = otel_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| io_error("could not create OpenTelemetry config directory", error))?;
+    }
+    std::fs::write(path, otel_config())
+        .map_err(|error| io_error("could not write OpenTelemetry config", error))
+}
+
+fn ensure_tempo_config() -> crate::Result<()> {
+    let path = tempo_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| io_error("could not create Tempo config directory", error))?;
+    }
+    std::fs::write(path, tempo_config())
+        .map_err(|error| io_error("could not write Tempo config", error))
+}
+
+fn otel_config() -> String {
+    r#"receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/tempo:
+    endpoint: gumgum-tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo]
+"#
+    .to_owned()
+}
+
+fn tempo_config() -> String {
+    r#"server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  trace_idle_period: 10s
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/traces
+    wal:
+      path: /tmp/tempo/wal
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: []
+"#
+    .to_owned()
 }
 
 fn alloy_config() -> String {

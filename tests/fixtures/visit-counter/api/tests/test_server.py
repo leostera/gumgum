@@ -1,5 +1,8 @@
 import json
 
+from opentelemetry import trace
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, use_span
+
 from visit_counter_api import server
 
 
@@ -62,3 +65,23 @@ def test_visit_increments_counter_and_writes_bucket_and_queue(monkeypatch, tmp_p
     assert {request["total_count"] for request in requests} == {"1", "2", "3"}
     assert all(message["bucket"] == "visit-requests" for message in messages)
     assert all(message["key"].startswith("requests/") for message in messages)
+
+
+def test_visit_queue_message_carries_trace_context(monkeypatch, tmp_path):
+    configure_fallback_paths(monkeypatch, tmp_path)
+    span_context = SpanContext(
+        trace_id=0x1234567890ABCDEF1234567890ABCDEF,
+        span_id=0x1234567890ABCDEF,
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        trace_state=trace.DEFAULT_TRACE_STATE,
+    )
+
+    with use_span(NonRecordingSpan(span_context), end_on_exit=False):
+        server.record_visit(path="/", user_agent="pytest", visitor_id="visitor-1")
+
+    [message_path] = list((tmp_path / "queue").glob("*.json"))
+    message = json.loads(message_path.read_text())
+    assert message["traceparent"].startswith(
+        "00-1234567890abcdef1234567890abcdef-1234567890abcdef-01"
+    )

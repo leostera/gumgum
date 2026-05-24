@@ -7,6 +7,9 @@ dependencies = [
   "boto3>=1.35.0",
   "confluent-kafka>=2.6.0",
   "fastapi>=0.115.0",
+  "opentelemetry-exporter-otlp>=1.29.0",
+  "opentelemetry-instrumentation-fastapi>=0.50b0",
+  "opentelemetry-sdk>=1.29.0",
   "redis>=5.2.0",
   "uvicorn[standard]>=0.32.0",
 ]

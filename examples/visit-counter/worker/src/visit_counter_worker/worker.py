@@ -24,6 +24,21 @@ try:  # Optional until GumGum projects DATABASE_URL from a real provider.
 except ImportError:  # pragma: no cover - only used outside uv-managed envs
     psycopg = None
 
+try:
+    from opentelemetry import trace
+    from opentelemetry.propagate import extract
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+except ImportError:  # pragma: no cover - optional in local fallback mode
+    trace = None
+    extract = None
+    OTLPSpanExporter = None
+    Resource = None
+    TracerProvider = None
+    BatchSpanProcessor = None
+
 STATE_DIR = Path(os.environ.get("VISIT_COUNTER_STATE_DIR", "/tmp/visit-counter"))
 BUCKET_DIR = Path(os.environ.get("VISIT_COUNTER_BUCKET_DIR", STATE_DIR / "bucket"))
 QUEUE_DIR = Path(os.environ.get("VISIT_COUNTER_QUEUE_DIR", STATE_DIR / "queue"))
@@ -44,6 +59,40 @@ KAFKA_TOPIC = os.environ.get("VISIT_EVENTS_QUEUE_TOPIC")
 KAFKA_GROUP_ID = os.environ.get("VISIT_EVENTS_QUEUE_GROUP_ID", "visit-counter-worker")
 HEALTH_PORT = int(os.environ.get("PORT", "3000"))
 PROCESSED_VISITS = 0
+
+
+def otel_resource_attributes() -> dict[str, str]:
+    attributes = {"service.name": os.environ.get("OTEL_SERVICE_NAME", "visit-counter-worker")}
+    for pair in os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "").split(","):
+        if not pair or "=" not in pair:
+            continue
+        key, value = pair.split("=", 1)
+        attributes[key.strip()] = value.strip()
+    return attributes
+
+
+def configure_tracing() -> None:
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        return
+    if not all([trace, OTLPSpanExporter, Resource, TracerProvider, BatchSpanProcessor]):
+        print("OpenTelemetry packages are not installed; traces disabled", flush=True)
+        return
+    try:
+        provider = TracerProvider(resource=Resource.create(otel_resource_attributes()))
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(provider)
+        print("OpenTelemetry tracing enabled", flush=True)
+    except Exception as error:  # pragma: no cover - runtime diagnostics
+        print(f"OpenTelemetry tracing disabled: {error}", flush=True)
+
+
+configure_tracing()
+
+
+def tracer():
+    if trace is None:
+        return None
+    return trace.get_tracer("visit_counter_worker")
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -288,7 +337,34 @@ def process_message(
     events: EventSource | None = None,
 ) -> None:
     bucket = bucket or request_bucket()
-    request = bucket.get_json(message["key"])
+    current_tracer = tracer()
+    parent_context = extract(message) if extract is not None else None
+    span_context = (
+        current_tracer.start_as_current_span(
+            "visit-counter.process_message", context=parent_context
+        )
+        if current_tracer is not None
+        else None
+    )
+    if span_context is None:
+        request = bucket.get_json(message["key"])
+        _process_request(store, request, events, message)
+    else:
+        with span_context as span:
+            span.set_attribute("messaging.system", "kafka" if KAFKA_BROKERS else "file")
+            span.set_attribute("messaging.destination.name", KAFKA_TOPIC or "visit-events")
+            span.set_attribute("visit.bucket_key", message["key"])
+            request = bucket.get_json(message["key"])
+            span.set_attribute("visit.id", request["id"])
+            _process_request(store, request, events, message)
+
+
+def _process_request(
+    store: VisitStore,
+    request: dict[str, str],
+    events: EventSource | None,
+    message: dict[str, str],
+) -> None:
     global PROCESSED_VISITS
     store.insert_visit(request)
     PROCESSED_VISITS += 1

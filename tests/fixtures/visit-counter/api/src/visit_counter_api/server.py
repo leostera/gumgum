@@ -25,6 +25,23 @@ except ImportError:  # pragma: no cover - only used outside uv-managed envs
 from fastapi import Cookie, FastAPI, Request, Response
 from fastapi.responses import PlainTextResponse
 
+try:
+    from opentelemetry import trace
+    from opentelemetry.propagate import inject
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+except ImportError:  # pragma: no cover - optional in local fallback mode
+    trace = None
+    inject = None
+    OTLPSpanExporter = None
+    FastAPIInstrumentor = None
+    Resource = None
+    TracerProvider = None
+    BatchSpanProcessor = None
+
 app = FastAPI(title="GumGum Visit Counter")
 
 STATE_DIR = Path(os.environ.get("VISIT_COUNTER_STATE_DIR", "/tmp/visit-counter"))
@@ -42,6 +59,35 @@ S3_SECRET_ACCESS_KEY = os.environ.get("VISIT_REQUESTS_BUCKET_SECRET_ACCESS_KEY")
 S3_FORCE_PATH_STYLE = os.environ.get("VISIT_REQUESTS_BUCKET_FORCE_PATH_STYLE") == "true"
 KAFKA_BROKERS = os.environ.get("VISIT_EVENTS_QUEUE_BROKERS")
 KAFKA_TOPIC = os.environ.get("VISIT_EVENTS_QUEUE_TOPIC")
+
+
+def otel_resource_attributes() -> dict[str, str]:
+    attributes = {"service.name": os.environ.get("OTEL_SERVICE_NAME", "visit-counter-api")}
+    for pair in os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "").split(","):
+        if not pair or "=" not in pair:
+            continue
+        key, value = pair.split("=", 1)
+        attributes[key.strip()] = value.strip()
+    return attributes
+
+
+def configure_tracing() -> None:
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        return
+    if not all([trace, OTLPSpanExporter, FastAPIInstrumentor, Resource, TracerProvider, BatchSpanProcessor]):
+        print("OpenTelemetry packages are not installed; traces disabled", flush=True)
+        return
+    try:
+        provider = TracerProvider(resource=Resource.create(otel_resource_attributes()))
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(provider)
+        FastAPIInstrumentor.instrument_app(app)
+        print("OpenTelemetry tracing enabled", flush=True)
+    except Exception as error:  # pragma: no cover - runtime diagnostics
+        print(f"OpenTelemetry tracing disabled: {error}", flush=True)
+
+
+configure_tracing()
 
 
 class CounterStore(Protocol):
@@ -226,7 +272,10 @@ def record_visit(
         "total_count": str(total_count),
     }
     bucket.put_json(key, payload)
-    queue.publish(request_id, {"bucket": BUCKET_NAME, "key": key})
+    message = {"bucket": BUCKET_NAME, "key": key}
+    if inject is not None:
+        inject(message)
+    queue.publish(request_id, message)
     return visitor_id, visitor_count, total_count
 
 

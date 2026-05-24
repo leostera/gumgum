@@ -27,7 +27,8 @@ impl ContainerReconciler {
         let mut actions = Vec::new();
         let docker = DockerEngine::local()?;
         let binding_env = self.binding_env(&request.worker)?;
-        let binding_env_fingerprint = binding_env_fingerprint(&binding_env);
+        let runtime_env = deployment_runtime_env(&binding_env, request);
+        let binding_env_fingerprint = binding_env_fingerprint(&runtime_env);
         let expected_proxy = request
             .route
             .as_ref()
@@ -84,8 +85,8 @@ impl ContainerReconciler {
                 actions.push(format!("create environment network {env_network}"));
             }
         }
-        if !binding_env.is_empty() {
-            actions.push(format!("project {} binding env var(s)", binding_env.len()));
+        if !runtime_env.is_empty() {
+            actions.push(format!("project {} env var(s)", runtime_env.len()));
         }
         actions.push(format!("recreate {}", request.container));
         let _ = docker.remove_container_force(&request.container).await;
@@ -131,7 +132,7 @@ impl ContainerReconciler {
                 network: network.to_owned(),
                 restart_unless_stopped: true,
                 labels,
-                env: binding_env.clone(),
+                env: runtime_env,
                 binds: Vec::new(),
                 ports: Vec::new(),
                 command: Vec::new(),
@@ -258,6 +259,45 @@ fn deployment_network_name(worker: &str) -> Option<String> {
     deployment_environment(worker).map(|env| format!("gumgum-{env}"))
 }
 
+fn deployment_runtime_env(
+    binding_env: &[(String, String)],
+    request: &DeployRequest,
+) -> Vec<(String, String)> {
+    let mut env = binding_env.to_vec();
+    if !env
+        .iter()
+        .any(|(name, _)| name == "OTEL_EXPORTER_OTLP_ENDPOINT")
+    {
+        return env;
+    }
+    let mut attributes = vec![format!("gumgum.worker={}", request.worker)];
+    if let Some(environment) = deployment_environment(&request.worker) {
+        attributes.push(format!("deployment.environment={environment}"));
+        attributes.push(format!("gumgum.environment={environment}"));
+    }
+    if let Some(project) = &request.project {
+        attributes.push(format!("service.namespace={project}"));
+        attributes.push(format!("gumgum.project={project}"));
+    }
+    if let Some(domain) = &request.domain {
+        attributes.push(format!("gumgum.domain={domain}"));
+    }
+    upsert_env(&mut env, "OTEL_SERVICE_NAME", request.worker.clone());
+    upsert_env(&mut env, "OTEL_TRACES_EXPORTER", "otlp".to_owned());
+    upsert_env(&mut env, "OTEL_METRICS_EXPORTER", "none".to_owned());
+    upsert_env(&mut env, "OTEL_LOGS_EXPORTER", "none".to_owned());
+    upsert_env(&mut env, "OTEL_RESOURCE_ATTRIBUTES", attributes.join(","));
+    env
+}
+
+fn upsert_env(env: &mut Vec<(String, String)>, name: &str, value: String) {
+    if let Some((_, existing)) = env.iter_mut().find(|(existing, _)| existing == name) {
+        *existing = value;
+    } else {
+        env.push((name.to_owned(), value));
+    }
+}
+
 fn binding_env_fingerprint(env: &[(String, String)]) -> String {
     let mut entries = env.to_vec();
     entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
@@ -333,5 +373,35 @@ mod tests {
         let new = vec![("DATABASE_URL".to_owned(), "postgres://new".to_owned())];
 
         assert_ne!(binding_env_fingerprint(&old), binding_env_fingerprint(&new));
+    }
+
+    #[test]
+    fn deployment_runtime_env_adds_trace_resource_attributes() {
+        let request = DeployRequest {
+            worker: "api-prod".to_owned(),
+            image: "registry/api:1".to_owned(),
+            container: "gumgum-api".to_owned(),
+            route: Some("kava.fund".to_owned()),
+            project: Some("visit-counter".to_owned()),
+            domain: Some("kava.fund".to_owned()),
+            port: 3000,
+            health: "/_/ready".to_owned(),
+        };
+        let env = deployment_runtime_env(
+            &[(
+                "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
+                "http://observability.platform:4317".to_owned(),
+            )],
+            &request,
+        );
+
+        assert!(env.contains(&("OTEL_SERVICE_NAME".to_owned(), "api-prod".to_owned())));
+        assert!(env.contains(&("OTEL_TRACES_EXPORTER".to_owned(), "otlp".to_owned())));
+        assert!(env.iter().any(|(name, value)| {
+            name == "OTEL_RESOURCE_ATTRIBUTES"
+                && value.contains("deployment.environment=prod")
+                && value.contains("service.namespace=visit-counter")
+                && value.contains("gumgum.domain=kava.fund")
+        }));
     }
 }
