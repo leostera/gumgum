@@ -286,6 +286,17 @@ pub enum ErrorKind {
     DnsmasqConfigDirectoryCreateFailed,
     DeploymentContainerHealthCheckFailed,
     GraphExecutionInjectedFailure,
+    CloudflareZoneNotFound,
+    CloudflareTunnelCreateResponseDecodeFailed,
+    CloudflareTunnelTokenResponseDecodeFailed,
+    CloudflareApiRequestFailed,
+    CloudflareApiReturnedError,
+    CloudflareApiResponseBodyReadFailed,
+    CloudflareApiResponseDecodeFailed,
+    CloudflareApiResultMissing,
+    CloudflareTokenRequired,
+    CloudflareTokenEmpty,
+    PublishedRouteDomainNotManaged,
 }
 
 impl ErrorKind {
@@ -337,6 +348,25 @@ impl ErrorKind {
                 "api.deployment_container.health_check_failed"
             }
             ErrorKind::GraphExecutionInjectedFailure => "setup.graph_execution.injected_failure",
+            ErrorKind::CloudflareZoneNotFound => "cloudflare.zone.not_found",
+            ErrorKind::CloudflareTunnelCreateResponseDecodeFailed => {
+                "cloudflare.tunnel_create_response.decode_failed"
+            }
+            ErrorKind::CloudflareTunnelTokenResponseDecodeFailed => {
+                "cloudflare.tunnel_token_response.decode_failed"
+            }
+            ErrorKind::CloudflareApiRequestFailed => "cloudflare.api.request_failed",
+            ErrorKind::CloudflareApiReturnedError => "cloudflare.api.returned_error",
+            ErrorKind::CloudflareApiResponseBodyReadFailed => {
+                "cloudflare.api.response_body_read_failed"
+            }
+            ErrorKind::CloudflareApiResponseDecodeFailed => "cloudflare.api.response_decode_failed",
+            ErrorKind::CloudflareApiResultMissing => "cloudflare.api.result_missing",
+            ErrorKind::CloudflareTokenRequired => "cloudflare.token.required",
+            ErrorKind::CloudflareTokenEmpty => "cloudflare.token.empty",
+            ErrorKind::PublishedRouteDomainNotManaged => {
+                "cloudflare.published_route_domain.not_managed"
+            }
         }
     }
 }
@@ -829,6 +859,9 @@ mod presentation_boundary_tests {
             "platform.rs",
             "container_reconciler.rs",
             "graph/executor.rs",
+            "cloudflare/api.rs",
+            "cloudflare/dns.rs",
+            "cloudflare/oauth.rs",
         ];
         let mut violations = Vec::new();
         for file in files {

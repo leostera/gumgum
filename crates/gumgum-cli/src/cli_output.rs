@@ -98,6 +98,29 @@ fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {
             "deployment container did not become healthy"
         }
         gumgum_core::ErrorKind::GraphExecutionInjectedFailure => "injected graph execution failure",
+        gumgum_core::ErrorKind::CloudflareZoneNotFound => "Cloudflare zone was not found",
+        gumgum_core::ErrorKind::CloudflareTunnelCreateResponseDecodeFailed => {
+            "could not decode Cloudflare tunnel create response"
+        }
+        gumgum_core::ErrorKind::CloudflareTunnelTokenResponseDecodeFailed => {
+            "could not decode Cloudflare tunnel token response"
+        }
+        gumgum_core::ErrorKind::CloudflareApiRequestFailed => "Cloudflare API request failed",
+        gumgum_core::ErrorKind::CloudflareApiReturnedError => "Cloudflare API returned an error",
+        gumgum_core::ErrorKind::CloudflareApiResponseBodyReadFailed => {
+            "could not read Cloudflare API response body"
+        }
+        gumgum_core::ErrorKind::CloudflareApiResponseDecodeFailed => {
+            "could not decode Cloudflare API response"
+        }
+        gumgum_core::ErrorKind::CloudflareApiResultMissing => {
+            "Cloudflare API response did not include a result"
+        }
+        gumgum_core::ErrorKind::CloudflareTokenRequired => "Cloudflare API token required",
+        gumgum_core::ErrorKind::CloudflareTokenEmpty => "Cloudflare token cannot be empty",
+        gumgum_core::ErrorKind::PublishedRouteDomainNotManaged => {
+            "no managed domain matches published route"
+        }
     }
 }
 

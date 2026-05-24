@@ -1,4 +1,6 @@
-use crate::{CloudflareGrant, CoreAction, CoreActions, ErrorCode, GumgumError, Result, Subsystem};
+use crate::{
+    CloudflareGrant, CoreAction, CoreActions, ErrorCode, ErrorKind, GumgumError, Result, Subsystem,
+};
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -58,12 +60,14 @@ impl CloudflareClient {
             .and_then(|zones| zones.first().cloned())
             .and_then(|value| serde_json::from_value(value).ok())
             .ok_or_else(|| {
-                GumgumError::structured(
+                GumgumError::structured_kind(
                     Subsystem::Config,
                     ErrorCode::InvalidArgs,
-                    format!("Cloudflare zone {name} was not found"),
+                    ErrorKind::CloudflareZoneNotFound,
                 )
-                .likely_cause("check that the API token is scoped to this zone")
+                .likely_cause(format!(
+                    "zone={name}; check that the API token is scoped to this zone"
+                ))
                 .build()
             })
     }
@@ -95,7 +99,7 @@ impl CloudflareClient {
             .await?;
         serde_json::from_value(result_value(&created)?.clone()).map_err(|source| {
             cf_message_error(
-                "could not decode Cloudflare tunnel create response",
+                ErrorKind::CloudflareTunnelCreateResponseDecodeFailed,
                 source.to_string(),
             )
         })
@@ -135,7 +139,7 @@ impl CloudflareClient {
             return Ok(token.to_owned());
         }
         Err(cf_message_error(
-            "could not decode Cloudflare tunnel token response",
+            ErrorKind::CloudflareTunnelTokenResponseDecodeFailed,
             result.to_string(),
         ))
     }
@@ -237,16 +241,16 @@ impl CloudflareClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .map_err(|source| cf_error("Cloudflare API request failed", source))?
+            .map_err(|source| cf_error(ErrorKind::CloudflareApiRequestFailed, source))?
             .error_for_status()
-            .map_err(|source| cf_error("Cloudflare API returned an error", source))?;
+            .map_err(|source| cf_error(ErrorKind::CloudflareApiReturnedError, source))?;
         let body = response
             .text()
             .await
-            .map_err(|source| cf_error("could not read Cloudflare API response body", source))?;
+            .map_err(|source| cf_error(ErrorKind::CloudflareApiResponseBodyReadFailed, source))?;
         serde_json::from_str(&body).map_err(|source| {
             cf_message_error(
-                "could not decode Cloudflare API response",
+                ErrorKind::CloudflareApiResponseDecodeFailed,
                 format!(
                     "{source}; body: {}",
                     body.chars().take(500).collect::<String>()
@@ -323,10 +327,7 @@ fn tunnel_ingress_route(hostname: &str) -> serde_json::Value {
 
 fn result_value(response: &serde_json::Value) -> Result<&serde_json::Value> {
     response.get("result").ok_or_else(|| {
-        cf_message_error(
-            "Cloudflare API response did not include a result",
-            response.to_string(),
-        )
+        cf_message_error(ErrorKind::CloudflareApiResultMissing, response.to_string())
     })
 }
 
@@ -334,14 +335,14 @@ fn result_array(response: &serde_json::Value) -> Option<Vec<serde_json::Value>> 
     response.get("result")?.as_array().cloned()
 }
 
-fn cf_error(message: &str, source: reqwest::Error) -> GumgumError {
-    GumgumError::structured(Subsystem::Config, ErrorCode::Io, message)
+fn cf_error(kind: ErrorKind, source: reqwest::Error) -> GumgumError {
+    GumgumError::structured_kind(Subsystem::Config, ErrorCode::Io, kind)
         .likely_cause(source.to_string())
         .build()
 }
 
-fn cf_message_error(message: &str, cause: String) -> GumgumError {
-    GumgumError::structured(Subsystem::Config, ErrorCode::Io, message)
+fn cf_message_error(kind: ErrorKind, cause: String) -> GumgumError {
+    GumgumError::structured_kind(Subsystem::Config, ErrorCode::Io, kind)
         .likely_cause(cause)
         .build()
 }

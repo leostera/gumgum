@@ -1,5 +1,6 @@
 use crate::{
-    CloudflareGrant, CoreAction, CoreActions, DomainProvider, DomainRecord, IngressMode, Result,
+    CloudflareGrant, CoreAction, CoreActions, DomainProvider, DomainRecord, ErrorCode, ErrorKind,
+    IngressMode, Result, Subsystem,
 };
 
 use super::api::CloudflareClient;
@@ -10,12 +11,14 @@ pub async fn ensure_published_route(
     hostname: &str,
 ) -> Result<CoreActions> {
     let Some(domain) = matching_domain(domains, hostname) else {
-        return Err(crate::GumgumError::structured(
-            crate::Subsystem::Config,
-            crate::ErrorCode::InvalidArgs,
-            format!("no managed domain matches published route {hostname}"),
+        return Err(crate::GumgumError::structured_kind(
+            Subsystem::Config,
+            ErrorCode::InvalidArgs,
+            ErrorKind::PublishedRouteDomainNotManaged,
         )
-        .likely_cause("add the domain to this server before deploying a published route")
+        .likely_cause(format!(
+            "hostname={hostname}; add the domain to this server before deploying a published route"
+        ))
         .next_command("gumgum domain add <domain> --provider cloudflare --ingress cloudflare")
         .build());
     };

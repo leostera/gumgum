@@ -1,4 +1,4 @@
-use crate::{ConfigStore, ErrorCode, GumgumError, Result, Subsystem};
+use crate::{ConfigStore, ErrorCode, ErrorKind, GumgumError, Result, Subsystem};
 use serde::{Deserialize, Serialize};
 
 use super::types::{CLOUDFLARE_PROVIDER, CloudflareGrant};
@@ -55,21 +55,25 @@ pub async fn ensure_authorized_for_zone(
         }
     }
     if !interactive {
-        return Err(GumgumError::structured(
+        return Err(GumgumError::structured_kind(
             Subsystem::Config,
             ErrorCode::InvalidArgs,
-            format!("Cloudflare API token required for {zone_name}"),
+            ErrorKind::CloudflareTokenRequired,
         )
-        .likely_cause("cloudflare ingress needs an interactive token prompt")
+        .likely_cause(format!(
+            "zone={zone_name}; cloudflare ingress needs an interactive token prompt"
+        ))
         .next_command("rerun without --json or --dry-run in an interactive terminal")
         .build());
     }
-    Err(GumgumError::structured(
+    Err(GumgumError::structured_kind(
         Subsystem::Config,
         ErrorCode::InvalidArgs,
-        format!("Cloudflare API token required for {zone_name}"),
+        ErrorKind::CloudflareTokenRequired,
     )
-    .likely_cause("cloudflare ingress needs a token supplied by the caller")
+    .likely_cause(format!(
+        "zone={zone_name}; cloudflare ingress needs a token supplied by the caller"
+    ))
     .next_command("collect a token using the typed Cloudflare token prompt")
     .build())
 }
@@ -77,10 +81,10 @@ pub async fn ensure_authorized_for_zone(
 pub fn grant_from_api_token(zone_name: &str, token: impl Into<String>) -> Result<CloudflareGrant> {
     let token = token.into().trim().to_owned();
     if token.is_empty() {
-        return Err(GumgumError::structured(
+        return Err(GumgumError::structured_kind(
             Subsystem::Config,
             ErrorCode::InvalidArgs,
-            "Cloudflare token cannot be empty",
+            ErrorKind::CloudflareTokenEmpty,
         )
         .build());
     }
