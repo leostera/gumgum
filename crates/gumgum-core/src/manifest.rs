@@ -5,19 +5,19 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ManifestError {
-    #[error("failed to read manifest {path}: {source}")]
+    #[error("manifest.read_failed")]
     Read {
         path: String,
         #[source]
         source: std::io::Error,
     },
-    #[error("failed to parse manifest {path}: {source}")]
+    #[error("manifest.parse_failed")]
     Parse {
         path: String,
         #[source]
         source: toml::de::Error,
     },
-    #[error("manifest validation failed: {0}")]
+    #[error("manifest.validation_failed")]
     Validation(String),
 }
 

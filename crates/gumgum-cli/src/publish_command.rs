@@ -1,8 +1,8 @@
 use crate::{PublishArgs, print_value, resolve_server};
 use gumgum_api::ServerRecord;
 use gumgum_core::{
-    DeploymentDescriptor, ErrorCode, GumgumError, ManifestKind, PlanEdge, PlanGraph, PlanNode,
-    Subsystem, WorkerManifest, load_worker_path, load_workspace_path, validate_path,
+    DeploymentDescriptor, ErrorCode, GumgumError, ManifestKind, PlanAction, PlanEdge, PlanGraph,
+    PlanNode, Subsystem, WorkerManifest, load_worker_path, load_workspace_path, validate_path,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -191,23 +191,33 @@ fn publish_plan_graph(
 ) -> PlanGraph {
     let worker_id = format!("worker/{worker}");
     let mut nodes = vec![
-        PlanNode::new(&worker_id, "worker", worker, "read deployed worker"),
+        PlanNode::new(&worker_id, "worker", worker, PlanAction::ReadDeployedWorker),
         PlanNode::new(
             "route/local",
             "local_route",
             local_routes.join(", "),
-            "preserve local route",
+            PlanAction::PreserveLocalRoute,
         ),
         PlanNode::new(
             "publish/public",
             "public_route",
             public_routes.join(", "),
-            "plan public route",
+            PlanAction::PlanRouteMapping,
         ),
-        PlanNode::new("tunnel/byo", "tunnel", "BYO tunnel", "plan tunnel mapping"),
+        PlanNode::new(
+            "tunnel/byo",
+            "tunnel",
+            "BYO tunnel",
+            PlanAction::PlanTunnelMapping,
+        ),
     ];
     if local_routes.is_empty() {
-        nodes[1] = PlanNode::new("route/local", "local_route", "none", "preserve local route");
+        nodes[1] = PlanNode::new(
+            "route/local",
+            "local_route",
+            "none",
+            PlanAction::PreserveLocalRoute,
+        );
     }
     let edges = vec![
         PlanEdge::new(&worker_id, "route/local", "keeps"),

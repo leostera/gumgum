@@ -6,7 +6,7 @@ pub struct PlanNode {
     pub id: String,
     pub kind: String,
     pub label: String,
-    pub action: String,
+    pub action: PlanAction,
 }
 
 impl PlanNode {
@@ -14,15 +14,33 @@ impl PlanNode {
         id: impl Into<String>,
         kind: impl Into<String>,
         label: impl Into<String>,
-        action: impl Into<String>,
+        action: PlanAction,
     ) -> Self {
         Self {
             id: id.into(),
             kind: kind.into(),
             label: label.into(),
-            action: action.into(),
+            action,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanAction {
+    CollectManifestDesiredState,
+    CollectActualContainerState,
+    EnsureLocalRegistryProvider,
+    BuildAndPushWorkerImage,
+    ReconcileWorkerContainer,
+    VerifyHealthCheckAndRoutes,
+    EnsureProviderRunning,
+    EnsureGlobalObjectExists,
+    EnsureWorkerLocalBindingExists,
+    ReadDeployedWorker,
+    PlanRouteMapping,
+    PlanTunnelMapping,
+    PreserveLocalRoute,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -94,27 +112,40 @@ fn topological_levels(
     nodes: impl IntoIterator<Item = String>,
     edges: impl IntoIterator<Item = (String, String)>,
 ) -> Vec<Vec<String>> {
-    let edges = edges.into_iter().collect::<Vec<_>>();
-    let mut remaining = nodes.into_iter().collect::<std::collections::BTreeSet<_>>();
+    let mut indegree = std::collections::BTreeMap::<String, usize>::new();
+    let mut outgoing = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for node in nodes {
+        indegree.entry(node).or_insert(0);
+    }
+    for (from, to) in edges {
+        outgoing.entry(from.clone()).or_default().push(to.clone());
+        *indegree.entry(to).or_insert(0) += 1;
+        indegree.entry(from).or_insert(0);
+    }
+    let mut ready = indegree
+        .iter()
+        .filter(|(_, degree)| **degree == 0)
+        .map(|(node, _)| node.clone())
+        .collect::<Vec<_>>();
     let mut levels = Vec::new();
-    while !remaining.is_empty() {
-        let ready = remaining
-            .iter()
-            .filter(|id| {
-                edges
-                    .iter()
-                    .all(|(from, to)| to != *id || !remaining.contains(from))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if ready.is_empty() {
-            levels.push(remaining.iter().cloned().collect());
-            break;
+    while !ready.is_empty() {
+        ready.sort();
+        let level = ready;
+        let mut next = Vec::new();
+        for node in &level {
+            if let Some(children) = outgoing.get(node) {
+                for child in children {
+                    if let Some(degree) = indegree.get_mut(child) {
+                        *degree -= 1;
+                        if *degree == 0 {
+                            next.push(child.clone());
+                        }
+                    }
+                }
+            }
         }
-        for id in &ready {
-            remaining.remove(id);
-        }
-        levels.push(ready);
+        levels.push(level);
+        ready = next;
     }
     levels
 }

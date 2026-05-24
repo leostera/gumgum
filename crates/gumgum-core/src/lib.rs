@@ -550,7 +550,7 @@ pub use presentation_graph::{
 };
 
 pub mod plan_graph;
-pub use plan_graph::{PlanEdge, PlanGraph, PlanNode};
+pub use plan_graph::{PlanAction, PlanEdge, PlanGraph, PlanNode};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -740,37 +740,37 @@ impl MutablePlanGraph {
                     "source/manifests",
                     "source",
                     "gumgum.toml files",
-                    "collect manifest desired state",
+                    PlanAction::CollectManifestDesiredState,
                 ),
                 PlanNode::new(
                     "actual/containers",
                     "source",
                     "docker state",
-                    "collect actual container state",
+                    PlanAction::CollectActualContainerState,
                 ),
                 PlanNode::new(
                     "provider/registry.platform",
                     "provider",
                     "registry.platform",
-                    "ensure local registry provider is running",
+                    PlanAction::EnsureLocalRegistryProvider,
                 ),
                 PlanNode::new(
                     format!("image/{worker}"),
                     "image",
                     worker,
-                    "build and push worker image",
+                    PlanAction::BuildAndPushWorkerImage,
                 ),
                 PlanNode::new(
                     format!("container/{worker}"),
                     "container",
                     worker,
-                    "reconcile worker container",
+                    PlanAction::ReconcileWorkerContainer,
                 ),
                 PlanNode::new(
                     format!("health/{worker}"),
                     "health_check",
                     worker,
-                    "verify health check and routes",
+                    PlanAction::VerifyHealthCheckAndRoutes,
                 ),
             ],
             edges: vec![
@@ -811,13 +811,13 @@ impl MutablePlanGraph {
             format!("provider/{provider}"),
             "provider",
             provider,
-            "ensure provider is running",
+            PlanAction::EnsureProviderRunning,
         ));
         self.nodes.push(PlanNode::new(
             &object_id,
             "global_object",
             object,
-            "ensure global object exists",
+            PlanAction::EnsureGlobalObjectExists,
         ));
         self.edges.push(PlanEdge::new(
             "source/manifests",
@@ -835,7 +835,7 @@ impl MutablePlanGraph {
                 &binding_id,
                 "binding",
                 binding,
-                "ensure worker-local binding exists",
+                PlanAction::EnsureWorkerLocalBindingExists,
             ));
             self.edges
                 .push(PlanEdge::new(&object_id, &binding_id, "projects_as"));
@@ -950,6 +950,12 @@ mod presentation_boundary_tests {
             concat!("binding_actions", ": Vec<String>"),
             concat!("connection_examples", ": Vec<String>"),
             concat!("pub fn ", "plan_lines"),
+            concat!("collect manifest", " desired state"),
+            concat!("build and push", " worker image"),
+            concat!("ensure provider", " is running"),
+            concat!("verify health", " check and routes"),
+            concat!("read deployed", " worker"),
+            concat!("plan route", " mapping"),
         ];
         let mut violations = Vec::new();
         collect_print_violations(&src, &forbidden, &mut violations);

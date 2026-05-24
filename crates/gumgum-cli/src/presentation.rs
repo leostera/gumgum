@@ -2,7 +2,7 @@
 
 use crate::deploy_command::{DeployOutput, DeployReport, WorkspaceDeployReport};
 use gumgum_api::ObjectReport;
-use gumgum_core::{ActionScope, ConnectionExample, CoreAction, SetupStep};
+use gumgum_core::{ActionScope, ConnectionExample, CoreAction, PlanAction, SetupStep};
 
 pub(crate) struct Presenter;
 
@@ -178,7 +178,7 @@ mod tests {
             "worker/api",
             "worker",
             "api",
-            "build and push worker image",
+            PlanAction::BuildAndPushWorkerImage,
         ));
         let report = DeployReport {
             ok: true,
@@ -217,6 +217,24 @@ mod tests {
     }
 }
 
+fn plan_action_text(action: PlanAction) -> &'static str {
+    match action {
+        PlanAction::CollectManifestDesiredState => "collect manifest desired state",
+        PlanAction::CollectActualContainerState => "collect actual container state",
+        PlanAction::EnsureLocalRegistryProvider => "ensure local registry provider is running",
+        PlanAction::BuildAndPushWorkerImage => "build and push worker image",
+        PlanAction::ReconcileWorkerContainer => "reconcile worker container",
+        PlanAction::VerifyHealthCheckAndRoutes => "verify health check and routes",
+        PlanAction::EnsureProviderRunning => "ensure provider is running",
+        PlanAction::EnsureGlobalObjectExists => "ensure global object exists",
+        PlanAction::EnsureWorkerLocalBindingExists => "ensure worker-local binding exists",
+        PlanAction::ReadDeployedWorker => "read deployed worker",
+        PlanAction::PlanRouteMapping => "plan route mapping",
+        PlanAction::PlanTunnelMapping => "plan tunnel mapping",
+        PlanAction::PreserveLocalRoute => "preserve local route",
+    }
+}
+
 fn deploy_impact_lines(report: &DeployReport) -> Vec<String> {
     let mut lines = vec!["Impact:".to_owned()];
     if report.plan_graph.nodes.is_empty() {
@@ -226,7 +244,14 @@ fn deploy_impact_lines(report: &DeployReport) -> Vec<String> {
             .plan_graph
             .nodes
             .iter()
-            .map(|node| format!("{}:{} ({})", node.kind, node.label, node.action))
+            .map(|node| {
+                format!(
+                    "{}:{} ({})",
+                    node.kind,
+                    node.label,
+                    plan_action_text(node.action)
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!("  will touch: {touched}"));
