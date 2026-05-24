@@ -264,7 +264,7 @@ fn deploy_report(
         env.is_prod(),
     );
     descriptor.container = env_prefixed_container_name(&descriptor.container, env);
-    let grafana = grafana_artifact_plan(&path, manifest, project_name, project_domain);
+    let grafana = grafana_artifact_plan(&path, manifest, project_name, project_domain, server, env);
     descriptor.plan.extend(grafana.iter().map(|artifact| {
         format!(
             "provision Grafana {} {} from {}",
@@ -587,6 +587,8 @@ fn grafana_artifact_plan(
     manifest: &WorkerManifest,
     project_name: Option<&str>,
     project_domain: Option<&str>,
+    server: Option<&ServerRecord>,
+    env: crate::DeployEnv,
 ) -> Vec<GrafanaArtifactPlan> {
     let base_dir = manifest_path
         .parent()
@@ -599,7 +601,7 @@ fn grafana_artifact_plan(
                 .map(|project| project.namespace.as_str())
         })
         .unwrap_or("root");
-    let folder_path = grafana_folder_path(project_domain, project);
+    let folder_path = grafana_folder_path(project_domain, project, server, env);
     let mut artifacts = Vec::new();
     if let Some(sources) = manifest
         .observability
@@ -628,11 +630,44 @@ fn grafana_artifact_plan(
     artifacts
 }
 
-fn grafana_folder_path(project_domain: Option<&str>, project: &str) -> Vec<String> {
+fn grafana_folder_path(
+    project_domain: Option<&str>,
+    project: &str,
+    server: Option<&ServerRecord>,
+    env: crate::DeployEnv,
+) -> Vec<String> {
+    if !env.is_prod() {
+        return server
+            .map(|server| vec![server.root_domain.clone(), project.to_owned()])
+            .unwrap_or_else(|| vec![project.to_owned()]);
+    }
     project_domain
         .filter(|domain| !domain.trim().is_empty())
-        .map(|domain| vec![domain.to_owned(), project.to_owned()])
+        .map(|domain| domain_folder_path(domain, project))
         .unwrap_or_else(|| vec![project.to_owned()])
+}
+
+fn domain_folder_path(domain: &str, project: &str) -> Vec<String> {
+    let labels = domain.split('.').collect::<Vec<_>>();
+    if labels.len() <= 2 {
+        return vec![domain.to_owned()];
+    }
+    let root = labels[labels.len() - 2..].join(".");
+    vec![root, labels[0].to_owned().if_empty(project)]
+}
+
+trait IfEmpty {
+    fn if_empty(self, fallback: &str) -> String;
+}
+
+impl IfEmpty for String {
+    fn if_empty(self, fallback: &str) -> String {
+        if self.trim().is_empty() {
+            fallback.to_owned()
+        } else {
+            self
+        }
+    }
 }
 
 fn deployment_key(worker: &str, env: crate::DeployEnv) -> String {
@@ -920,16 +955,56 @@ mod deploy_hardening_tests {
             &manifest,
             None,
             Some("kava.fund"),
+            None,
+            crate::DeployEnv::Prod,
         );
 
         assert_eq!(plan.len(), 2);
         assert_eq!(plan[0].kind, "datasource");
         assert_eq!(plan[0].name, "kava-fund / datasources");
-        assert_eq!(plan[1].folder_path, vec!["kava.fund", "kava-fund"]);
+        assert_eq!(plan[1].folder_path, vec!["kava.fund"]);
         assert!(
             plan[1]
                 .path
                 .ends_with("grafana/dashboards/api-overview.json")
+        );
+    }
+
+    #[test]
+    fn grafana_folder_path_uses_server_root_for_preview_and_apex_for_prod() {
+        let server = ServerRecord {
+            name: "starbase2".to_owned(),
+            host: "192.168.0.3".to_owned(),
+            root_domain: "leostera.dev".to_owned(),
+            test_domain: String::new(),
+            health_url: "http://192.168.0.3:7777/healthz".to_owned(),
+        };
+        assert_eq!(
+            grafana_folder_path(
+                Some("kava.fund"),
+                "visit-counter",
+                Some(&server),
+                crate::DeployEnv::Prod
+            ),
+            vec!["kava.fund"]
+        );
+        assert_eq!(
+            grafana_folder_path(
+                Some("kava.fund"),
+                "visit-counter",
+                Some(&server),
+                crate::DeployEnv::Preview
+            ),
+            vec!["leostera.dev", "visit-counter"]
+        );
+        assert_eq!(
+            grafana_folder_path(
+                Some("visit-counter.leostera.dev"),
+                "visit-counter",
+                Some(&server),
+                crate::DeployEnv::Prod
+            ),
+            vec!["leostera.dev", "visit-counter"]
         );
     }
 

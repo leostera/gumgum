@@ -497,7 +497,8 @@ pub async fn apply_grafana_artifact(
                 ensure_grafana_folder_path(&client, &base, &password, &folder_path).await?;
             let mut dashboard = content;
             if dashboard.get("uid").and_then(|uid| uid.as_str()).is_none() {
-                dashboard["uid"] = serde_json::Value::String(grafana_dashboard_uid(name));
+                dashboard["uid"] =
+                    serde_json::Value::String(grafana_dashboard_uid(name, &folder_path));
             }
             let mut payload = serde_json::json!({
                 "dashboard": dashboard,
@@ -564,8 +565,15 @@ fn grafana_folder_uid(parent_uid: Option<&str>, title: &str) -> String {
     format!("{prefix}-{slug}").chars().take(40).collect()
 }
 
-fn grafana_dashboard_uid(name: &str) -> String {
-    format!("gumgum-{}", crate::sanitize_name(name))
+fn grafana_dashboard_uid(name: &str, folder_path: &[String]) -> String {
+    let scope = folder_path
+        .iter()
+        .filter(|part| !part.trim().is_empty())
+        .cloned()
+        .chain(std::iter::once(name.to_owned()))
+        .collect::<Vec<_>>()
+        .join(" /");
+    format!("gumgum-{}", crate::sanitize_name(&scope))
         .chars()
         .take(40)
         .collect()
@@ -796,10 +804,17 @@ mod tests {
     }
 
     #[test]
-    fn grafana_dashboard_uid_is_stable_for_project_scoped_names() {
+    fn grafana_dashboard_uid_is_stable_for_folder_scoped_names() {
         assert_eq!(
-            grafana_dashboard_uid("visit-counter / API Overview"),
-            "gumgum-visit-counter-api-overview"
+            grafana_dashboard_uid("visit-counter / API Overview", &["kava.fund".to_owned()]),
+            "gumgum-kava-fund-visit-counter-api-overv"
+        );
+        assert_ne!(
+            grafana_dashboard_uid("visit-counter / API Overview", &["kava.fund".to_owned()]),
+            grafana_dashboard_uid(
+                "visit-counter / API Overview",
+                &["leostera.dev".to_owned(), "visit-counter".to_owned()]
+            )
         );
     }
 
