@@ -963,6 +963,11 @@ mod presentation_boundary_tests {
             concat!("secret binding", " must"),
             concat!("dashboard", " must declare"),
             concat!("manifest validation", " failed"),
+            concat!("ensure deploy runtime", " for"),
+            concat!("ensure route", " points at"),
+            concat!("ensure binding", " projects"),
+            concat!("remove deployment", " "),
+            concat!("remove graph", " node"),
         ];
         let mut violations = Vec::new();
         collect_print_violations(&src, &forbidden, &mut violations);

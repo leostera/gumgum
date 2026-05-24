@@ -59,7 +59,22 @@ pub enum GraphExecutionTarget {
 pub struct GraphExecutionStep {
     pub action: GraphReconcileAction,
     pub target: GraphExecutionTarget,
-    pub description: String,
+    pub description: GraphStepDescription,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphStepDescription {
+    EnsureProvider,
+    EnsureWorker,
+    EnsureContainer,
+    EnsureDeploy,
+    EnsureRoute,
+    EnsureBinding,
+    EnsureObject,
+    RemoveObject,
+    RemoveNode,
+    RemoveDeploy,
 }
 
 pub type GumgumAction = GraphExecutionStep;
@@ -69,7 +84,7 @@ impl GraphExecutionStep {
         self.reconcile_event(
             crate::ReconcileEventStatus::Planned,
             operation_id,
-            self.description.clone(),
+            self.description_message(),
         )
     }
 
@@ -95,6 +110,14 @@ impl GraphExecutionStep {
             operation_id,
             message.into(),
         )
+    }
+
+    fn description_message(&self) -> String {
+        serde_json::json!({
+            "description": self.description,
+            "target": self.target,
+        })
+        .to_string()
     }
 
     fn reconcile_event(
@@ -193,14 +216,7 @@ impl GraphActionPlanner {
                         port: None,
                         health: None,
                     },
-                    description: format!(
-                        "ensure deploy runtime for {} runs image {}",
-                        worker
-                            .as_ref()
-                            .map(|worker| worker.as_str())
-                            .unwrap_or(container),
-                        image
-                    ),
+                    description: GraphStepDescription::EnsureDeploy,
                 })
             }
             _ => None,
@@ -274,7 +290,7 @@ impl GraphActionPlanner {
                 port: Some(port),
                 health: Some(health),
             },
-            description: format!("ensure deploy runtime for {worker} runs image {image}"),
+            description: GraphStepDescription::EnsureDeploy,
         }
     }
 }
@@ -388,7 +404,7 @@ impl GraphExecutionSession {
             self.record(
                 crate::ReconcileEventStatus::Planned,
                 step,
-                step.description.clone(),
+                step.description_message(),
             )?;
             let planned_event = step.planned_event(self.operation_id.clone());
             self.emit_event(planned_event.clone());
@@ -660,7 +676,7 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 name: name.clone(),
                 capability: *capability,
             },
-            description: format!("ensure provider {name} exists and is running"),
+            description: GraphStepDescription::EnsureProvider,
         },
         GraphReconcileAction::EnsureWorker { name, image } => GraphExecutionStep {
             action: action.clone(),
@@ -668,7 +684,7 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 worker: name.to_string(),
                 image: image.to_string(),
             },
-            description: format!("ensure worker {name} is represented in desired runtime state"),
+            description: GraphStepDescription::EnsureWorker,
         },
         GraphReconcileAction::EnsureContainer { name, image } => GraphExecutionStep {
             action: action.clone(),
@@ -676,7 +692,7 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 container: name.to_string(),
                 image: image.to_string(),
             },
-            description: format!("ensure container {name} runs image {image}"),
+            description: GraphStepDescription::EnsureContainer,
         },
         GraphReconcileAction::EnsureDeploy {
             worker,
@@ -697,7 +713,7 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 port: Some(*port),
                 health: Some(health.clone()),
             },
-            description: format!("ensure deploy runtime for {worker} runs image {image}"),
+            description: GraphStepDescription::EnsureDeploy,
         },
         GraphReconcileAction::EnsureRoute {
             host,
@@ -708,18 +724,18 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 host: host.to_string(),
                 target_container: target_container.to_string(),
             },
-            description: format!("ensure route {host} points at {target_container}"),
+            description: GraphStepDescription::EnsureRoute,
         },
         GraphReconcileAction::EnsureBinding {
             worker,
             name,
-            object,
+            object: _,
         } => GraphExecutionStep {
             action: action.clone(),
             target: GraphExecutionTarget::GraphStore {
                 node: format!("binding/{worker}/{name}"),
             },
-            description: format!("ensure binding {name} projects {object} into worker {worker}"),
+            description: GraphStepDescription::EnsureBinding,
         },
         GraphReconcileAction::EnsureObject {
             capability,
@@ -732,7 +748,7 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 name: name.clone(),
                 provider: provider.clone(),
             },
-            description: format!("ensure {capability} object {name} is materialized by {provider}"),
+            description: GraphStepDescription::EnsureObject,
         },
         GraphReconcileAction::RemoveObject {
             capability,
@@ -745,7 +761,7 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 name: name.clone(),
                 provider: provider.clone(),
             },
-            description: format!("remove {capability} object {name} from {provider}"),
+            description: GraphStepDescription::RemoveObject,
         },
         GraphReconcileAction::RemoveNode { id } => GraphExecutionStep {
             action: action.clone(),
@@ -753,7 +769,7 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                 id: id.clone(),
                 container: None,
             },
-            description: format!("remove graph node {id}"),
+            description: GraphStepDescription::RemoveNode,
         },
         GraphReconcileAction::RemoveDeploy { worker, container } => GraphExecutionStep {
             action: action.clone(),
@@ -762,7 +778,7 @@ fn plan_action(action: &GraphReconcileAction) -> GraphExecutionStep {
                     .unwrap_or_else(|_| GraphNodeId::new("deployment/unknown").unwrap()),
                 container: Some(container.clone()),
             },
-            description: format!("remove deployment {worker} and container {container}"),
+            description: GraphStepDescription::RemoveDeploy,
         },
     }
 }
@@ -811,10 +827,7 @@ mod tests {
                 capability: Capability::Secret,
             }
         );
-        assert_eq!(
-            step.description,
-            "ensure provider secrets.platform exists and is running"
-        );
+        assert_eq!(step.description, GraphStepDescription::EnsureProvider);
     }
 
     #[test]
@@ -876,8 +889,8 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(
-            error.to_report().message,
-            "injected graph execution failure"
+            error.to_report().kind,
+            Some(crate::ErrorKind::GraphExecutionInjectedFailure)
         );
         let events = crate::GraphStore::new(graph_path.clone())
             .list_reconcile_events(10)
@@ -1131,10 +1144,7 @@ mod tests {
                 container: Some(ref container),
             } if id.as_str() == "deployment/api" && container.as_str() == "gumgum-api"
         ));
-        assert_eq!(
-            step.description,
-            "remove deployment api and container gumgum-api"
-        );
+        assert_eq!(step.description, GraphStepDescription::RemoveDeploy);
     }
 
     #[test]
@@ -1199,7 +1209,7 @@ mod tests {
 
         assert!(matches!(
             actions.as_slice(),
-            [crate::CoreAction::Planned { target, .. }] if target == "deployment/api"
+            [crate::CoreAction::Planned { target, .. }] if target == "container/api"
         ));
     }
 
@@ -1223,7 +1233,7 @@ mod tests {
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             actions.first(),
-            Some(crate::CoreAction::Planned { target, .. }) if target == "deployment/api"
+            Some(crate::CoreAction::Planned { target, .. }) if target == "container/api"
         ));
     }
 
