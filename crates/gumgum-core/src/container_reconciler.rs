@@ -46,6 +46,14 @@ impl ContainerReconciler {
                         .get("gumgum.environment")
                         .map(String::as_str)
                         == expected_environment
+                    && container
+                        .labels
+                        .get("prometheus.scrape")
+                        .map(String::as_str)
+                        == Some("true")
+                    && container.labels.get("prometheus.port") == Some(&request.port.to_string())
+                    && container.labels.get("prometheus.path").map(String::as_str)
+                        == Some("/_/metrics")
             })
         {
             actions.push("container already matches desired image, route, and bindings".to_owned());
