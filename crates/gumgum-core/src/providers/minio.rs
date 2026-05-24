@@ -1,5 +1,5 @@
 use crate::{
-    Capability, CoreAction, CoreActions, ErrorCode, ErrorKind, GumgumError, Subsystem,
+    Capability, CoreAction, CoreActions, ErrorCause, ErrorCode, ErrorKind, GumgumError, Subsystem,
     sanitize_name,
 };
 use hmac::{Hmac, KeyInit, Mac};
@@ -516,26 +516,23 @@ fn percent_path(value: &str) -> String {
 }
 
 fn split_remote_object(value: &str) -> crate::Result<(String, String)> {
-    let (bucket, key) = value
-        .trim_start_matches('/')
-        .split_once('/')
-        .ok_or_else(|| {
-            GumgumError::structured_kind(
-                Subsystem::Cli,
-                ErrorCode::InvalidArgs,
-                ErrorKind::BucketObjectPathInvalid,
-            )
-            .likely_cause(format!("path={value}"))
-            .build()
-        })?;
-    if bucket.is_empty() || key.is_empty() {
-        return Err(GumgumError::structured_kind(
+    let invalid_path = || {
+        GumgumError::structured_kind(
             Subsystem::Cli,
             ErrorCode::InvalidArgs,
             ErrorKind::BucketObjectPathInvalid,
         )
-        .likely_cause(format!("path={value}"))
-        .build());
+        .cause(ErrorCause::BucketObjectPathInvalid {
+            path: value.to_owned(),
+        })
+        .build()
+    };
+    let (bucket, key) = value
+        .trim_start_matches('/')
+        .split_once('/')
+        .ok_or_else(invalid_path)?;
+    if bucket.is_empty() || key.is_empty() {
+        return Err(invalid_path());
     }
     Ok((bucket.to_owned(), key.to_owned()))
 }

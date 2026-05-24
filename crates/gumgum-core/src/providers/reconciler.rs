@@ -1,6 +1,6 @@
 use crate::{Capability, CoreAction, CoreActions};
 #[cfg(test)]
-use crate::{ErrorCode, ErrorKind, GumgumError, Subsystem};
+use crate::{ErrorCause, ErrorCode, ErrorKind, GumgumError, Subsystem};
 
 use super::types::{ObjectProviderPlan, ProviderConfig, ProviderCredentials, ProviderStatus};
 
@@ -114,7 +114,9 @@ pub(crate) fn provider_credentials(
                 ErrorCode::InvalidArgs,
                 ErrorKind::ProviderCredentialsMissing,
             )
-            .likely_cause(format!("provider={provider}"))
+            .cause(ErrorCause::ProviderCredentialsMissing {
+                provider: provider.to_owned(),
+            })
             .build()
         })
 }

@@ -1,4 +1,4 @@
-use crate::{ErrorCode, ErrorKind, GumgumError, Subsystem};
+use crate::{ErrorCause, ErrorCode, ErrorKind, GumgumError, Subsystem};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -76,12 +76,13 @@ impl DaemonHealthClient {
     }
 
     pub async fn wait_for_ping(host: &str) -> crate::Result<DaemonPingReport> {
+        let mut last_cause = None;
         let mut last_error = None;
         for _ in 0..120 {
             match Self::ping(host).await {
                 Ok(report) if report.ok => return Ok(report),
                 Ok(report) => {
-                    last_error = Some(format!("health_ok={}", report.ok));
+                    last_cause = Some(ErrorCause::DaemonHealth { ok: report.ok });
                 }
                 Err(err) => {
                     let report = err.to_report();
@@ -90,13 +91,18 @@ impl DaemonHealthClient {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        Err(GumgumError::structured_kind(
+        let mut error = GumgumError::structured_kind(
             Subsystem::Api,
             ErrorCode::Io,
             ErrorKind::DaemonReachFailed,
-        )
-        .likely_cause(last_error.unwrap_or_else(|| "health_check_timeout".to_owned()))
-        .next_command(format!("gumgum setup {host} --domain <domain>"))
-        .build())
+        );
+        if let Some(last_error) = last_error {
+            error = error.likely_cause(last_error);
+        } else {
+            error = error.cause(last_cause.unwrap_or(ErrorCause::DaemonHealth { ok: false }));
+        }
+        Err(error
+            .next_command(format!("gumgum setup {host} --domain <domain>"))
+            .build())
     }
 }

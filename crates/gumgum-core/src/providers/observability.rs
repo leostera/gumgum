@@ -1,6 +1,6 @@
 use crate::{
-    Capability, ContainerRunSpec, CoreAction, CoreActions, DockerEngine, ErrorCode, ErrorKind,
-    GumgumError, Subsystem,
+    Capability, ContainerRunSpec, CoreAction, CoreActions, DockerEngine, ErrorCause, ErrorCode,
+    ErrorKind, GumgumError, Subsystem,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -751,7 +751,9 @@ pub async fn apply_grafana_artifact(
             ErrorCode::InvalidArgs,
             ErrorKind::GrafanaArtifactKindUnsupported,
         )
-        .likely_cause(format!("kind={other}"))
+        .cause(ErrorCause::GrafanaArtifactKindUnsupported {
+            artifact_kind: other.to_owned(),
+        })
         .build()),
     }
 }
@@ -834,7 +836,9 @@ async fn grafana_datasource_uid(
                 ErrorCode::Io,
                 ErrorKind::GrafanaDatasourceUidMissing,
             )
-            .likely_cause(format!("datasource={name}"))
+            .cause(ErrorCause::GrafanaDatasourceUidMissing {
+                datasource: name.to_owned(),
+            })
             .build()
         })
 }

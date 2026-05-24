@@ -112,6 +112,7 @@ pub enum GumgumError {
         message: String,
         kind: Option<ErrorKind>,
         likely_cause: Option<String>,
+        cause: Option<ErrorCause>,
         next_commands: Vec<String>,
     },
 }
@@ -128,6 +129,7 @@ impl GumgumError {
             message: message.into(),
             kind: None,
             likely_cause: None,
+            cause: None,
             next_commands: Vec::new(),
         }
     }
@@ -139,6 +141,7 @@ impl GumgumError {
             message: kind.machine_code().to_owned(),
             kind: Some(kind),
             likely_cause: None,
+            cause: None,
             next_commands: Vec::new(),
         }
     }
@@ -151,6 +154,7 @@ impl GumgumError {
                 message,
                 kind,
                 likely_cause,
+                cause,
                 next_commands,
             } => ErrorReport {
                 ok: false,
@@ -163,6 +167,7 @@ impl GumgumError {
                 kind: *kind,
                 message: message.clone(),
                 likely_cause: likely_cause.clone(),
+                cause: cause.clone(),
                 next_commands: next_commands.clone(),
             },
         }
@@ -176,12 +181,18 @@ pub struct ErrorBuilder {
     message: String,
     kind: Option<ErrorKind>,
     likely_cause: Option<String>,
+    cause: Option<ErrorCause>,
     next_commands: Vec<String>,
 }
 
 impl ErrorBuilder {
     pub fn likely_cause(mut self, value: impl Into<String>) -> Self {
         self.likely_cause = Some(value.into());
+        self
+    }
+
+    pub fn cause(mut self, value: ErrorCause) -> Self {
+        self.cause = Some(value);
         self
     }
 
@@ -197,6 +208,7 @@ impl ErrorBuilder {
             message: self.message,
             kind: self.kind,
             likely_cause: self.likely_cause,
+            cause: self.cause,
             next_commands: self.next_commands,
         }
     }
@@ -244,6 +256,47 @@ pub enum ErrorCode {
 pub struct ErrorDescriptor {
     pub subsystem: Subsystem,
     pub code: ErrorCode,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum ErrorCause {
+    ExitStatus {
+        code: Option<i32>,
+    },
+    DaemonHealth {
+        ok: bool,
+    },
+    CloudflareZoneTokenScope {
+        zone: String,
+    },
+    CloudflareTokenPrompt {
+        zone: String,
+        requirement: TokenPromptRequirement,
+    },
+    PublishedRouteDomainMissing {
+        hostname: String,
+    },
+    ProviderCredentialsMissing {
+        provider: String,
+    },
+    ProviderReadinessTimeout,
+    BucketObjectPathInvalid {
+        path: String,
+    },
+    GrafanaArtifactKindUnsupported {
+        artifact_kind: String,
+    },
+    GrafanaDatasourceUidMissing {
+        datasource: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenPromptRequirement {
+    InteractiveRequired,
+    CallerRequired,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -503,6 +556,8 @@ pub struct ErrorReport {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub likely_cause: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<ErrorCause>,
     pub next_commands: Vec<String>,
 }
 

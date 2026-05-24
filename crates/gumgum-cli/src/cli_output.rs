@@ -29,13 +29,55 @@ pub(crate) fn error_output(json: bool, err: GumgumError) -> String {
     if report.kind.is_none() {
         lines.push(format!("detail: {}", report.message));
     }
-    if let Some(cause) = report.likely_cause {
+    if let Some(cause) = report.cause {
+        lines.push(format!("cause: {}", error_cause_text(&cause)));
+    } else if let Some(cause) = report.likely_cause {
         lines.push(format!("cause: {cause}"));
     }
     for command in report.next_commands {
         lines.push(format!("next: {command}"));
     }
     lines.join("\n")
+}
+
+fn error_cause_text(cause: &gumgum_core::ErrorCause) -> String {
+    match cause {
+        gumgum_core::ErrorCause::ExitStatus { code } => code
+            .map(|code| format!("command exited with status {code}"))
+            .unwrap_or_else(|| "command exited without a status code".to_owned()),
+        gumgum_core::ErrorCause::DaemonHealth { ok } => {
+            format!("daemon health reported ok={ok}")
+        }
+        gumgum_core::ErrorCause::CloudflareZoneTokenScope { zone } => {
+            format!("Cloudflare token is not scoped to zone {zone}")
+        }
+        gumgum_core::ErrorCause::CloudflareTokenPrompt { zone, requirement } => match requirement {
+            gumgum_core::TokenPromptRequirement::InteractiveRequired => {
+                format!("Cloudflare token prompt is required for {zone}")
+            }
+            gumgum_core::TokenPromptRequirement::CallerRequired => {
+                format!("Cloudflare token must be supplied for {zone}")
+            }
+        },
+        gumgum_core::ErrorCause::PublishedRouteDomainMissing { hostname } => {
+            format!("domain for {hostname} is not registered on this server")
+        }
+        gumgum_core::ErrorCause::ProviderCredentialsMissing { provider } => {
+            format!("provider credentials are missing for {provider}")
+        }
+        gumgum_core::ErrorCause::ProviderReadinessTimeout => {
+            "provider readiness check timed out".to_owned()
+        }
+        gumgum_core::ErrorCause::BucketObjectPathInvalid { path } => {
+            format!("bucket object path is invalid: {path}")
+        }
+        gumgum_core::ErrorCause::GrafanaArtifactKindUnsupported { artifact_kind } => {
+            format!("Grafana artifact kind is unsupported: {artifact_kind}")
+        }
+        gumgum_core::ErrorCause::GrafanaDatasourceUidMissing { datasource } => {
+            format!("Grafana datasource UID is missing for {datasource}")
+        }
+    }
 }
 
 fn error_kind_text(kind: gumgum_core::ErrorKind) -> &'static str {

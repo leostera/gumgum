@@ -2,8 +2,8 @@ use super::docker::{
     create_provider_container, ensure_network, inspect, provider_needs_recreate, start_existing,
 };
 use crate::{
-    Capability, CoreAction, CoreActions, DockerEngine, ErrorCode, ErrorKind, GumgumError,
-    Subsystem, sanitize_name,
+    Capability, CoreAction, CoreActions, DockerEngine, ErrorCause, ErrorCode, ErrorKind,
+    GumgumError, Subsystem, sanitize_name,
 };
 
 use super::types::{ObjectProviderPlan, ProviderCredentials, ProviderSpec};
@@ -188,13 +188,17 @@ async fn wait_for_postgres(
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    Err(GumgumError::structured_kind(
+    let mut error = GumgumError::structured_kind(
         Subsystem::Setup,
         ErrorCode::Io,
         ErrorKind::PostgresProviderReadinessFailed,
-    )
-    .likely_cause(last_error.unwrap_or_else(|| "readiness_check_timeout".to_owned()))
-    .build())
+    );
+    if let Some(last_error) = last_error {
+        error = error.likely_cause(last_error);
+    } else {
+        error = error.cause(ErrorCause::ProviderReadinessTimeout);
+    }
+    Err(error.build())
 }
 
 async fn database_exists(

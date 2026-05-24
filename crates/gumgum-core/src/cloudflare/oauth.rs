@@ -1,4 +1,7 @@
-use crate::{ConfigStore, ErrorCode, ErrorKind, GumgumError, Result, Subsystem};
+use crate::{
+    ConfigStore, ErrorCause, ErrorCode, ErrorKind, GumgumError, Result, Subsystem,
+    TokenPromptRequirement,
+};
 use serde::{Deserialize, Serialize};
 
 use super::types::{CLOUDFLARE_PROVIDER, CloudflareGrant};
@@ -115,9 +118,10 @@ pub async fn ensure_authorized_for_zone(
             ErrorCode::InvalidArgs,
             ErrorKind::CloudflareTokenRequired,
         )
-        .likely_cause(format!(
-            "zone={zone_name}; token_prompt=interactive_required"
-        ))
+        .cause(ErrorCause::CloudflareTokenPrompt {
+            zone: zone_name.to_owned(),
+            requirement: TokenPromptRequirement::InteractiveRequired,
+        })
         .next_command(format!(
             "gumgum domain add {zone_name} --provider cloudflare --ingress cloudflare"
         ))
@@ -128,7 +132,10 @@ pub async fn ensure_authorized_for_zone(
         ErrorCode::InvalidArgs,
         ErrorKind::CloudflareTokenRequired,
     )
-    .likely_cause(format!("zone={zone_name}; token_prompt=caller_required"))
+    .cause(ErrorCause::CloudflareTokenPrompt {
+        zone: zone_name.to_owned(),
+        requirement: TokenPromptRequirement::CallerRequired,
+    })
     .next_command(format!(
         "gumgum domain add {zone_name} --provider cloudflare --ingress cloudflare"
     ))

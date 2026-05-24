@@ -1,4 +1,4 @@
-use crate::{ErrorCode, ErrorKind, GumgumError, Subsystem};
+use crate::{ErrorCause, ErrorCode, ErrorKind, GumgumError, Subsystem};
 use std::process::Stdio;
 use tokio::process::Command as TokioCommand;
 
@@ -21,7 +21,7 @@ pub async fn run_setup_command_streaming(cmd: &mut TokioCommand, quiet: bool) ->
             ErrorCode::Io,
             ErrorKind::SetupCommandFailed,
         )
-        .likely_cause(exit_status_cause(status))
+        .cause(exit_status_cause(status))
         .next_command("gumgum setup <host> --domain <domain> --dry-run")
         .build())
     }
@@ -36,25 +36,25 @@ pub async fn run_setup_command(cmd: &mut TokioCommand) -> crate::Result<()> {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(GumgumError::structured_kind(
+    let mut error = GumgumError::structured_kind(
         Subsystem::Setup,
         ErrorCode::Io,
         ErrorKind::SetupCommandFailed,
-    )
-    .likely_cause(if stderr.is_empty() {
-        exit_status_cause(output.status)
+    );
+    if stderr.is_empty() {
+        error = error.cause(exit_status_cause(output.status));
     } else {
-        stderr
-    })
-    .next_command("gumgum setup <host> --domain <domain> --dry-run")
-    .build())
+        error = error.likely_cause(stderr);
+    }
+    Err(error
+        .next_command("gumgum setup <host> --domain <domain> --dry-run")
+        .build())
 }
 
-fn exit_status_cause(status: std::process::ExitStatus) -> String {
-    status
-        .code()
-        .map(|code| format!("exit_status={code}"))
-        .unwrap_or_else(|| "exit_status=unknown".to_owned())
+fn exit_status_cause(status: std::process::ExitStatus) -> ErrorCause {
+    ErrorCause::ExitStatus {
+        code: status.code(),
+    }
 }
 
 fn setup_error(kind: ErrorKind, source: impl std::fmt::Display) -> GumgumError {

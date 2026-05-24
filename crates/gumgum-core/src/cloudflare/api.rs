@@ -1,5 +1,6 @@
 use crate::{
-    CloudflareGrant, CoreAction, CoreActions, ErrorCode, ErrorKind, GumgumError, Result, Subsystem,
+    CloudflareGrant, CoreAction, CoreActions, ErrorCause, ErrorCode, ErrorKind, GumgumError,
+    Result, Subsystem,
 };
 use reqwest::Client;
 use serde::Deserialize;
@@ -65,7 +66,9 @@ impl CloudflareClient {
                     ErrorCode::InvalidArgs,
                     ErrorKind::CloudflareZoneNotFound,
                 )
-                .likely_cause(format!("zone={name}; token_scope=missing_zone"))
+                .cause(ErrorCause::CloudflareZoneTokenScope {
+                    zone: name.to_owned(),
+                })
                 .build()
             })
     }

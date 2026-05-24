@@ -1,6 +1,6 @@
 use crate::{
-    CloudflareGrant, CoreAction, CoreActions, DomainProvider, DomainRecord, ErrorCode, ErrorKind,
-    IngressMode, Result, Subsystem,
+    CloudflareGrant, CoreAction, CoreActions, DomainProvider, DomainRecord, ErrorCause, ErrorCode,
+    ErrorKind, IngressMode, Result, Subsystem,
 };
 
 use super::api::CloudflareClient;
@@ -16,7 +16,9 @@ pub async fn ensure_published_route(
             ErrorCode::InvalidArgs,
             ErrorKind::PublishedRouteDomainNotManaged,
         )
-        .likely_cause(format!("hostname={hostname}; domain_registration=missing"))
+        .cause(ErrorCause::PublishedRouteDomainMissing {
+            hostname: hostname.to_owned(),
+        })
         .next_command("gumgum domain add <domain> --provider cloudflare --ingress cloudflare")
         .build());
     };
