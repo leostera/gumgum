@@ -172,7 +172,16 @@ mod tests {
             .unwrap_err()
             .to_report();
 
-        assert_eq!(error.message, "missing credentials for postgres.main");
+        assert_eq!(
+            error.kind,
+            Some(crate::ErrorKind::ProviderCredentialsMissing)
+        );
+        assert_eq!(
+            error.cause,
+            Some(crate::ErrorCause::ProviderCredentialsMissing {
+                provider: "postgres.main".to_owned(),
+            })
+        );
     }
 
     #[test]

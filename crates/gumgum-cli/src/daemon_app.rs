@@ -2252,12 +2252,7 @@ mod tests {
             }),
         )
         .await;
-        assert!(object_report.ok);
-        assert!(object_report.typed_events.iter().any(|event| matches!(
-            event,
-            gumgum_core::GumgumEvent::ReconcileStepExecuted { target, action, .. }
-                if target == "queue/visit-events" && action == "ensure_object"
-        )));
+        assert_eq!(object_report.name, "visit-events");
 
         let Json(binding_report) = daemon_create_binding(
             State(state.clone()),

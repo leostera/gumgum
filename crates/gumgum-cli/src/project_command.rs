@@ -443,7 +443,7 @@ mod tests {
 
         let lines = rollback_lines(&report);
         assert_eq!(lines[0], "Rollback preview for worker api");
-        assert!(lines.contains(&"  - preview only; no containers changed".to_owned()));
+        assert!(lines.contains(&"  - preview only; no deployments changed".to_owned()));
     }
 
     #[test]
