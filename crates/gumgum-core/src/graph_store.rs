@@ -1249,7 +1249,7 @@ impl GraphStore {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             })
             .map_err(|source| self.error(source))?;
@@ -1258,7 +1258,7 @@ impl GraphStore {
             let worker_id = format!("worker/{worker}");
             let image_id = format!("image/{worker}");
             let container_id = format!("container/{container}");
-            let route_id = format!("route/{route}");
+            let route_id = route.as_ref().map(|route| format!("route/{route}"));
             nodes.push(GraphNode::new(&worker_id, "worker", &worker));
             nodes.push(GraphNode::new(&image_id, "image", &image));
             let (domain_scope, namespace) = image_scope(&image);
@@ -1280,7 +1280,9 @@ impl GraphStore {
                 "network",
                 "gumgum-network",
             ));
-            nodes.push(GraphNode::new(&route_id, "route", &route));
+            if let (Some(route), Some(route_id)) = (&route, &route_id) {
+                nodes.push(GraphNode::new(route_id, "route", route));
+            }
             edges.push(GraphEdge::new("gumgumd", &worker_id, "owns"));
             edges.push(GraphEdge::new(&worker_id, &image_id, "created_from"));
             edges.push(GraphEdge::new(&worker_id, &container_id, "runs"));
@@ -1299,18 +1301,18 @@ impl GraphStore {
                 "network/gumgum-network",
                 "depends_on",
             ));
-            edges.push(GraphEdge::new(&worker_id, &route_id, "owns"));
+            if let Some(route_id) = &route_id {
+                edges.push(GraphEdge::new(&worker_id, route_id, "owns"));
+            }
             edges.push(GraphEdge::new(
                 "provider/registry.platform",
                 &image_id,
                 "backs",
             ));
-            edges.push(GraphEdge::new(
-                "provider/caddy.gateway",
-                &route_id,
-                "routes",
-            ));
-            edges.push(GraphEdge::new(&route_id, &container_id, "routes_to"));
+            if let Some(route_id) = &route_id {
+                edges.push(GraphEdge::new("provider/caddy.gateway", route_id, "routes"));
+                edges.push(GraphEdge::new(route_id, &container_id, "routes_to"));
+            }
         }
         Ok(())
     }
